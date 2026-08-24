@@ -1,0 +1,7 @@
+/tailg
+/tailg.exe
+/dist/
+/coverage.out
+/tailg-bundle-*/
+*.test
+
