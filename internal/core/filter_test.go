@@ -61,12 +61,12 @@ func TestFilterStateBoundsLiveAndSearchLines(t *testing.T) {
 
 	state.SetFilter("needle")
 	state.SetSearchResults("needle", []string{"needle", "context one", "context two", "discarded"})
-	if got := state.Lines(); len(got) != 3 || got[0] != "needle" || got[2] != "context two" {
+	if got := state.Lines(); len(got) != 4 || got[0] != "needle" || got[3] != "discarded" {
 		t.Fatalf("bounded search context = %#v", got)
 	}
 
-	state.Append("new context")
-	if got := state.Lines(); len(got) != 3 || got[0] != "context one" || got[2] != "new context" {
+	state.Append("old live", "middle live", "recent live", "newest live")
+	if got := state.Lines(); len(got) != 7 || got[0] != "needle" || got[4] != "middle live" || got[6] != "newest live" {
 		t.Fatalf("bounded active search = %#v", got)
 	}
 }

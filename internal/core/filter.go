@@ -20,6 +20,7 @@ type FilterState struct {
 	filterText     string
 	externalFilter string
 	externalLines  []string
+	externalBase   int
 	matchesOnly    bool
 	matchIndex     int
 }
@@ -51,8 +52,11 @@ func (s *FilterState) Append(lines ...string) int {
 	trimmedExternal := false
 	if s.externalLines != nil {
 		s.externalLines = append(s.externalLines, lines...)
-		if s.maxLines > 0 && len(s.externalLines) > s.maxLines {
-			s.externalLines = append([]string(nil), s.externalLines[len(s.externalLines)-s.maxLines:]...)
+		if s.maxLines > 0 && len(s.externalLines) > s.externalBase+s.maxLines {
+			bounded := make([]string, 0, s.externalBase+s.maxLines)
+			bounded = append(bounded, s.externalLines[:s.externalBase]...)
+			bounded = append(bounded, s.externalLines[len(s.externalLines)-s.maxLines:]...)
+			s.externalLines = bounded
 			trimmedExternal = true
 		}
 	}
@@ -68,6 +72,7 @@ func (s *FilterState) SetFilter(text string) {
 	s.filterText = text
 	s.externalFilter = ""
 	s.externalLines = nil
+	s.externalBase = 0
 	s.matchIndex = -1
 	s.refreshLocked()
 }
@@ -81,11 +86,7 @@ func (s *FilterState) SetSearchResults(text string, lines []string) bool {
 	}
 	s.externalFilter = normalized
 	s.externalLines = append([]string(nil), lines...)
-	if s.maxLines > 0 && len(s.externalLines) > s.maxLines {
-		// Complete-history results begin at the earliest match. Preserve that
-		// context when applying the steady-state memory limit.
-		s.externalLines = append([]string(nil), s.externalLines[:s.maxLines]...)
-	}
+	s.externalBase = len(s.externalLines)
 	s.refreshLocked()
 	return true
 }
