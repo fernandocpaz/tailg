@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -29,6 +30,14 @@ func LaunchSplitPanes(pods []string, childArgs func(string) []string) error {
 	if err := requireWindowsTerminal(); err != nil {
 		return err
 	}
+	args := splitPaneArgs(pods, childArgs)
+	if len(args) == 0 {
+		return nil
+	}
+	return exec.Command("wt", args...).Start()
+}
+
+func splitPaneArgs(pods []string, childArgs func(string) []string) []string {
 	pods = unique(pods)
 	if len(pods) == 0 {
 		return nil
@@ -36,16 +45,27 @@ func LaunchSplitPanes(pods []string, childArgs func(string) []string) error {
 	args := []string{"new-tab", "--title", "tailg " + pods[0], "--"}
 	args = append(args, childArgs(pods[0])...)
 	vertical := true
-	for _, pod := range pods[1:] {
+	for index, pod := range pods[1:] {
 		direction := "-V"
 		if !vertical {
 			direction = "-H"
 		}
 		vertical = !vertical
-		args = append(args, ";", "split-pane", direction, "--title", "tailg "+pod, "--")
+
+		// Windows Terminal focuses the pane it just created, so every subsequent
+		// split operates on the remaining region. Reserve one equal share for the
+		// current pane and give the rest to the new pane. Without an explicit size,
+		// panes shrink as 1/2, 1/4, 1/8 and quickly become unusable.
+		remaining := len(pods) - index
+		size := float64(remaining-1) / float64(remaining)
+		args = append(args, ";", "split-pane", direction, "--size", formatPaneSize(size), "--title", "tailg "+pod, "--")
 		args = append(args, childArgs(pod)...)
 	}
-	return exec.Command("wt", args...).Start()
+	return args
+}
+
+func formatPaneSize(size float64) string {
+	return strings.TrimRight(strings.TrimRight(strconv.FormatFloat(size, 'f', 6, 64), "0"), ".")
 }
 
 func LaunchTiledWindows(pods []string, childArgs func(string) []string) (int, int, error) {
