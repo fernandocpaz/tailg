@@ -4,6 +4,7 @@ import "time"
 
 const (
 	DefaultTailLines       = 500
+	DefaultBufferLines     = 50_000
 	DefaultHeartbeatWindow = 15 * time.Minute
 	DefaultStatusInterval  = 5 * time.Second
 	DefaultStatusTimeout   = 10 * time.Minute

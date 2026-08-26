@@ -20,6 +20,10 @@ import (
 )
 
 func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr io.Writer) int {
+	if options.BufferLines <= 0 {
+		fmt.Fprintln(stderr, "--buffer-lines must be greater than zero")
+		return 2
+	}
 	if options.Namespace != "" && options.LegacyNamespace != "" {
 		fmt.Fprintln(stderr, "specify the namespace either positionally or with --namespace, not both")
 		return 2
@@ -245,7 +249,7 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 		return followPlain(ctx, runner, items, inventoryProvider, options, formatter, stdout, stderr)
 	}
 	title := logTitle(items, effectiveNamespace, options.Context, resolvedTarget)
-	err = tui.Run(ctx, tui.Config{Title: title, Items: items, Formatter: formatter, HeartbeatWindow: options.HeartbeatWindow, RefreshInterval: options.RefreshInterval, FilterFile: options.FilterFile,
+	err = tui.Run(ctx, tui.Config{Title: title, Items: items, Formatter: formatter, HeartbeatWindow: options.HeartbeatWindow, RefreshInterval: options.RefreshInterval, BufferLines: options.BufferLines, FilterFile: options.FilterFile,
 		Stream: func(streamCtx context.Context, item core.InventoryItem, events chan<- core.LogEvent) error {
 			return runner.Stream(streamCtx, item, kube.LogOptions{Since: options.Since, Tail: options.Tail, Follow: true}, events)
 		}, Inventory: inventoryProvider,
@@ -254,7 +258,11 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 			if inventoryErr != nil {
 				return nil, inventoryErr
 			}
-			return runner.CompleteHistory(searchCtx, current, options.Since, formatter, query, options.Tail)
+			searchLimit := options.Tail
+			if searchLimit < 0 || searchLimit > options.BufferLines {
+				searchLimit = options.BufferLines
+			}
+			return runner.CompleteHistory(searchCtx, current, options.Since, formatter, query, searchLimit)
 		}, MappedResources: runner.MappedResources, ResourceDetail: runner.ResourceDetail})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -400,6 +408,9 @@ func childArgs(options Options, namespace string) func(string) []string {
 		}
 		if options.Tail != core.DefaultTailLines {
 			args = append(args, "--tail", fmt.Sprint(options.Tail))
+		}
+		if options.BufferLines > 0 && options.BufferLines != core.DefaultBufferLines {
+			args = append(args, "--buffer-lines", fmt.Sprint(options.BufferLines))
 		}
 		if options.Since != "" {
 			args = append(args, "--since", options.Since)

@@ -51,3 +51,22 @@ func TestSearchLinesFromFirstMatch(t *testing.T) {
 		t.Fatalf("unlimited length = %d", len(all))
 	}
 }
+
+func TestFilterStateBoundsLiveAndSearchLines(t *testing.T) {
+	state := NewFilterState(3)
+	state.Append("one", "two", "three", "four")
+	if got := state.AllLines(); len(got) != 3 || got[0] != "two" || got[2] != "four" {
+		t.Fatalf("bounded live lines = %#v", got)
+	}
+
+	state.SetFilter("needle")
+	state.SetSearchResults("needle", []string{"needle", "context one", "context two", "discarded"})
+	if got := state.Lines(); len(got) != 4 || got[0] != "needle" || got[3] != "discarded" {
+		t.Fatalf("bounded search context = %#v", got)
+	}
+
+	state.Append("old live", "middle live", "recent live", "newest live")
+	if got := state.Lines(); len(got) != 7 || got[0] != "needle" || got[4] != "middle live" || got[6] != "newest live" {
+		t.Fatalf("bounded active search = %#v", got)
+	}
+}

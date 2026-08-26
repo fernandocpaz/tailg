@@ -1,10 +1,13 @@
 package tui
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -158,5 +161,124 @@ func TestSharedFilterConcurrentWritesRemainOrdered(t *testing.T) {
 	}
 	if shared.textRevision != newest {
 		t.Fatalf("final revision=%+v, want newest=%+v", shared.textRevision, newest)
+	}
+}
+
+func TestSearchCommandCancelsSupersededSearch(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started := make(chan string, 2)
+	m := model{
+		ctx:      ctx,
+		searches: &searchController{},
+		config: Config{Search: func(searchCtx context.Context, query string) ([]string, error) {
+			started <- query
+			if query == "first" {
+				<-searchCtx.Done()
+				return nil, searchCtx.Err()
+			}
+			return []string{"second result"}, nil
+		}},
+	}
+
+	first := m.searchCommand(1, "first")
+	firstResult := make(chan any, 1)
+	go func() { firstResult <- first() }()
+	select {
+	case query := <-started:
+		if query != "first" {
+			t.Fatalf("started query = %q", query)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first search did not start")
+	}
+
+	second := m.searchCommand(2, "second")
+	select {
+	case result := <-firstResult:
+		if result != nil {
+			t.Fatalf("canceled search returned %#v", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("superseded search was not canceled")
+	}
+	result, ok := second().(searchMsg)
+	if !ok || result.query != "second" || len(result.lines) != 1 {
+		t.Fatalf("latest search result = %#v", result)
+	}
+}
+
+func TestManageStreamsRestartsCompletedStream(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	events := make(chan core.LogEvent)
+	started := make(chan int32, 2)
+	var starts atomic.Int32
+	config := Config{
+		Items: []core.InventoryItem{{Pod: "pod-1", Container: "app"}},
+		Stream: func(streamCtx context.Context, _ core.InventoryItem, _ chan<- core.LogEvent) error {
+			count := starts.Add(1)
+			started <- count
+			if count == 1 {
+				return errors.New("stream ended")
+			}
+			<-streamCtx.Done()
+			return streamCtx.Err()
+		},
+	}
+	closed := make(chan struct{})
+	go func() {
+		manageStreams(ctx, config, events)
+		close(closed)
+	}()
+
+	for want := int32(1); want <= 2; want++ {
+		select {
+		case got := <-started:
+			if got != want {
+				t.Fatalf("stream start = %d, want %d", got, want)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("stream start %d did not occur", want)
+		}
+	}
+	cancel()
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("stream manager did not stop")
+	}
+}
+
+func TestManageStreamsWaitsBeforeClosingEvents(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	events := make(chan core.LogEvent)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	config := Config{
+		Items: []core.InventoryItem{{Pod: "pod-1", Container: "app"}},
+		Stream: func(streamCtx context.Context, _ core.InventoryItem, _ chan<- core.LogEvent) error {
+			close(started)
+			<-streamCtx.Done()
+			<-release
+			return streamCtx.Err()
+		},
+	}
+	closed := make(chan struct{})
+	go func() {
+		manageStreams(ctx, config, events)
+		close(closed)
+	}()
+	<-started
+	cancel()
+	select {
+	case <-closed:
+		t.Fatal("events closed before the stream exited")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("events did not close after the stream exited")
 	}
 }

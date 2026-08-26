@@ -34,6 +34,7 @@ tailg example-app default --since 4d
 tailg example-app default --no-follow
 tailg example-app default --include 'request_id=12345'
 tailg example-app default --exclude 'debug|trace'
+tailg example-app default --buffer-lines 100000
 tailg '*' default
 tailg 'example-*' default --tile-windows
 tailg 'web-api,job-worker' default --split-panes
@@ -61,7 +62,9 @@ properties appended to readable text are hidden unless `--detail` is set.
 
 Following logs opens the full-screen filter by default. Typing in the filter
 searches both the live buffer and the complete history Kubernetes still retains
-for the chosen time window.
+for the chosen time window. The live buffer retains at most 50,000 lines by
+default; use `--buffer-lines` to choose a different positive limit. Interrupted
+pod log streams reconnect automatically with a capped backoff.
 
 | Key | Action |
 | --- | --- |

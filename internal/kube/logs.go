@@ -19,7 +19,12 @@ type LogOptions struct {
 	Follow bool
 }
 
-func (r Runner) Stream(ctx context.Context, item core.InventoryItem, options LogOptions, output chan<- core.LogEvent) error {
+func (r Runner) Stream(ctx context.Context, item core.InventoryItem, options LogOptions, output chan<- core.LogEvent) (streamErr error) {
+	defer func() {
+		if ctx.Err() == nil {
+			sendLogEvent(ctx, output, core.LogEvent{Pod: item.Pod, Container: item.Container, Closed: true, Err: streamErr})
+		}
+	}()
 	args := []string{"logs", "pod/" + item.Pod, "-c", item.Container, "--ignore-errors=true", "--timestamps=true", "--tail", strconv.Itoa(options.Tail)}
 	if options.Since != "" {
 		args = append(args, "--since", options.Since)
@@ -39,25 +44,47 @@ func (r Runner) Stream(ctx context.Context, item core.InventoryItem, options Log
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	stderrDone := make(chan []byte, 1)
 	go func() {
-		scanner := bufio.NewScanner(stdout)
-		buffer := make([]byte, 64*1024)
-		scanner.Buffer(buffer, 4*1024*1024)
-		for scanner.Scan() {
-			message, observed := SplitTimestamp(scanner.Text())
-			output <- core.LogEvent{Pod: item.Pod, Container: item.Container, Message: message, ObservedAt: observed}
-		}
-		if scanErr := scanner.Err(); scanErr != nil {
-			output <- core.LogEvent{Pod: item.Pod, Container: item.Container, Err: scanErr}
-		}
+		stderrBytes, _ := io.ReadAll(stderr)
+		stderrDone <- stderrBytes
 	}()
-	stderrBytes, _ := io.ReadAll(stderr)
-	err = cmd.Wait()
-	if err != nil && ctx.Err() == nil {
-		err = fmt.Errorf("kubectl logs %s/%s: %s", item.Pod, item.Container, strings.TrimSpace(string(stderrBytes)))
+
+	scanner := bufio.NewScanner(stdout)
+	buffer := make([]byte, 64*1024)
+	scanner.Buffer(buffer, 4*1024*1024)
+	for scanner.Scan() {
+		message, observed := SplitTimestamp(scanner.Text())
+		if !sendLogEvent(ctx, output, core.LogEvent{Pod: item.Pod, Container: item.Container, Message: message, ObservedAt: observed}) {
+			break
+		}
 	}
-	output <- core.LogEvent{Pod: item.Pod, Container: item.Container, Closed: true, Err: err}
-	return err
+	scanErr := scanner.Err()
+	stderrBytes := <-stderrDone
+	waitErr := cmd.Wait()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if scanErr != nil {
+		return scanErr
+	}
+	if waitErr != nil {
+		message := strings.TrimSpace(string(stderrBytes))
+		if message == "" {
+			return fmt.Errorf("kubectl logs %s/%s: %w", item.Pod, item.Container, waitErr)
+		}
+		return fmt.Errorf("kubectl logs %s/%s: %s", item.Pod, item.Container, message)
+	}
+	return nil
+}
+
+func sendLogEvent(ctx context.Context, output chan<- core.LogEvent, event core.LogEvent) bool {
+	select {
+	case output <- event:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 func (r Runner) Snapshot(ctx context.Context, item core.InventoryItem, options LogOptions) ([]core.LogEvent, error) {
@@ -91,8 +118,14 @@ func (r Runner) CompleteHistory(ctx context.Context, items []core.InventoryItem,
 	success := 0
 	var firstErr error
 	for _, item := range items {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		events, err := r.Snapshot(ctx, item, LogOptions{Since: since, Tail: -1})
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			if firstErr == nil {
 				firstErr = err
 			}

@@ -20,6 +20,7 @@ type FilterState struct {
 	filterText     string
 	externalFilter string
 	externalLines  []string
+	externalBase   int
 	matchesOnly    bool
 	matchIndex     int
 }
@@ -43,14 +44,24 @@ func (s *FilterState) Append(lines ...string) int {
 		}
 	}
 	s.allLines = append(s.allLines, lines...)
-	if s.externalLines != nil {
-		s.externalLines = append(s.externalLines, lines...)
-	}
+	trimmedLive := false
 	if s.maxLines > 0 && len(s.allLines) > s.maxLines {
 		s.allLines = append([]string(nil), s.allLines[len(s.allLines)-s.maxLines:]...)
-		if s.externalFilter == "" {
-			s.refreshLocked()
+		trimmedLive = true
+	}
+	trimmedExternal := false
+	if s.externalLines != nil {
+		s.externalLines = append(s.externalLines, lines...)
+		if s.maxLines > 0 && len(s.externalLines) > s.externalBase+s.maxLines {
+			bounded := make([]string, 0, s.externalBase+s.maxLines)
+			bounded = append(bounded, s.externalLines[:s.externalBase]...)
+			bounded = append(bounded, s.externalLines[len(s.externalLines)-s.maxLines:]...)
+			s.externalLines = bounded
+			trimmedExternal = true
 		}
+	}
+	if trimmedExternal || (trimmedLive && s.externalLines == nil) {
+		s.refreshLocked()
 	}
 	return addedVisible
 }
@@ -61,6 +72,7 @@ func (s *FilterState) SetFilter(text string) {
 	s.filterText = text
 	s.externalFilter = ""
 	s.externalLines = nil
+	s.externalBase = 0
 	s.matchIndex = -1
 	s.refreshLocked()
 }
@@ -74,6 +86,7 @@ func (s *FilterState) SetSearchResults(text string, lines []string) bool {
 	}
 	s.externalFilter = normalized
 	s.externalLines = append([]string(nil), lines...)
+	s.externalBase = len(s.externalLines)
 	s.refreshLocked()
 	return true
 }

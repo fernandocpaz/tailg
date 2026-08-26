@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -24,6 +25,7 @@ type Config struct {
 	Formatter       core.Formatter
 	HeartbeatWindow time.Duration
 	RefreshInterval time.Duration
+	BufferLines     int
 	FilterFile      string
 	Stream          func(context.Context, core.InventoryItem, chan<- core.LogEvent) error
 	Inventory       func(context.Context) ([]core.InventoryItem, error)
@@ -79,6 +81,32 @@ type model struct {
 	lastSharedMode bool
 	lastTextRev    sharedRevision
 	lastModeRev    sharedRevision
+	searches       *searchController
+}
+
+type searchController struct {
+	mu     sync.Mutex
+	cancel context.CancelFunc
+}
+
+func (s *searchController) start(parent context.Context) context.Context {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cancel != nil {
+		s.cancel()
+	}
+	ctx, cancel := context.WithCancel(parent)
+	s.cancel = cancel
+	return ctx
+}
+
+func (s *searchController) stop() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cancel != nil {
+		s.cancel()
+		s.cancel = nil
+	}
 }
 
 var (
@@ -100,7 +128,11 @@ func Run(parent context.Context, config Config) error {
 	input := textinput.New()
 	input.Prompt = "Filter: "
 	input.Focus()
-	state := core.NewFilterState(0)
+	bufferLines := config.BufferLines
+	if bufferLines <= 0 {
+		bufferLines = core.DefaultBufferLines
+	}
+	state := core.NewFilterState(bufferLines)
 	shared := readShared(config.FilterFile)
 	if shared.textValid && shared.text != "" {
 		input.SetValue(shared.text)
@@ -113,6 +145,7 @@ func Run(parent context.Context, config Config) error {
 		selected: -1, followsLive: true,
 		lastSharedText: shared.text, lastSharedMode: shared.mode,
 		lastTextRev: shared.textRevision, lastModeRev: shared.modeRevision,
+		searches: &searchController{},
 	}
 	program := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := program.Run()
@@ -135,8 +168,11 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case logMsg:
 		event := core.LogEvent(msg)
-		if event.Err != nil && !event.Closed {
+		if event.Err != nil {
 			m.notice = event.Err.Error()
+			if event.Closed {
+				m.notice += "; reconnecting..."
+			}
 		}
 		if !event.Closed {
 			m.heartbeat.Add(event.Pod, event.Container, event.Message, event.ObservedAt)
@@ -209,6 +245,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.input.SetValue(shared.text)
 				m.state.SetFilter(shared.text)
 				m.generation++
+				m.cancelSearch()
 				m.selected = len(m.state.Lines()) - 1
 				m.followsLive = true
 				if strings.TrimSpace(shared.text) != "" {
@@ -335,6 +372,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if before != after {
 			m.state.SetFilter(after)
 			m.generation++
+			m.cancelSearch()
 			m.selected = len(m.state.Lines()) - 1
 			m.followsLive = true
 			m.scroll = 0
@@ -481,14 +519,31 @@ func (m model) updateResourceKey(key string) (tea.Model, tea.Cmd) {
 	}
 	return m, nil
 }
-func (m model) searchCommand(generation int, query string) tea.Cmd {
+func (m *model) cancelSearch() {
+	if m.searches != nil {
+		m.searches.stop()
+	}
+}
+func (m *model) searchCommand(generation int, query string) tea.Cmd {
+	if m.config.Search == nil {
+		return nil
+	}
+	if m.searches == nil {
+		m.searches = &searchController{}
+	}
+	searchCtx := m.searches.start(m.ctx)
 	return func() tea.Msg {
+		timer := time.NewTimer(250 * time.Millisecond)
+		defer timer.Stop()
 		select {
-		case <-m.ctx.Done():
+		case <-searchCtx.Done():
 			return nil
-		case <-time.After(250 * time.Millisecond):
+		case <-timer.C:
 		}
-		lines, err := m.config.Search(m.ctx, query)
+		lines, err := m.config.Search(searchCtx, query)
+		if searchCtx.Err() != nil {
+			return nil
+		}
 		return searchMsg{generation: generation, query: query, lines: lines, err: err}
 	}
 }
@@ -517,48 +572,162 @@ func sharedTick() tea.Cmd {
 	return tea.Tick(250*time.Millisecond, func(t time.Time) tea.Msg { return sharedFilterTick(t) })
 }
 
+type managedStream struct {
+	item       core.InventoryItem
+	cancel     context.CancelFunc
+	generation uint64
+	attempt    int
+}
+
+type managedStreamDone struct {
+	key        string
+	generation uint64
+	attempt    int
+	lifetime   time.Duration
+}
+
+type managedStreamRetry struct {
+	key        string
+	generation uint64
+}
+
+const (
+	streamRetryBase  = 250 * time.Millisecond
+	streamRetryLimit = 5 * time.Second
+	stableStreamTime = 30 * time.Second
+)
+
+func streamRetryDelay(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	delay := streamRetryBase
+	for step := 1; step < attempt && delay < streamRetryLimit; step++ {
+		delay *= 2
+	}
+	return min(delay, streamRetryLimit)
+}
+
 func manageStreams(ctx context.Context, config Config, events chan<- core.LogEvent) {
 	defer close(events)
-	active := map[string]context.CancelFunc{}
-	reconcile := func(items []core.InventoryItem) {
-		current := map[string]bool{}
-		for _, item := range items {
-			current[item.Key()] = true
-			if _, ok := active[item.Key()]; !ok {
-				streamCtx, cancel := context.WithCancel(ctx)
-				active[item.Key()] = cancel
-				go config.Stream(streamCtx, item, events)
-			}
-		}
-		for key, cancel := range active {
-			if !current[key] {
-				cancel()
-				delete(active, key)
-			}
-		}
-	}
-	reconcile(config.Items)
-	if config.Inventory == nil {
-		<-ctx.Done()
-		for _, cancel := range active {
-			cancel()
-		}
+	if config.Stream == nil {
 		return
 	}
-	interval := config.RefreshInterval
-	if interval <= 0 {
-		interval = 2 * time.Second
+
+	done := make(chan managedStreamDone)
+	retries := make(chan managedStreamRetry)
+	active := map[string]*managedStream{}
+	wanted := map[string]core.InventoryItem{}
+	var streams sync.WaitGroup
+	var generation uint64
+
+	start := func(item core.InventoryItem, attempt int) {
+		generation++
+		streamCtx, cancel := context.WithCancel(ctx)
+		handle := &managedStream{item: item, cancel: cancel, generation: generation, attempt: attempt}
+		active[item.Key()] = handle
+		streams.Add(1)
+		go func() {
+			defer streams.Done()
+			started := time.Now()
+			_ = config.Stream(streamCtx, item, events)
+			completion := managedStreamDone{key: item.Key(), generation: handle.generation, attempt: handle.attempt, lifetime: time.Since(started)}
+			select {
+			case done <- completion:
+			case <-ctx.Done():
+			}
+		}()
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+
+	reconcile := func(items []core.InventoryItem) {
+		current := make(map[string]core.InventoryItem, len(items))
+		for _, item := range items {
+			key := item.Key()
+			current[key] = item
+			if _, ok := active[key]; !ok {
+				start(item, 0)
+			}
+		}
+		wanted = current
+		for key, handle := range active {
+			if _, ok := current[key]; ok {
+				continue
+			}
+			if handle.cancel != nil {
+				handle.cancel()
+			}
+			delete(active, key)
+		}
+	}
+
+	stopAll := func() {
+		for _, handle := range active {
+			if handle.cancel != nil {
+				handle.cancel()
+			}
+		}
+		streams.Wait()
+	}
+
+	reconcile(config.Items)
+	var inventoryTick <-chan time.Time
+	var ticker *time.Ticker
+	if config.Inventory != nil {
+		interval := config.RefreshInterval
+		if interval <= 0 {
+			interval = 2 * time.Second
+		}
+		ticker = time.NewTicker(interval)
+		inventoryTick = ticker.C
+		defer ticker.Stop()
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
-			for _, cancel := range active {
-				cancel()
-			}
+			stopAll()
 			return
-		case <-ticker.C:
+		case completion := <-done:
+			handle, ok := active[completion.key]
+			if !ok || handle.generation != completion.generation {
+				continue
+			}
+			if _, ok := wanted[completion.key]; !ok {
+				delete(active, completion.key)
+				continue
+			}
+			nextAttempt := completion.attempt + 1
+			if completion.lifetime >= stableStreamTime {
+				nextAttempt = 1
+			}
+			handle.cancel()
+			handle.cancel = nil
+			handle.attempt = nextAttempt
+			delay := streamRetryDelay(nextAttempt)
+			go func(request managedStreamRetry) {
+				timer := time.NewTimer(delay)
+				defer timer.Stop()
+				select {
+				case <-timer.C:
+					select {
+					case retries <- request:
+					case <-ctx.Done():
+					}
+				case <-ctx.Done():
+				}
+			}(managedStreamRetry{key: completion.key, generation: completion.generation})
+		case retry := <-retries:
+			handle, ok := active[retry.key]
+			if !ok || handle.generation != retry.generation || handle.cancel != nil {
+				continue
+			}
+			item, ok := wanted[retry.key]
+			if !ok {
+				delete(active, retry.key)
+				continue
+			}
+			start(item, handle.attempt)
+		case <-inventoryTick:
 			items, err := config.Inventory(ctx)
 			if err == nil {
 				reconcile(items)
