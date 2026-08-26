@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -76,6 +77,8 @@ type model struct {
 	resourceIndex  int
 	lastSharedText string
 	lastSharedMode bool
+	lastTextRev    sharedRevision
+	lastModeRev    sharedRevision
 }
 
 var (
@@ -98,16 +101,18 @@ func Run(parent context.Context, config Config) error {
 	input.Prompt = "Filter: "
 	input.Focus()
 	state := core.NewFilterState(0)
-	sharedText, sharedMode, _ := readShared(config.FilterFile)
-	if sharedText != "" {
-		input.SetValue(sharedText)
-		state.SetFilter(sharedText)
+	shared := readShared(config.FilterFile)
+	if shared.textValid && shared.text != "" {
+		input.SetValue(shared.text)
+		state.SetFilter(shared.text)
 	}
-	state.SetMatchesOnly(sharedMode)
+	state.SetMatchesOnly(shared.modeValid && shared.mode)
 	m := model{
 		ctx: ctx, cancel: cancel, config: config, events: events, state: state,
 		heartbeat: &core.HeartbeatAnalyzer{}, input: input, items: items,
-		selected: -1, followsLive: true, lastSharedText: sharedText, lastSharedMode: sharedMode,
+		selected: -1, followsLive: true,
+		lastSharedText: shared.text, lastSharedMode: shared.mode,
+		lastTextRev: shared.textRevision, lastModeRev: shared.modeRevision,
 	}
 	program := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := program.Run()
@@ -195,23 +200,27 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case sharedFilterTick:
-		text, mode, valid := readShared(m.config.FilterFile)
+		shared := readShared(m.config.FilterFile)
 		var commands []tea.Cmd
-		if valid {
-			if text != m.lastSharedText {
-				m.lastSharedText = text
-				m.input.SetValue(text)
-				m.state.SetFilter(text)
+		if shared.textValid && shared.textRevision.newerThan(m.lastTextRev) {
+			m.lastTextRev = shared.textRevision
+			if shared.text != m.lastSharedText {
+				m.lastSharedText = shared.text
+				m.input.SetValue(shared.text)
+				m.state.SetFilter(shared.text)
 				m.generation++
 				m.selected = len(m.state.Lines()) - 1
 				m.followsLive = true
-				if strings.TrimSpace(text) != "" {
-					commands = append(commands, m.searchCommand(m.generation, text))
+				if strings.TrimSpace(shared.text) != "" {
+					commands = append(commands, m.searchCommand(m.generation, shared.text))
 				}
 			}
-			if mode != m.lastSharedMode {
-				m.lastSharedMode = mode
-				m.state.SetMatchesOnly(mode)
+		}
+		if shared.modeValid && shared.modeRevision.newerThan(m.lastModeRev) {
+			m.lastModeRev = shared.modeRevision
+			if shared.mode != m.lastSharedMode {
+				m.lastSharedMode = shared.mode
+				m.state.SetMatchesOnly(shared.mode)
 				m.selected = m.state.MatchIndex()
 				m.scrollToSelection()
 			}
@@ -259,8 +268,13 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			mode := m.state.ToggleMatchesOnly()
-			m.lastSharedMode = mode
-			writeSharedMode(m.config.FilterFile, mode)
+			revision := nextSharedRevision(m.lastModeRev)
+			if err := writeSharedMode(m.config.FilterFile, mode, revision); err != nil {
+				m.notice = "Filter mode sync failed: " + err.Error()
+			} else {
+				m.lastSharedMode = mode
+				m.lastModeRev = revision
+			}
 			m.selected = m.state.MatchIndex()
 			m.scrollToSelection()
 			m.notice = fmt.Sprintf("F1 matches only [%s]", map[bool]string{true: "ON", false: "OFF"}[mode])
@@ -324,8 +338,13 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.selected = len(m.state.Lines()) - 1
 			m.followsLive = true
 			m.scroll = 0
-			m.lastSharedText = after
-			writeSharedText(m.config.FilterFile, after)
+			revision := nextSharedRevision(m.lastTextRev)
+			if err := writeSharedText(m.config.FilterFile, after, revision); err != nil {
+				m.notice = "Filter sync failed: " + err.Error()
+			} else {
+				m.lastSharedText = after
+				m.lastTextRev = revision
+			}
 			if strings.TrimSpace(after) != "" {
 				return m, tea.Batch(command, m.searchCommand(m.generation, after))
 			}
@@ -549,69 +568,121 @@ func manageStreams(ctx context.Context, config Config, events chan<- core.LogEve
 }
 
 const (
-	sharedFilterPrefix = "tailg-filter-v1:"
-	sharedModePrefix   = "tailg-mode-v1:"
+	sharedFilterPrefix = "tailg-filter-v2:"
+	sharedModePrefix   = "tailg-mode-v2:"
 )
 
-func InitializeSharedFilter(path string) error {
-	if err := os.WriteFile(path, encodeSharedText(""), 0o600); err != nil {
-		return err
-	}
-	return os.WriteFile(path+".mode", encodeSharedMode(false), 0o600)
+type sharedRevision struct {
+	timestamp int64
+	writer    int
 }
 
-func readShared(path string) (string, bool, bool) {
-	if path == "" {
-		return "", false, true
+func (r sharedRevision) newerThan(other sharedRevision) bool {
+	return r.timestamp > other.timestamp || (r.timestamp == other.timestamp && r.writer > other.writer)
+}
+
+func nextSharedRevision(last sharedRevision) sharedRevision {
+	timestamp := time.Now().UnixNano()
+	if timestamp <= last.timestamp {
+		timestamp = last.timestamp + 1
 	}
+	return sharedRevision{timestamp: timestamp, writer: os.Getpid()}
+}
+
+type sharedSnapshot struct {
+	text         string
+	textRevision sharedRevision
+	textValid    bool
+	mode         bool
+	modeRevision sharedRevision
+	modeValid    bool
+}
+
+func InitializeSharedFilter(path string) error {
+	revision := nextSharedRevision(sharedRevision{})
+	if err := os.WriteFile(path, encodeSharedText("", revision), 0o600); err != nil {
+		return err
+	}
+	return os.WriteFile(path+".mode", encodeSharedMode(false, revision), 0o600)
+}
+
+func readShared(path string) sharedSnapshot {
+	if path == "" {
+		return sharedSnapshot{}
+	}
+	var snapshot sharedSnapshot
 	textBytes, textErr := os.ReadFile(path)
 	modeBytes, modeErr := os.ReadFile(path + ".mode")
-	if textErr != nil || modeErr != nil {
-		return "", false, false
+	if textErr == nil {
+		snapshot.text, snapshot.textRevision, snapshot.textValid = decodeSharedText(textBytes)
 	}
-	text, textValid := decodeSharedText(textBytes)
-	mode, modeValid := decodeSharedMode(modeBytes)
-	return text, mode, textValid && modeValid
-}
-func writeSharedText(path, text string) {
-	if path != "" {
-		_ = os.WriteFile(path, encodeSharedText(text), 0o600)
+	if modeErr == nil {
+		snapshot.mode, snapshot.modeRevision, snapshot.modeValid = decodeSharedMode(modeBytes)
 	}
+	return snapshot
 }
-func writeSharedMode(path string, enabled bool) {
+func writeSharedText(path, text string, revision sharedRevision) error {
 	if path == "" {
-		return
+		return nil
 	}
-	_ = os.WriteFile(path+".mode", encodeSharedMode(enabled), 0o600)
+	return os.WriteFile(path, encodeSharedText(text, revision), 0o600)
 }
-func encodeSharedText(text string) []byte {
-	return []byte(sharedFilterPrefix + base64.StdEncoding.EncodeToString([]byte(text)) + "\n")
-}
-func decodeSharedText(data []byte) (string, bool) {
-	value := string(data)
-	if !strings.HasPrefix(value, sharedFilterPrefix) || !strings.HasSuffix(value, "\n") {
-		return "", false
+func writeSharedMode(path string, enabled bool, revision sharedRevision) error {
+	if path == "" {
+		return nil
 	}
-	payload := strings.TrimSuffix(strings.TrimPrefix(value, sharedFilterPrefix), "\n")
+	return os.WriteFile(path+".mode", encodeSharedMode(enabled, revision), 0o600)
+}
+func encodeSharedText(text string, revision sharedRevision) []byte {
+	return encodeSharedValue(sharedFilterPrefix, base64.StdEncoding.EncodeToString([]byte(text)), revision)
+}
+func decodeSharedText(data []byte) (string, sharedRevision, bool) {
+	payload, revision, valid := decodeSharedValue(sharedFilterPrefix, data)
+	if !valid {
+		return "", sharedRevision{}, false
+	}
 	decoded, err := base64.StdEncoding.DecodeString(payload)
-	return string(decoded), err == nil
+	return string(decoded), revision, err == nil
 }
-func encodeSharedMode(enabled bool) []byte {
+func encodeSharedMode(enabled bool, revision sharedRevision) []byte {
 	mode := "context"
 	if enabled {
 		mode = "matches"
 	}
-	return []byte(sharedModePrefix + mode + "\n")
+	return encodeSharedValue(sharedModePrefix, mode, revision)
 }
-func decodeSharedMode(data []byte) (bool, bool) {
-	switch string(data) {
-	case sharedModePrefix + "context\n":
-		return false, true
-	case sharedModePrefix + "matches\n":
-		return true, true
-	default:
-		return false, false
+func decodeSharedMode(data []byte) (bool, sharedRevision, bool) {
+	payload, revision, valid := decodeSharedValue(sharedModePrefix, data)
+	if !valid {
+		return false, sharedRevision{}, false
 	}
+	switch payload {
+	case "context":
+		return false, revision, true
+	case "matches":
+		return true, revision, true
+	default:
+		return false, sharedRevision{}, false
+	}
+}
+func encodeSharedValue(prefix, payload string, revision sharedRevision) []byte {
+	return []byte(fmt.Sprintf("%s%d:%d:%s\n", prefix, revision.timestamp, revision.writer, payload))
+}
+func decodeSharedValue(prefix string, data []byte) (string, sharedRevision, bool) {
+	value := string(data)
+	if !strings.HasPrefix(value, prefix) || !strings.HasSuffix(value, "\n") {
+		return "", sharedRevision{}, false
+	}
+	parts := strings.SplitN(strings.TrimSuffix(strings.TrimPrefix(value, prefix), "\n"), ":", 3)
+	if len(parts) != 3 {
+		return "", sharedRevision{}, false
+	}
+	timestamp, timestampErr := strconv.ParseInt(parts[0], 10, 64)
+	writer, writerErr := strconv.Atoi(parts[1])
+	if timestampErr != nil || writerErr != nil || timestamp <= 0 || writer <= 0 {
+		return "", sharedRevision{}, false
+	}
+	return parts[2], sharedRevision{timestamp: timestamp, writer: writer}, true
 }
 func copyText(text string) string {
 	var command *exec.Cmd
