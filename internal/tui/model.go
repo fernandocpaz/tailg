@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
@@ -97,7 +98,7 @@ func Run(parent context.Context, config Config) error {
 	input.Prompt = "Filter: "
 	input.Focus()
 	state := core.NewFilterState(0)
-	sharedText, sharedMode := readShared(config.FilterFile)
+	sharedText, sharedMode, _ := readShared(config.FilterFile)
 	if sharedText != "" {
 		input.SetValue(sharedText)
 		state.SetFilter(sharedText)
@@ -194,24 +195,26 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case sharedFilterTick:
-		text, mode := readShared(m.config.FilterFile)
+		text, mode, valid := readShared(m.config.FilterFile)
 		var commands []tea.Cmd
-		if text != m.lastSharedText {
-			m.lastSharedText = text
-			m.input.SetValue(text)
-			m.state.SetFilter(text)
-			m.generation++
-			m.selected = len(m.state.Lines()) - 1
-			m.followsLive = true
-			if strings.TrimSpace(text) != "" {
-				commands = append(commands, m.searchCommand(m.generation, text))
+		if valid {
+			if text != m.lastSharedText {
+				m.lastSharedText = text
+				m.input.SetValue(text)
+				m.state.SetFilter(text)
+				m.generation++
+				m.selected = len(m.state.Lines()) - 1
+				m.followsLive = true
+				if strings.TrimSpace(text) != "" {
+					commands = append(commands, m.searchCommand(m.generation, text))
+				}
 			}
-		}
-		if mode != m.lastSharedMode {
-			m.lastSharedMode = mode
-			m.state.SetMatchesOnly(mode)
-			m.selected = m.state.MatchIndex()
-			m.scrollToSelection()
+			if mode != m.lastSharedMode {
+				m.lastSharedMode = mode
+				m.state.SetMatchesOnly(mode)
+				m.selected = m.state.MatchIndex()
+				m.scrollToSelection()
+			}
 		}
 		commands = append(commands, sharedTick())
 		return m, tea.Batch(commands...)
@@ -545,28 +548,70 @@ func manageStreams(ctx context.Context, config Config, events chan<- core.LogEve
 	}
 }
 
-func readShared(path string) (string, bool) {
-	if path == "" {
-		return "", false
+const (
+	sharedFilterPrefix = "tailg-filter-v1:"
+	sharedModePrefix   = "tailg-mode-v1:"
+)
+
+func InitializeSharedFilter(path string) error {
+	if err := os.WriteFile(path, encodeSharedText(""), 0o600); err != nil {
+		return err
 	}
-	text, _ := os.ReadFile(path)
-	mode, _ := os.ReadFile(path + ".mode")
-	return string(text), strings.TrimSpace(strings.ToLower(string(mode))) == "matches"
+	return os.WriteFile(path+".mode", encodeSharedMode(false), 0o600)
+}
+
+func readShared(path string) (string, bool, bool) {
+	if path == "" {
+		return "", false, true
+	}
+	textBytes, textErr := os.ReadFile(path)
+	modeBytes, modeErr := os.ReadFile(path + ".mode")
+	if textErr != nil || modeErr != nil {
+		return "", false, false
+	}
+	text, textValid := decodeSharedText(textBytes)
+	mode, modeValid := decodeSharedMode(modeBytes)
+	return text, mode, textValid && modeValid
 }
 func writeSharedText(path, text string) {
 	if path != "" {
-		_ = os.WriteFile(path, []byte(text), 0o600)
+		_ = os.WriteFile(path, encodeSharedText(text), 0o600)
 	}
 }
 func writeSharedMode(path string, enabled bool) {
 	if path == "" {
 		return
 	}
-	mode := "context\n"
-	if enabled {
-		mode = "matches\n"
+	_ = os.WriteFile(path+".mode", encodeSharedMode(enabled), 0o600)
+}
+func encodeSharedText(text string) []byte {
+	return []byte(sharedFilterPrefix + base64.StdEncoding.EncodeToString([]byte(text)) + "\n")
+}
+func decodeSharedText(data []byte) (string, bool) {
+	value := string(data)
+	if !strings.HasPrefix(value, sharedFilterPrefix) || !strings.HasSuffix(value, "\n") {
+		return "", false
 	}
-	_ = os.WriteFile(path+".mode", []byte(mode), 0o600)
+	payload := strings.TrimSuffix(strings.TrimPrefix(value, sharedFilterPrefix), "\n")
+	decoded, err := base64.StdEncoding.DecodeString(payload)
+	return string(decoded), err == nil
+}
+func encodeSharedMode(enabled bool) []byte {
+	mode := "context"
+	if enabled {
+		mode = "matches"
+	}
+	return []byte(sharedModePrefix + mode + "\n")
+}
+func decodeSharedMode(data []byte) (bool, bool) {
+	switch string(data) {
+	case sharedModePrefix + "context\n":
+		return false, true
+	case sharedModePrefix + "matches\n":
+		return true, true
+	default:
+		return false, false
+	}
 }
 func copyText(text string) string {
 	var command *exec.Cmd
