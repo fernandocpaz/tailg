@@ -376,10 +376,7 @@ func prepareSharedFilter(options *Options) error {
 		return nil
 	}
 	file := filepath.Join(os.TempDir(), fmt.Sprintf("tailg-filter-%d-%d.txt", os.Getpid(), time.Now().Unix()))
-	if err := os.WriteFile(file, nil, 0o600); err != nil {
-		return err
-	}
-	if err := os.WriteFile(file+".mode", []byte("context\n"), 0o600); err != nil {
+	if err := tui.InitializeSharedFilter(file); err != nil {
 		return err
 	}
 	options.FilterFile = file
