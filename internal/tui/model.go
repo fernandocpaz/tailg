@@ -268,16 +268,16 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			mode := m.state.ToggleMatchesOnly()
-			revision := nextSharedRevision(m.lastModeRev)
-			if err := writeSharedMode(m.config.FilterFile, mode, revision); err != nil {
+			revision, err := writeSharedMode(m.config.FilterFile, mode, m.lastModeRev)
+			if err != nil {
 				m.notice = "Filter mode sync failed: " + err.Error()
 			} else {
 				m.lastSharedMode = mode
 				m.lastModeRev = revision
+				m.notice = fmt.Sprintf("F1 matches only [%s]", map[bool]string{true: "ON", false: "OFF"}[mode])
 			}
 			m.selected = m.state.MatchIndex()
 			m.scrollToSelection()
-			m.notice = fmt.Sprintf("F1 matches only [%s]", map[bool]string{true: "ON", false: "OFF"}[mode])
 			return m, nil
 		case "f2":
 			m.resourceOpen = true
@@ -338,8 +338,8 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.selected = len(m.state.Lines()) - 1
 			m.followsLive = true
 			m.scroll = 0
-			revision := nextSharedRevision(m.lastTextRev)
-			if err := writeSharedText(m.config.FilterFile, after, revision); err != nil {
+			revision, err := writeSharedText(m.config.FilterFile, after, m.lastTextRev)
+			if err != nil {
 				m.notice = "Filter sync failed: " + err.Error()
 			} else {
 				m.lastSharedText = after
@@ -599,11 +599,11 @@ type sharedSnapshot struct {
 }
 
 func InitializeSharedFilter(path string) error {
-	revision := nextSharedRevision(sharedRevision{})
-	if err := os.WriteFile(path, encodeSharedText("", revision), 0o600); err != nil {
+	if _, err := writeSharedText(path, "", sharedRevision{}); err != nil {
 		return err
 	}
-	return os.WriteFile(path+".mode", encodeSharedMode(false, revision), 0o600)
+	_, err := writeSharedMode(path, false, sharedRevision{})
+	return err
 }
 
 func readShared(path string) sharedSnapshot {
@@ -621,17 +621,76 @@ func readShared(path string) sharedSnapshot {
 	}
 	return snapshot
 }
-func writeSharedText(path, text string, revision sharedRevision) error {
+func writeSharedText(path, text string, last sharedRevision) (sharedRevision, error) {
 	if path == "" {
-		return nil
+		return nextSharedRevision(last), nil
 	}
-	return os.WriteFile(path, encodeSharedText(text, revision), 0o600)
+	var revision sharedRevision
+	err := withSharedFileLock(path, func() error {
+		current := last
+		if data, readErr := os.ReadFile(path); readErr == nil {
+			_, diskRevision, valid := decodeSharedText(data)
+			if valid && diskRevision.newerThan(current) {
+				current = diskRevision
+			}
+		} else if !os.IsNotExist(readErr) {
+			return readErr
+		}
+		revision = nextSharedRevision(current)
+		return os.WriteFile(path, encodeSharedText(text, revision), 0o600)
+	})
+	return revision, err
 }
-func writeSharedMode(path string, enabled bool, revision sharedRevision) error {
+func writeSharedMode(path string, enabled bool, last sharedRevision) (sharedRevision, error) {
 	if path == "" {
-		return nil
+		return nextSharedRevision(last), nil
 	}
-	return os.WriteFile(path+".mode", encodeSharedMode(enabled, revision), 0o600)
+	modePath := path + ".mode"
+	var revision sharedRevision
+	err := withSharedFileLock(modePath, func() error {
+		current := last
+		if data, readErr := os.ReadFile(modePath); readErr == nil {
+			_, diskRevision, valid := decodeSharedMode(data)
+			if valid && diskRevision.newerThan(current) {
+				current = diskRevision
+			}
+		} else if !os.IsNotExist(readErr) {
+			return readErr
+		}
+		revision = nextSharedRevision(current)
+		return os.WriteFile(modePath, encodeSharedMode(enabled, revision), 0o600)
+	})
+	return revision, err
+}
+func withSharedFileLock(path string, action func() error) error {
+	lockPath := path + ".lock"
+	deadline := time.Now().Add(time.Second)
+	for {
+		lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err == nil {
+			if closeErr := lock.Close(); closeErr != nil {
+				_ = os.Remove(lockPath)
+				return closeErr
+			}
+			actionErr := action()
+			removeErr := os.Remove(lockPath)
+			if actionErr != nil {
+				return actionErr
+			}
+			return removeErr
+		}
+		if !os.IsExist(err) {
+			return err
+		}
+		if info, statErr := os.Stat(lockPath); statErr == nil && time.Since(info.ModTime()) > 5*time.Second {
+			_ = os.Remove(lockPath)
+			continue
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for shared filter lock")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 func encodeSharedText(text string, revision sharedRevision) []byte {
 	return encodeSharedValue(sharedFilterPrefix, base64.StdEncoding.EncodeToString([]byte(text)), revision)
