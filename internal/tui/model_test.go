@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,11 +20,10 @@ func TestSharedFilterRoundTrip(t *testing.T) {
 	}
 
 	initial := readShared(path)
-	revision := nextSharedRevision(initial.textRevision)
-	if err := writeSharedText(path, "timeout | retry", revision); err != nil {
+	if _, err := writeSharedText(path, "timeout | retry", initial.textRevision); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeSharedMode(path, true, revision); err != nil {
+	if _, err := writeSharedMode(path, true, initial.modeRevision); err != nil {
 		t.Fatal(err)
 	}
 	shared := readShared(path)
@@ -30,8 +31,7 @@ func TestSharedFilterRoundTrip(t *testing.T) {
 		t.Fatalf("shared=%+v", shared)
 	}
 
-	clearRevision := nextSharedRevision(shared.textRevision)
-	if err := writeSharedText(path, "", clearRevision); err != nil {
+	if _, err := writeSharedText(path, "", shared.textRevision); err != nil {
 		t.Fatal(err)
 	}
 	shared = readShared(path)
@@ -89,8 +89,8 @@ func TestSharedFilterTickIgnoresOlderEmptyValue(t *testing.T) {
 		t.Fatal(err)
 	}
 	initial := readShared(path)
-	currentRevision := nextSharedRevision(initial.textRevision)
-	if err := writeSharedText(path, "timeout", currentRevision); err != nil {
+	currentRevision, err := writeSharedText(path, "timeout", initial.textRevision)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -114,5 +114,49 @@ func TestSharedFilterTickIgnoresOlderEmptyValue(t *testing.T) {
 	got := updated.(model)
 	if got.input.Value() != "timeout" {
 		t.Fatalf("filter was cleared by an older shared value: %q", got.input.Value())
+	}
+}
+
+func TestSharedFilterConcurrentWritesRemainOrdered(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "filter")
+	if err := InitializeSharedFilter(path); err != nil {
+		t.Fatal(err)
+	}
+
+	const writers = 24
+	revisions := make(chan sharedRevision, writers)
+	errors := make(chan error, writers)
+	var wait sync.WaitGroup
+	for index := 0; index < writers; index++ {
+		wait.Add(1)
+		go func(value string) {
+			defer wait.Done()
+			revision, err := writeSharedText(path, value, sharedRevision{})
+			if err != nil {
+				errors <- err
+				return
+			}
+			revisions <- revision
+		}(fmt.Sprintf("filter-%d", index))
+	}
+	wait.Wait()
+	close(revisions)
+	close(errors)
+	for err := range errors {
+		t.Fatal(err)
+	}
+
+	var newest sharedRevision
+	for revision := range revisions {
+		if revision.newerThan(newest) {
+			newest = revision
+		}
+	}
+	shared := readShared(path)
+	if !shared.textValid {
+		t.Fatal("final shared filter is invalid")
+	}
+	if shared.textRevision != newest {
+		t.Fatalf("final revision=%+v, want newest=%+v", shared.textRevision, newest)
 	}
 }
