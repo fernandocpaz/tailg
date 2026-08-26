@@ -43,14 +43,21 @@ func (s *FilterState) Append(lines ...string) int {
 		}
 	}
 	s.allLines = append(s.allLines, lines...)
-	if s.externalLines != nil {
-		s.externalLines = append(s.externalLines, lines...)
-	}
+	trimmedLive := false
 	if s.maxLines > 0 && len(s.allLines) > s.maxLines {
 		s.allLines = append([]string(nil), s.allLines[len(s.allLines)-s.maxLines:]...)
-		if s.externalFilter == "" {
-			s.refreshLocked()
+		trimmedLive = true
+	}
+	trimmedExternal := false
+	if s.externalLines != nil {
+		s.externalLines = append(s.externalLines, lines...)
+		if s.maxLines > 0 && len(s.externalLines) > s.maxLines {
+			s.externalLines = append([]string(nil), s.externalLines[len(s.externalLines)-s.maxLines:]...)
+			trimmedExternal = true
 		}
+	}
+	if trimmedExternal || (trimmedLive && s.externalLines == nil) {
+		s.refreshLocked()
 	}
 	return addedVisible
 }
@@ -74,6 +81,11 @@ func (s *FilterState) SetSearchResults(text string, lines []string) bool {
 	}
 	s.externalFilter = normalized
 	s.externalLines = append([]string(nil), lines...)
+	if s.maxLines > 0 && len(s.externalLines) > s.maxLines {
+		// Complete-history results begin at the earliest match. Preserve that
+		// context when applying the steady-state memory limit.
+		s.externalLines = append([]string(nil), s.externalLines[:s.maxLines]...)
+	}
 	s.refreshLocked()
 	return true
 }

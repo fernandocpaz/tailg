@@ -15,7 +15,7 @@ import (
 var Version = "dev"
 
 func NewCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
-	options := Options{Tail: core.DefaultTailLines, RefreshInterval: 2_000_000_000, HeartbeatWindow: core.DefaultHeartbeatWindow, StatusInterval: core.DefaultStatusInterval, StatusTimeout: core.DefaultStatusTimeout, Container: ".*", LiveFilter: true}
+	options := Options{Tail: core.DefaultTailLines, BufferLines: core.DefaultBufferLines, RefreshInterval: 2_000_000_000, HeartbeatWindow: core.DefaultHeartbeatWindow, StatusInterval: core.DefaultStatusInterval, StatusTimeout: core.DefaultStatusTimeout, Container: ".*", LiveFilter: true}
 	var showPod, noShowPod, noLiveFilter bool
 	var deployDumpAlias string
 	var refreshSeconds int
@@ -84,6 +84,7 @@ func NewCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) 
 	flags.StringVar(&options.Container, "container", ".*", "regular expression selecting container names")
 	flags.BoolVar(&options.Detail, "detail", false, "retain trailing structured JSON properties")
 	flags.IntVar(&options.Tail, "tail", core.DefaultTailLines, "initial lines per container; -1 means all retained lines")
+	flags.IntVar(&options.BufferLines, "buffer-lines", core.DefaultBufferLines, "maximum live log lines retained in memory")
 	flags.StringVar(&options.Since, "since", "", "relative time window, for example 30m, 2h, or 4d")
 	flags.IntVar(&refreshSeconds, "refresh-seconds", 2, "pod inventory refresh cadence in seconds")
 	flags.DurationVar(&options.HeartbeatWindow, "heartbeat-window", core.DefaultHeartbeatWindow, "F5 heartbeat grouping interval")

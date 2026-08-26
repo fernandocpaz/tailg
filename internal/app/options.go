@@ -15,6 +15,7 @@ type Options struct {
 	Detail             bool
 	Tail               int
 	TailSet            bool
+	BufferLines        int
 	Since              string
 	RefreshInterval    time.Duration
 	HeartbeatWindow    time.Duration
