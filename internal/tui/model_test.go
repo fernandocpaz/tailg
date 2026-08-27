@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/fernandocpaz/tailg/internal/core"
 )
@@ -280,5 +282,89 @@ func TestManageStreamsWaitsBeforeClosingEvents(t *testing.T) {
 	case <-closed:
 	case <-time.After(time.Second):
 		t.Fatal("events did not close after the stream exited")
+	}
+}
+
+func TestParseLogColumns(t *testing.T) {
+	columns := parseLogColumns("\x1b[90m[pod-7d9]\x1b[0m [14:22:10 ERR] request timeout", true)
+	if columns.pod != "pod-7d9" || columns.time != "14:22:10" || columns.level != "ERR" || columns.message != "request timeout" {
+		t.Fatalf("columns = %#v", columns)
+	}
+
+	columns = parseLogColumns("14:22:10.123 [WARNING] [Inventory] retrying", false)
+	if columns.time != "14:22:10.123" || columns.level != "WRN" || columns.message != "[Inventory] retrying" {
+		t.Fatalf("structured columns = %#v", columns)
+	}
+}
+
+func TestViewRendersOperationsConsoleLayout(t *testing.T) {
+	input := textinput.New()
+	input.SetValue("timeout")
+	input.Width = 24
+	state := core.NewFilterState(20)
+	state.Append("[pod-7d9] [14:22:10 ERR] request timeout after 3000 ms")
+	state.SetFilter("timeout")
+	m := model{
+		config: Config{
+			Namespace: "production",
+			Formatter: core.Formatter{ShowPod: true, Color: false},
+		},
+		items:         []core.InventoryItem{{Pod: "checkout-7d9", Container: "checkout-api"}},
+		state:         state,
+		input:         input,
+		width:         120,
+		height:        12,
+		selected:      0,
+		followsLive:   true,
+		searchMatches: 1,
+		searchLines:   8,
+	}
+	view := m.View()
+	for _, expected := range []string{"tailg", "checkout-api", "production", "1 pod", "LIVE", "FILTER", "[CONTEXT]", "1 matches • 8 lines", "14:22:10", "ERR", "pod-7d9", "request timeout"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("view missing %q:\n%s", expected, view)
+		}
+	}
+}
+
+func TestRenderLogRowStaysWithinTerminalWidth(t *testing.T) {
+	row := renderLogRow("[pod-7d9] [14:22:10 INF] "+strings.Repeat("message ", 30), "message", false, 72, true, false)
+	if width := lipgloss.Width(row); width > 72 {
+		t.Fatalf("row width = %d, want <= 72: %q", width, row)
+	}
+}
+
+func TestHighlightTextUsesOriginalUnicodeOffsets(t *testing.T) {
+	rendered := highlightText("Ⱥa", "a", true, false)
+	if plain := core.StripANSI(rendered); plain != "Ⱥa" {
+		t.Fatalf("highlighted text = %q, want %q", plain, "Ⱥa")
+	}
+	if !strings.Contains(rendered, matchStyle.Render("a")) {
+		t.Fatalf("highlight did not select the matching original text: %q", rendered)
+	}
+}
+
+func TestReconnectStateIsTrackedPerStream(t *testing.T) {
+	m := model{
+		config:       Config{Formatter: core.Formatter{}},
+		state:        core.NewFilterState(10),
+		heartbeat:    &core.HeartbeatAnalyzer{},
+		width:        100,
+		height:       10,
+		followsLive: true,
+	}
+
+	updated, _ := m.Update(logMsg(core.LogEvent{Pod: "pod-a", Container: "app", Closed: true, Err: errors.New("stream failed")}))
+	m = updated.(model)
+	updated, _ = m.Update(logMsg(core.LogEvent{Pod: "pod-b", Container: "app", Message: "healthy"}))
+	m = updated.(model)
+	if !m.isReconnecting() || !strings.Contains(m.renderHeader(), "RECONNECTING") {
+		t.Fatalf("healthy traffic from another stream cleared reconnect state: %q", m.renderHeader())
+	}
+
+	updated, _ = m.Update(logMsg(core.LogEvent{Pod: "pod-a", Container: "app", Message: "recovered"}))
+	m = updated.(model)
+	if m.isReconnecting() || !strings.Contains(m.renderHeader(), "LIVE") {
+		t.Fatalf("recovered stream did not clear reconnect state: %q", m.renderHeader())
 	}
 }
