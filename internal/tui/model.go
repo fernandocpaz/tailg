@@ -198,7 +198,6 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.issues == nil {
 			m.issues = core.NewIssueRadar(200)
 		}
-		m.issues.Observe(event)
 		if event.Err != nil {
 			m.notice = event.Err.Error()
 		}
@@ -208,6 +207,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.notice += "; reconnecting..."
 			m.markReconnecting(event.Pod, event.Container)
+			m.issues.Observe(event)
 		}
 		if !event.Closed {
 			wasReconnecting := m.isReconnecting()
@@ -217,6 +217,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.heartbeat.Add(event.Pod, event.Container, event.Message, event.ObservedAt)
 			lines := m.config.Formatter.Format(event.Pod, event.Container, event.Message, true)
+			if len(lines) > 0 {
+				m.issues.Observe(event)
+			}
 			added := m.state.Append(lines...)
 			if m.followsLive && added > 0 {
 				m.selected = len(m.state.Lines()) - 1

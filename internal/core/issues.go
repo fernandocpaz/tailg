@@ -130,7 +130,12 @@ func (r *IssueRadar) Observe(event LogEvent) bool {
 		r.groups[key] = record
 	}
 	record.issue.TotalCount++
-	record.issue.LastSeen = observed
+	if observed.Before(record.issue.FirstSeen) {
+		record.issue.FirstSeen = observed
+	}
+	if record.issue.LastSeen.IsZero() || observed.After(record.issue.LastSeen) {
+		record.issue.LastSeen = observed
+	}
 	if event.Pod != "" {
 		record.pods[event.Pod] = struct{}{}
 	}
@@ -229,7 +234,7 @@ func detectIssue(event LogEvent) (detectedIssue, bool) {
 	level := ""
 	summary := message
 	var object map[string]any
-	if json.Unmarshal([]byte(message), &object) == nil && object != nil {
+	if strings.HasPrefix(message, "{") && json.Unmarshal([]byte(message), &object) == nil && object != nil {
 		level = firstString(object, "level", "lvl", "@l")
 		if rendered := firstString(object, "msg", "message", "RenderedMessage", "@m"); rendered != "" {
 			summary = rendered

@@ -74,3 +74,14 @@ func TestIssueRadarClearEstablishesNewBaseline(t *testing.T) {
 		t.Fatalf("stats after clear = %#v", stats)
 	}
 }
+
+func TestIssueRadarKeepsTimeBoundsWhenStreamsInterleave(t *testing.T) {
+	now := time.Now()
+	radar := NewIssueRadar(10)
+	radar.Observe(LogEvent{Container: "api", Message: "request timeout after 5 seconds", ObservedAt: now})
+	radar.Observe(LogEvent{Container: "api", Message: "request timeout after 3 seconds", ObservedAt: now.Add(-time.Minute)})
+	issues := radar.Issues(now, IssueActiveWindow)
+	if len(issues) != 1 || !issues[0].FirstSeen.Equal(now.Add(-time.Minute)) || !issues[0].LastSeen.Equal(now) {
+		t.Fatalf("interleaved issue bounds = %#v", issues)
+	}
+}
