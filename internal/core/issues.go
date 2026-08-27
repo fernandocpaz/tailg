@@ -44,9 +44,13 @@ type IssueStats struct {
 }
 
 type issueRecord struct {
-	issue  Issue
-	pods   map[string]struct{}
-	events []time.Time
+	issue   Issue
+	buckets map[int64]*issueBucket
+}
+
+type issueBucket struct {
+	count int
+	pods  map[string]struct{}
 }
 
 type IssueRadar struct {
@@ -73,6 +77,7 @@ var (
 	issueRetry          = regexp.MustCompile(`(?i)\b(retry|retrying|backoff|throttled|throttling|rate\s+limit(ed)?)\b`)
 	issueZeroCounter    = regexp.MustCompile(`(?i)\b(errors?|failed|failures?|faults?|dlq)\s*[=:]\s*0\b`)
 	issueNegation       = regexp.MustCompile(`(?i)\bno\s+(errors?|failures?|faults?)\b`)
+	issueLeadingLevel   = regexp.MustCompile(`(?i)^\s*(ERR|ERROR|FATAL|CRIT|CRITICAL|WRN|WARN|WARNING)\b`)
 	issueLogPrefix      = regexp.MustCompile(`(?i)^(\[[^\]]+\]\s*)?(\[?\d{2}:\d{2}:\d{2}(\.\d+)?\s+(ERR|ERROR|WRN|WARN|WARNING|INF|INFO|DBG|DEBUG|VRB|VERBOSE|TRC|TRACE)\]?\s*)`)
 	issueGUID           = regexp.MustCompile(`(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
 	issueLongHex        = regexp.MustCompile(`(?i)\b[0-9a-f]{12,}\b`)
@@ -125,7 +130,7 @@ func (r *IssueRadar) Observe(event LogEvent) bool {
 				Service:    service,
 				FirstSeen:  observed,
 			},
-			pods: map[string]struct{}{},
+			buckets: map[int64]*issueBucket{},
 		}
 		r.groups[key] = record
 	}
@@ -136,12 +141,18 @@ func (r *IssueRadar) Observe(event LogEvent) bool {
 	if record.issue.LastSeen.IsZero() || observed.After(record.issue.LastSeen) {
 		record.issue.LastSeen = observed
 	}
-	if event.Pod != "" {
-		record.pods[event.Pod] = struct{}{}
-	}
-	record.events = append(record.events, observed)
-	if len(record.events) > 512 {
-		record.events = append([]time.Time(nil), record.events[len(record.events)-512:]...)
+	r.pruneBucketsLocked(record)
+	second := observed.Unix()
+	if second >= record.issue.LastSeen.Add(-IssueActiveWindow).Unix() {
+		bucket := record.buckets[second]
+		if bucket == nil {
+			bucket = &issueBucket{pods: map[string]struct{}{}}
+			record.buckets[second] = bucket
+		}
+		bucket.count++
+		if event.Pod != "" {
+			bucket.pods[event.Pod] = struct{}{}
+		}
 	}
 	return true
 }
@@ -153,19 +164,33 @@ func (r *IssueRadar) Issues(now time.Time, window time.Duration) []Issue {
 	if window <= 0 {
 		window = IssueActiveWindow
 	}
-	cutoff := now.Add(-window)
+	if window > IssueActiveWindow {
+		window = IssueActiveWindow
+	}
+	cutoff := now.Add(-window).Unix()
+	nowSecond := now.Unix()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	result := make([]Issue, 0, len(r.groups))
 	for _, record := range r.groups {
-		count := countIssueEvents(record.events, cutoff, now)
+		count := 0
+		activePods := map[string]struct{}{}
+		for second, bucket := range record.buckets {
+			if second < cutoff || second > nowSecond {
+				continue
+			}
+			count += bucket.count
+			for pod := range bucket.pods {
+				activePods[pod] = struct{}{}
+			}
+		}
 		if count == 0 {
 			continue
 		}
 		issue := record.issue
 		issue.Count = count
-		issue.Pods = issuePods(record.pods)
-		issue.Increasing = issueIncreasing(record.events, now)
+		issue.Pods = issuePods(activePods)
+		issue.Increasing = issueIncreasing(record.buckets, now)
 		result = append(result, issue)
 	}
 	sort.Slice(result, func(i, j int) bool {
@@ -218,6 +243,15 @@ func (r *IssueRadar) evictOldestLocked() {
 	delete(r.groups, oldestKey)
 }
 
+func (r *IssueRadar) pruneBucketsLocked(record *issueRecord) {
+	cutoff := record.issue.LastSeen.Add(-IssueActiveWindow).Unix()
+	for second := range record.buckets {
+		if second < cutoff {
+			delete(record.buckets, second)
+		}
+	}
+}
+
 func detectIssue(event LogEvent) (detectedIssue, bool) {
 	if event.Closed {
 		summary := "log stream ended"
@@ -249,7 +283,11 @@ func detectIssue(event LogEvent) (detectedIssue, bool) {
 		}
 	}
 	if level == "" {
-		level, _ = textLogStyle(message)
+		if match := bracketedLevel.FindStringSubmatch(message); len(match) > 1 {
+			level = match[1]
+		} else if match := issueLeadingLevel.FindStringSubmatch(message); len(match) > 1 {
+			level = match[1]
+		}
 	}
 	summary = cleanIssueSummary(summary)
 	signal := issueNegation.ReplaceAllString(issueZeroCounter.ReplaceAllString(summary, ""), "")
@@ -359,26 +397,17 @@ func issuePods(values map[string]struct{}) []string {
 	return result
 }
 
-func countIssueEvents(events []time.Time, cutoff, now time.Time) int {
-	count := 0
-	for _, observed := range events {
-		if !observed.Before(cutoff) && !observed.After(now) {
-			count++
-		}
-	}
-	return count
-}
-
-func issueIncreasing(events []time.Time, now time.Time) bool {
-	recentStart := now.Add(-30 * time.Second)
-	previousStart := now.Add(-60 * time.Second)
+func issueIncreasing(buckets map[int64]*issueBucket, now time.Time) bool {
+	recentStart := now.Add(-30 * time.Second).Unix()
+	previousStart := now.Add(-60 * time.Second).Unix()
+	nowSecond := now.Unix()
 	recent, previous := 0, 0
-	for _, observed := range events {
+	for second, bucket := range buckets {
 		switch {
-		case !observed.Before(recentStart) && !observed.After(now):
-			recent++
-		case !observed.Before(previousStart) && observed.Before(recentStart):
-			previous++
+		case second >= recentStart && second <= nowSecond:
+			recent += bucket.count
+		case second >= previousStart && second < recentStart:
+			previous += bucket.count
 		}
 	}
 	return recent >= 3 && recent > previous*2

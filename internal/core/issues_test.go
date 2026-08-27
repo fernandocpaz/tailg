@@ -55,6 +55,8 @@ func TestIssueRadarIgnoresHealthyCountersAndHeartbeat(t *testing.T) {
 		"Heartbeat: uptime=00:02:00 failed=0 dlq=0 breaker=closed",
 		"request completed with errors=0 failures=0",
 		"no errors detected",
+		"error=0",
+		"no error detected",
 	} {
 		if detected, ok := detectIssue(LogEvent{Message: message}); ok {
 			t.Fatalf("healthy message %q detected as %#v", message, detected)
@@ -83,5 +85,28 @@ func TestIssueRadarKeepsTimeBoundsWhenStreamsInterleave(t *testing.T) {
 	issues := radar.Issues(now, IssueActiveWindow)
 	if len(issues) != 1 || !issues[0].FirstSeen.Equal(now.Add(-time.Minute)) || !issues[0].LastSeen.Equal(now) {
 		t.Fatalf("interleaved issue bounds = %#v", issues)
+	}
+}
+
+func TestIssueRadarCountsHighVolumeGroupsExactly(t *testing.T) {
+	now := time.Now()
+	radar := NewIssueRadar(10)
+	for index := 0; index < 700; index++ {
+		radar.Observe(LogEvent{Container: "api", Message: "database timeout", ObservedAt: now})
+	}
+	issues := radar.Issues(now, IssueActiveWindow)
+	if len(issues) != 1 || issues[0].Count != 700 || radar.Stats(now, IssueActiveWindow).Events != 700 {
+		t.Fatalf("high-volume issue counts = %#v, stats=%#v", issues, radar.Stats(now, IssueActiveWindow))
+	}
+}
+
+func TestIssueRadarExpiresPodScopeWithActiveWindow(t *testing.T) {
+	now := time.Now()
+	radar := NewIssueRadar(10)
+	radar.Observe(LogEvent{Pod: "api-old", Container: "api", Message: "database timeout", ObservedAt: now.Add(-IssueActiveWindow - time.Second)})
+	radar.Observe(LogEvent{Pod: "api-new", Container: "api", Message: "database timeout", ObservedAt: now})
+	issues := radar.Issues(now, IssueActiveWindow)
+	if len(issues) != 1 || len(issues[0].Pods) != 1 || issues[0].Pods[0] != "api-new" {
+		t.Fatalf("active pod scope = %#v", issues)
 	}
 }
