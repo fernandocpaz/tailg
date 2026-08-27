@@ -90,6 +90,9 @@ type model struct {
 	searchMatches  int
 	searchLines    int
 	reconnecting   map[string]struct{}
+	issues         *core.IssueRadar
+	issueOpen      bool
+	issueIndex     int
 }
 
 type searchController struct {
@@ -165,6 +168,7 @@ func Run(parent context.Context, config Config) error {
 		lastTextRev: shared.textRevision, lastModeRev: shared.modeRevision,
 		searches: &searchController{},
 		searching: strings.TrimSpace(shared.text) != "" && config.Search != nil,
+		issues: core.NewIssueRadar(200),
 	}
 	program := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := program.Run()
@@ -191,6 +195,10 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case logMsg:
 		event := core.LogEvent(msg)
+		if m.issues == nil {
+			m.issues = core.NewIssueRadar(200)
+		}
+		m.issues.Observe(event)
 		if event.Err != nil {
 			m.notice = event.Err.Error()
 		}
@@ -311,6 +319,8 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if key == "esc" {
 			if m.detail != "" {
 				m.detail = ""
+			} else if m.issueOpen {
+				m.issueOpen = false
 			} else if m.heartbeatOpen {
 				m.heartbeatOpen = false
 			} else if m.resourceDetail != "" {
@@ -325,6 +335,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.heartbeatOpen = false
 			}
 			return m, nil
+		}
+		if m.issueOpen {
+			return m.updateIssueKey(key)
 		}
 		if m.resourceOpen {
 			return m.updateResourceKey(key)
@@ -369,6 +382,11 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, m.loadResources(pod)
+		case "f3":
+			m.issueOpen = true
+			m.issueIndex = 0
+			m.notice = ""
+			return m, nil
 		case "f5":
 			m.heartbeatOpen = true
 			return m, nil
@@ -439,6 +457,9 @@ func (m model) View() string {
 	}
 	if m.heartbeatOpen {
 		return m.panel("Heartbeat health", core.HeartbeatReport(m.heartbeat.Intervals(m.config.HeartbeatWindow, time.Now())), "F5/Esc closes")
+	}
+	if m.issueOpen {
+		return m.renderIssueRadar()
 	}
 	if m.resourceOpen {
 		if m.resourceDetail != "" {
@@ -521,7 +542,20 @@ func (m model) renderHeader() string {
 		state = fmt.Sprintf("Ⅱ PAUSED -%d", m.scroll)
 		stateStyle = warnStyle
 	}
-	return joinSides(left, renderWithColor(stateStyle, state, m.config.Formatter.Color), m.width)
+	right := renderWithColor(stateStyle, state, m.config.Formatter.Color)
+	stats := m.issueStats()
+	if stats.Groups > 0 {
+		issueStyle := warnStyle
+		if stats.Errors > 0 {
+			issueStyle = alertStyle
+		}
+		badge := fmt.Sprintf("⚠ %d ISSUES", stats.Groups)
+		if stats.Groups == 1 {
+			badge = "⚠ 1 ISSUE"
+		}
+		right = renderWithColor(issueStyle, badge, m.config.Formatter.Color) + "  " + right
+	}
+	return joinSides(left, right, m.width)
 }
 
 func (m model) renderFilterBar() string {
@@ -561,11 +595,189 @@ func (m model) renderFooter() string {
 	shortcuts := []string{
 		renderKey("F1", "mode", m.config.Formatter.Color),
 		renderKey("F2", "resources", m.config.Formatter.Color),
+		m.renderIssueKey(),
 		m.renderHeartbeatKey(),
 		renderKey("Enter", "inspect", m.config.Formatter.Color),
 		renderKey("Ctrl+Q", "quit", m.config.Formatter.Color),
 	}
 	return truncate(strings.Join(shortcuts, "  "), m.width)
+}
+
+func (m model) renderIssueKey() string {
+	stats := m.issueStats()
+	key := "F3"
+	if m.config.Formatter.Color && stats.Groups > 0 {
+		style := warnStyle
+		if stats.Errors > 0 {
+			style = alertStyle
+		}
+		key = style.Render(key)
+	}
+	label := "issues"
+	if stats.Groups > 0 {
+		label += fmt.Sprintf(" [%d]", stats.Groups)
+	}
+	return key + " " + renderWithColor(dimStyle, label, m.config.Formatter.Color)
+}
+
+func (m model) issueStats() core.IssueStats {
+	if m.issues == nil {
+		return core.IssueStats{}
+	}
+	return m.issues.Stats(time.Now(), core.IssueActiveWindow)
+}
+
+func (m model) activeIssues() []core.Issue {
+	if m.issues == nil {
+		return nil
+	}
+	return m.issues.Issues(time.Now(), core.IssueActiveWindow)
+}
+
+func (m model) renderIssueRadar() string {
+	issues := m.activeIssues()
+	stats := m.issueStats()
+	header := renderWithColor(headerStyle, "tailg", m.config.Formatter.Color) + "  Issue radar"
+	status := "No active issues"
+	if stats.Groups > 0 {
+		status = fmt.Sprintf("%d active • %d events", stats.Groups, stats.Events)
+	}
+	header = joinSides(header, renderWithColor(dimStyle, status, m.config.Formatter.Color), m.width)
+
+	height := max(1, m.height-3)
+	selected := min(max(0, m.issueIndex), max(0, len(issues)-1))
+	start := 0
+	if selected >= height {
+		start = selected - height + 1
+	}
+	end := min(len(issues), start+height)
+	lines := make([]string, 0, height)
+	for index := start; index < end; index++ {
+		lines = append(lines, renderIssueRow(issues[index], index == selected, m.width, m.config.Formatter.Color, time.Now()))
+	}
+	if len(lines) == 0 {
+		lines = append(lines, renderWithColor(okStyle, "✓ No errors or warnings detected in the active window", m.config.Formatter.Color))
+	}
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	footer := "Up/Down or N/P select  Enter loads context  C clears baseline  F3/Esc closes"
+	return strings.Join([]string{header, renderRule(m.width, m.config.Formatter.Color), strings.Join(lines, "\n"), truncate(renderWithColor(dimStyle, footer, m.config.Formatter.Color), m.width)}, "\n")
+}
+
+func renderIssueRow(issue core.Issue, selected, width, color bool, now time.Time) string {
+	gutter := "  "
+	if selected {
+		gutter = "> "
+		if color {
+			gutter = headerStyle.Render("▌ ")
+		}
+	}
+	severityStyle := warnStyle
+	if issue.Severity == core.IssueError {
+		severityStyle = alertStyle
+	}
+	prefix := gutter + renderCell(string(issue.Severity), 5, severityStyle, color)
+	prefix += renderCell(fmt.Sprintf("%d×", issue.Count), 7, keyStyle, color)
+	if width >= 78 {
+		source := issue.Service
+		if len(issue.Pods) > 1 {
+			source += fmt.Sprintf(" (%d pods)", len(issue.Pods))
+		}
+		prefix += renderCell(source, 22, dimStyle, color)
+	}
+	suffix := issueAge(now.Sub(issue.LastSeen))
+	if issue.Increasing {
+		suffix = renderWithColor(alertStyle, "↑", color) + " " + suffix
+	}
+	messageWidth := max(1, width-lipgloss.Width(prefix)-lipgloss.Width(suffix)-2)
+	message := truncatePlain(issue.Summary, messageWidth)
+	spaces := max(1, width-lipgloss.Width(prefix)-lipgloss.Width(message)-lipgloss.Width(suffix))
+	return truncate(prefix+message+strings.Repeat(" ", spaces)+renderWithColor(dimStyle, suffix, color), width)
+}
+
+func issueAge(age time.Duration) string {
+	if age < 0 {
+		age = 0
+	}
+	switch {
+	case age < time.Minute:
+		return fmt.Sprintf("%ds", int(age.Seconds()))
+	case age < time.Hour:
+		return fmt.Sprintf("%dm", int(age.Minutes()))
+	case age < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(age.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(age.Hours()/24))
+	}
+}
+
+func (m model) updateIssueKey(key string) (tea.Model, tea.Cmd) {
+	issues := m.activeIssues()
+	if len(issues) == 0 {
+		m.issueIndex = 0
+	} else {
+		m.issueIndex = min(max(0, m.issueIndex), len(issues)-1)
+	}
+	switch key {
+	case "f3", "esc":
+		m.issueOpen = false
+	case "up", "p", "k":
+		m.issueIndex = max(0, m.issueIndex-1)
+	case "down", "n", "j":
+		m.issueIndex = min(max(0, len(issues)-1), m.issueIndex+1)
+	case "c":
+		if m.issues != nil {
+			m.issues.Clear()
+		}
+		m.issueIndex = 0
+	case "enter":
+		if len(issues) == 0 {
+			return m, nil
+		}
+		issue := issues[m.issueIndex]
+		m.issueOpen = false
+		if issue.Kind == "STREAM" {
+			m.notice = "Stream issue: " + issue.Summary
+			return m, nil
+		}
+		return m, m.applyIssueFilter(issue.SearchTerm)
+	}
+	return m, nil
+}
+
+func (m *model) applyIssueFilter(filter string) tea.Cmd {
+	filter = strings.TrimSpace(filter)
+	m.input.SetValue(filter)
+	m.state.SetFilter(filter)
+	m.state.SetMatchesOnly(false)
+	m.generation++
+	m.cancelSearch()
+	m.searching = filter != "" && m.config.Search != nil
+	m.searchMatches = 0
+	m.searchLines = 0
+	m.selected = m.state.MatchIndex()
+	m.followsLive = false
+	m.scrollToSelection()
+
+	modeRevision, modeErr := writeSharedMode(m.config.FilterFile, false, m.lastModeRev)
+	if modeErr != nil {
+		m.notice = "Filter mode sync failed: " + modeErr.Error()
+	} else {
+		m.lastSharedMode = false
+		m.lastModeRev = modeRevision
+	}
+	revision, err := writeSharedText(m.config.FilterFile, filter, m.lastTextRev)
+	if err != nil {
+		m.notice = "Filter sync failed: " + err.Error()
+	} else {
+		m.lastSharedText = filter
+		m.lastTextRev = revision
+	}
+	if filter == "" {
+		return nil
+	}
+	return m.searchCommand(m.generation, filter)
 }
 
 func (m model) renderHeartbeatKey() string {

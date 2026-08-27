@@ -368,3 +368,54 @@ func TestReconnectStateIsTrackedPerStream(t *testing.T) {
 		t.Fatalf("recovered stream did not clear reconnect state: %q", m.renderHeader())
 	}
 }
+
+func TestIssueRadarRendersGroupedIssuesAndHeaderBadge(t *testing.T) {
+	now := time.Now()
+	radar := core.NewIssueRadar(20)
+	radar.Observe(core.LogEvent{Pod: "checkout-7d9", Container: "checkout-api", Message: "request timed out after 3000 ms", ObservedAt: now})
+	m := model{
+		config:      Config{Namespace: "production", Formatter: core.Formatter{Color: false}},
+		items:       []core.InventoryItem{{Pod: "checkout-7d9", Container: "checkout-api"}},
+		state:       core.NewFilterState(20),
+		input:       textinput.New(),
+		issues:      radar,
+		issueOpen:   true,
+		width:       120,
+		height:      12,
+		followsLive: true,
+	}
+
+	view := m.View()
+	for _, expected := range []string{"Issue radar", "1 active • 1 events", "ERR", "checkout-api", "request timed out", "Enter loads context", "F3/Esc closes"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("issue radar missing %q:\n%s", expected, view)
+		}
+	}
+	m.issueOpen = false
+	if header := m.renderHeader(); !strings.Contains(header, "⚠ 1 ISSUE") {
+		t.Fatalf("header missing issue badge: %q", header)
+	}
+}
+
+func TestIssueRadarEnterLoadsCompleteHistoryContext(t *testing.T) {
+	radar := core.NewIssueRadar(20)
+	radar.Observe(core.LogEvent{Pod: "api-a", Container: "api", Message: "database timeout after 3000 ms", ObservedAt: time.Now()})
+	state := core.NewFilterState(20)
+	state.Append("[api-a] [12:00:00 INF] before", "[api-a] [12:00:01 ERR] database timeout after 3000 ms", "[api-a] [12:00:02 INF] after")
+	state.SetMatchesOnly(true)
+	m := model{
+		ctx:       context.Background(),
+		config:    Config{Search: func(context.Context, string) ([]string, error) { return nil, nil }},
+		state:     state,
+		input:     textinput.New(),
+		issues:    radar,
+		issueOpen: true,
+		searches:  &searchController{},
+	}
+
+	updated, command := m.updateIssueKey("enter")
+	got := updated.(model)
+	if command == nil || got.issueOpen || got.input.Value() != "timeout" || got.state.MatchesOnly() || got.followsLive {
+		t.Fatalf("issue context state = open:%t filter:%q matchesOnly:%t followsLive:%t command:%v", got.issueOpen, got.input.Value(), got.state.MatchesOnly(), got.followsLive, command)
+	}
+}

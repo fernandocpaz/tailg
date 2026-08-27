@@ -75,6 +75,7 @@ to the filter mode.
 | --- | --- |
 | `F1` | Toggle between context view and matching lines only |
 | `F2` | Browse ConfigMaps and Secrets mapped into the pod |
+| `F3` | Open the Issue Radar for grouped errors and warnings |
 | `F5` | Open heartbeat diagnostics |
 | `Up` / `Down` | Move the selected log line |
 | `PageUp` / `PageDown` | Move by one screen |
@@ -86,6 +87,12 @@ to the filter mode.
 F1's matching-only mode and the filter text are synchronized across panes and
 tiled windows launched by the same parent process. Secret values are decoded
 only after you explicitly open the selected Secret.
+
+The Issue Radar continuously groups error levels, HTTP 5xx responses, panics,
+exceptions, timeouts, connection failures, retries, and stream interruptions.
+It shows active issue and event counts without hiding the live logs. Select an
+issue and press `Enter` to load its complete-history context; press `C` in the
+radar to clear the current baseline.
 
 Use `--no-live-filter` for plain streaming output.
 
