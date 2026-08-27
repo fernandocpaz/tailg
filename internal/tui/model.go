@@ -89,7 +89,7 @@ type model struct {
 	searching      bool
 	searchMatches  int
 	searchLines    int
-	reconnecting   bool
+	reconnecting   map[string]struct{}
 }
 
 type searchController struct {
@@ -193,15 +193,18 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		event := core.LogEvent(msg)
 		if event.Err != nil {
 			m.notice = event.Err.Error()
-			if event.Closed {
-				m.notice += "; reconnecting..."
-				m.reconnecting = true
+		}
+		if event.Closed {
+			if event.Err == nil {
+				m.notice = "log stream ended"
 			}
+			m.notice += "; reconnecting..."
+			m.markReconnecting(event.Pod, event.Container)
 		}
 		if !event.Closed {
-			wasReconnecting := m.reconnecting
-			m.reconnecting = false
-			if wasReconnecting && strings.HasSuffix(m.notice, "; reconnecting...") {
+			wasReconnecting := m.isReconnecting()
+			m.markConnected(event.Pod, event.Container)
+			if wasReconnecting && !m.isReconnecting() && strings.HasSuffix(m.notice, "; reconnecting...") {
 				m.notice = ""
 			}
 			m.heartbeat.Add(event.Pod, event.Container, event.Message, event.ObservedAt)
@@ -218,6 +221,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = msg.err.Error()
 		} else {
 			m.items = msg.items
+			m.pruneReconnects(msg.items)
 		}
 		return m, nil
 	case searchMsg:
@@ -510,7 +514,7 @@ func (m model) renderHeader() string {
 
 	state := "● LIVE"
 	stateStyle := okStyle
-	if m.reconnecting {
+	if m.isReconnecting() {
 		state = "↻ RECONNECTING"
 		stateStyle = warnStyle
 	} else if !m.followsLive {
@@ -672,36 +676,71 @@ func levelRenderStyle(level string) lipgloss.Style {
 }
 
 func highlightText(value, query string, color, errorLine bool) string {
-	query = strings.ToLower(strings.TrimSpace(query))
+	query = strings.TrimSpace(query)
 	if query == "" || !color {
 		if errorLine && color {
 			return alertStyle.Render(value)
 		}
 		return value
 	}
-	lower := strings.ToLower(value)
+	matches := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(query)).FindAllStringIndex(value, -1)
+	if len(matches) == 0 {
+		if errorLine {
+			return alertStyle.Render(value)
+		}
+		return value
+	}
 	var builder strings.Builder
 	start := 0
-	for {
-		index := strings.Index(lower[start:], query)
-		if index < 0 {
-			remaining := value[start:]
-			if errorLine {
-				remaining = alertStyle.Render(remaining)
-			}
-			builder.WriteString(remaining)
-			break
-		}
-		index += start
-		before := value[start:index]
+	for _, match := range matches {
+		before := value[start:match[0]]
 		if errorLine {
 			before = alertStyle.Render(before)
 		}
 		builder.WriteString(before)
-		builder.WriteString(matchStyle.Render(value[index : index+len(query)]))
-		start = index + len(query)
+		builder.WriteString(matchStyle.Render(value[match[0]:match[1]]))
+		start = match[1]
 	}
+	remaining := value[start:]
+	if errorLine {
+		remaining = alertStyle.Render(remaining)
+	}
+	builder.WriteString(remaining)
 	return builder.String()
+}
+
+func streamKey(pod, container string) string {
+	return core.InventoryItem{Pod: pod, Container: container}.Key()
+}
+
+func (m *model) markReconnecting(pod, container string) {
+	if m.reconnecting == nil {
+		m.reconnecting = map[string]struct{}{}
+	}
+	m.reconnecting[streamKey(pod, container)] = struct{}{}
+}
+
+func (m *model) markConnected(pod, container string) {
+	delete(m.reconnecting, streamKey(pod, container))
+}
+
+func (m model) isReconnecting() bool {
+	return len(m.reconnecting) > 0
+}
+
+func (m *model) pruneReconnects(items []core.InventoryItem) {
+	wanted := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		wanted[item.Key()] = struct{}{}
+	}
+	for key := range m.reconnecting {
+		if _, ok := wanted[key]; !ok {
+			delete(m.reconnecting, key)
+		}
+	}
+	if !m.isReconnecting() && strings.HasSuffix(m.notice, "; reconnecting...") {
+		m.notice = ""
+	}
 }
 
 func renderKey(key, label string, color bool) string {

@@ -333,3 +333,38 @@ func TestRenderLogRowStaysWithinTerminalWidth(t *testing.T) {
 		t.Fatalf("row width = %d, want <= 72: %q", width, row)
 	}
 }
+
+func TestHighlightTextUsesOriginalUnicodeOffsets(t *testing.T) {
+	rendered := highlightText("Ⱥa", "a", true, false)
+	if plain := core.StripANSI(rendered); plain != "Ⱥa" {
+		t.Fatalf("highlighted text = %q, want %q", plain, "Ⱥa")
+	}
+	if !strings.Contains(rendered, matchStyle.Render("a")) {
+		t.Fatalf("highlight did not select the matching original text: %q", rendered)
+	}
+}
+
+func TestReconnectStateIsTrackedPerStream(t *testing.T) {
+	m := model{
+		config:       Config{Formatter: core.Formatter{}},
+		state:        core.NewFilterState(10),
+		heartbeat:    &core.HeartbeatAnalyzer{},
+		width:        100,
+		height:       10,
+		followsLive: true,
+	}
+
+	updated, _ := m.Update(logMsg(core.LogEvent{Pod: "pod-a", Container: "app", Closed: true, Err: errors.New("stream failed")}))
+	m = updated.(model)
+	updated, _ = m.Update(logMsg(core.LogEvent{Pod: "pod-b", Container: "app", Message: "healthy"}))
+	m = updated.(model)
+	if !m.isReconnecting() || !strings.Contains(m.renderHeader(), "RECONNECTING") {
+		t.Fatalf("healthy traffic from another stream cleared reconnect state: %q", m.renderHeader())
+	}
+
+	updated, _ = m.Update(logMsg(core.LogEvent{Pod: "pod-a", Container: "app", Message: "recovered"}))
+	m = updated.(model)
+	if m.isReconnecting() || !strings.Contains(m.renderHeader(), "LIVE") {
+		t.Fatalf("recovered stream did not clear reconnect state: %q", m.renderHeader())
+	}
+}
