@@ -21,6 +21,29 @@ type StatusOptions struct {
 	ExamineRepos func([]string) error
 }
 
+type PodStatusSummary struct {
+	Name     string
+	Phase    string
+	Ready    int
+	Total    int
+	Restarts int
+	Issues   []string
+}
+
+func PodStatusSummaries(payload map[string]any) []PodStatusSummary {
+	var result []PodStatusSummary
+	for _, raw := range sliceValue(payload["items"]) {
+		pod := mapValue(raw)
+		ready, total := readyCounts(pod)
+		result = append(result, PodStatusSummary{
+			Name: podName(pod), Phase: podPhase(pod), Ready: ready, Total: total,
+			Restarts: restartCount(pod), Issues: PodHealthIssues(pod),
+		})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	return result
+}
+
 func PodHealthIssues(pod map[string]any) []string {
 	metadata, spec, status := mapValue(pod["metadata"]), mapValue(pod["spec"]), mapValue(pod["status"])
 	phase := podPhase(pod)

@@ -15,7 +15,7 @@ func main() {
 	defer cancel()
 	command := app.NewCommand(ctx, os.Stdin, os.Stdout, os.Stderr)
 	if err := command.Execute(); err != nil {
-		if app.ExitCode(err) == 1 {
+		if !app.IsExitError(err) {
 			fmt.Fprintln(os.Stderr, err)
 		}
 		os.Exit(app.ExitCode(err))

@@ -43,6 +43,21 @@ type IssueStats struct {
 	Warnings int
 }
 
+// ClassifyIssue returns the normalized issue represented by a log event. The
+// returned key is stable for events that IssueRadar would group together.
+func ClassifyIssue(event LogEvent) (Issue, bool) {
+	detected, ok := detectIssue(event)
+	if !ok {
+		return Issue{}, false
+	}
+	service := strings.TrimSpace(event.Container)
+	if service == "" {
+		service = "logs"
+	}
+	key := service + "\x00" + detected.kind + "\x00" + issueFingerprint(detected.summary)
+	return Issue{Key: key, Severity: detected.severity, Kind: detected.kind, Summary: detected.summary, SearchTerm: detected.search, Service: service}, true
+}
+
 type issueRecord struct {
 	issue   Issue
 	buckets map[int64]*issueBucket
@@ -96,7 +111,7 @@ func (r *IssueRadar) Observe(event LogEvent) bool {
 	if r == nil {
 		return false
 	}
-	detected, ok := detectIssue(event)
+	classified, ok := ClassifyIssue(event)
 	if !ok {
 		return false
 	}
@@ -104,11 +119,7 @@ func (r *IssueRadar) Observe(event LogEvent) bool {
 	if observed.IsZero() {
 		observed = time.Now()
 	}
-	service := strings.TrimSpace(event.Container)
-	if service == "" {
-		service = "logs"
-	}
-	key := service + "\x00" + detected.kind + "\x00" + issueFingerprint(detected.summary)
+	key := classified.Key
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -123,11 +134,11 @@ func (r *IssueRadar) Observe(event LogEvent) bool {
 		record = &issueRecord{
 			issue: Issue{
 				Key:        key,
-				Severity:   detected.severity,
-				Kind:       detected.kind,
-				Summary:    detected.summary,
-				SearchTerm: detected.search,
-				Service:    service,
+				Severity:   classified.Severity,
+				Kind:       classified.Kind,
+				Summary:    classified.Summary,
+				SearchTerm: classified.SearchTerm,
+				Service:    classified.Service,
 				FirstSeen:  observed,
 			},
 			buckets: map[int64]*issueBucket{},
