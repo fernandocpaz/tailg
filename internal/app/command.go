@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/fernandocpaz/tailg/internal/agent"
 	"github.com/fernandocpaz/tailg/internal/core"
 )
 
@@ -107,6 +108,10 @@ func NewCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) 
 	flags.StringVar(&options.FilterFile, "filter-file", "", "internal shared filter file")
 	_ = flags.MarkHidden("filter-file")
 	flags.BoolVar(&options.NoColor, "no-color", false, "disable ANSI colors")
+	command.AddCommand(newAgentCommand(ctx, stdin, stdout, stderr, agent.ModeIssues))
+	command.AddCommand(newAgentCommand(ctx, stdin, stdout, stderr, agent.ModeDiagnose))
+	command.AddCommand(newIssueCommand(ctx, stdin, stdout, stderr))
+	command.AddCommand(newMCPCommand(ctx, stdin, stdout, stderr))
 	command.SetIn(stdin)
 	command.SetOut(stdout)
 	command.SetErr(stderr)
@@ -116,6 +121,10 @@ func NewCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) 
 type exitError int
 
 func (e exitError) Error() string { return fmt.Sprintf("exit status %d", int(e)) }
+func IsExitError(err error) bool {
+	_, ok := err.(exitError)
+	return ok
+}
 func ExitCode(err error) int {
 	if err == nil {
 		return 0

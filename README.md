@@ -5,7 +5,8 @@ Human-friendly Kubernetes log tailing, built in Go.
 `tailg` follows logs across deployments, stateful sets, daemon sets, jobs, and
 pods by calling your configured `kubectl`. It adds a full-screen filter, shared
 filtering across Windows Terminal panes, pod resource inspection, heartbeat
-diagnostics, namespace health monitoring, and troubleshooting bundles.
+diagnostics, namespace health monitoring, troubleshooting bundles, and bounded
+structured diagnostics for scripts and AI agents.
 
 ## Requirements
 
@@ -42,6 +43,8 @@ tailg --namespace default
 tailg --status --namespace default
 tailg example-app default --dump
 tailg deployment/example-app default --deployment-dump
+tailg issues example-app default
+tailg diagnose example-app default --output ndjson
 ```
 
 Targets may be Kubernetes resources, app names, case-insensitive wildcard app
@@ -115,6 +118,41 @@ when `git` is available, it can also inspect configured workload repositories.
 pod descriptions, and current/previous logs. `--deployment-dump` additionally
 collects rollout status and history. Each bundle includes `README.md`,
 `manifest.json`, and a navigable `index.html`.
+
+## Scripts and AI agents
+
+`tailg issues` and `tailg diagnose` are one-shot, read-only commands. They emit
+the versioned `tailg.ai/v1` schema as JSON or newline-delimited JSON and never
+launch the TUI. Issue IDs are stable across dynamic values such as request IDs,
+so an agent can request the same issue's bounded context:
+
+```sh
+tailg issues example-app default
+tailg issue 8d769df321ca3f17 example-app default
+tailg diagnose --namespace default --max-lines 5000 --max-bytes 2097152
+```
+
+The commands apply strict limits for collection time, lines, grouped issues,
+context lines, and encoded bytes. Common bearer tokens, JWTs, passwords, API
+keys, and secrets are redacted before output. Secret values are never fetched.
+
+Exit codes are designed for automation: `0` is healthy, `1` means warnings,
+`2` means errors or unhealthy pods, and `3` means collection or output failed.
+
+`tailg mcp` runs a read-only MCP server over stdio. It exposes
+`tailg_list_issues`, `tailg_diagnose`, and `tailg_get_issue_context`, using the
+same collection and classification engine as the CLI. A typical client entry is:
+
+```json
+{
+  "mcpServers": {
+    "tailg": {
+      "command": "tailg",
+      "args": ["mcp", "--namespace", "default"]
+    }
+  }
+}
+```
 
 ## Development
 
