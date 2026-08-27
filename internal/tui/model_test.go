@@ -307,9 +307,9 @@ func TestViewRendersOperationsConsoleLayout(t *testing.T) {
 	m := model{
 		config: Config{
 			Namespace: "production",
-			Items:     []core.InventoryItem{{Pod: "checkout-7d9", Container: "checkout-api"}},
 			Formatter: core.Formatter{ShowPod: true, Color: false},
 		},
+		items:         []core.InventoryItem{{Pod: "checkout-7d9", Container: "checkout-api"}},
 		state:         state,
 		input:         input,
 		width:         120,
