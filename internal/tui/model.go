@@ -665,7 +665,7 @@ func (m model) renderIssueRadar() string {
 	return strings.Join([]string{header, renderRule(m.width, m.config.Formatter.Color), strings.Join(lines, "\n"), truncate(renderWithColor(dimStyle, footer, m.config.Formatter.Color), m.width)}, "\n")
 }
 
-func renderIssueRow(issue core.Issue, selected, width, color bool, now time.Time) string {
+func renderIssueRow(issue core.Issue, selected bool, width int, color bool, now time.Time) string {
 	gutter := "  "
 	if selected {
 		gutter = "> "
