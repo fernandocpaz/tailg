@@ -77,7 +77,7 @@ var (
 	issueRetry          = regexp.MustCompile(`(?i)\b(retry|retrying|backoff|throttled|throttling|rate\s+limit(ed)?)\b`)
 	issueZeroCounter    = regexp.MustCompile(`(?i)\b(errors?|failed|failures?|faults?|dlq)\s*[=:]\s*0\b`)
 	issueNegation       = regexp.MustCompile(`(?i)\bno\s+(errors?|failures?|faults?)\b`)
-	issueLeadingLevel   = regexp.MustCompile(`(?i)^\s*(ERR|ERROR|FATAL|CRIT|CRITICAL|WRN|WARN|WARNING)\b`)
+	issueLeadingLevel   = regexp.MustCompile(`(?i)^\s*(ERR|ERROR|FATAL|CRIT|CRITICAL|WRN|WARN|WARNING)(\s+|:\s*|$)`)
 	issueLogPrefix      = regexp.MustCompile(`(?i)^(\[[^\]]+\]\s*)?(\[?\d{2}:\d{2}:\d{2}(\.\d+)?\s+(ERR|ERROR|WRN|WARN|WARNING|INF|INFO|DBG|DEBUG|VRB|VERBOSE|TRC|TRACE)\]?\s*)`)
 	issueGUID           = regexp.MustCompile(`(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
 	issueLongHex        = regexp.MustCompile(`(?i)\b[0-9a-f]{12,}\b`)
