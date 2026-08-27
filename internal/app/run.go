@@ -249,7 +249,7 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 		return followPlain(ctx, runner, items, inventoryProvider, options, formatter, stdout, stderr)
 	}
 	title := logTitle(items, effectiveNamespace, options.Context, resolvedTarget)
-	err = tui.Run(ctx, tui.Config{Title: title, Items: items, Formatter: formatter, HeartbeatWindow: options.HeartbeatWindow, RefreshInterval: options.RefreshInterval, BufferLines: options.BufferLines, FilterFile: options.FilterFile,
+	err = tui.Run(ctx, tui.Config{Title: title, Namespace: effectiveNamespace, KubeContext: options.Context, Target: resolvedTarget, Items: items, Formatter: formatter, HeartbeatWindow: options.HeartbeatWindow, RefreshInterval: options.RefreshInterval, BufferLines: options.BufferLines, FilterFile: options.FilterFile,
 		Stream: func(streamCtx context.Context, item core.InventoryItem, events chan<- core.LogEvent) error {
 			return runner.Stream(streamCtx, item, kube.LogOptions{Since: options.Since, Tail: options.Tail, Follow: true}, events)
 		}, Inventory: inventoryProvider,

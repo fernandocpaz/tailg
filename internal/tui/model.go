@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -21,6 +22,9 @@ import (
 
 type Config struct {
 	Title           string
+	Namespace       string
+	KubeContext     string
+	Target          string
 	Items           []core.InventoryItem
 	Formatter       core.Formatter
 	HeartbeatWindow time.Duration
@@ -82,6 +86,10 @@ type model struct {
 	lastTextRev    sharedRevision
 	lastModeRev    sharedRevision
 	searches       *searchController
+	searching      bool
+	searchMatches  int
+	searchLines    int
+	reconnecting   bool
 }
 
 type searchController struct {
@@ -110,12 +118,22 @@ func (s *searchController) stop() {
 }
 
 var (
-	headerStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
-	selectedStyle = lipgloss.NewStyle().Reverse(true)
-	okStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10"))
-	warnStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("11"))
-	alertStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9"))
-	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	headerStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	selectedStyle    = lipgloss.NewStyle().Background(lipgloss.AdaptiveColor{Light: "#DCE7F7", Dark: "#1F2937"})
+	matchStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("11"))
+	filterLabelStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	modeStyle        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("12")).Padding(0, 1)
+	okStyle          = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10"))
+	warnStyle        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("11"))
+	alertStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9"))
+	dimStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	keyStyle         = lipgloss.NewStyle().Bold(true)
+)
+
+var (
+	bracketTimeLevelPattern = regexp.MustCompile(`^\[(\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+([[:alpha:]]+)\]\s*`)
+	plainTimeLevelPattern   = regexp.MustCompile(`^(\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+\[([[:alpha:]]+)\]\s*`)
+	leadingBracketPattern   = regexp.MustCompile(`^\[([^\]]+)\]\s*`)
 )
 
 func Run(parent context.Context, config Config) error {
@@ -126,7 +144,7 @@ func Run(parent context.Context, config Config) error {
 	go manageStreams(ctx, config, events)
 
 	input := textinput.New()
-	input.Prompt = "Filter: "
+	input.Prompt = ""
 	input.Focus()
 	bufferLines := config.BufferLines
 	if bufferLines <= 0 {
@@ -146,6 +164,7 @@ func Run(parent context.Context, config Config) error {
 		lastSharedText: shared.text, lastSharedMode: shared.mode,
 		lastTextRev: shared.textRevision, lastModeRev: shared.modeRevision,
 		searches: &searchController{},
+		searching: strings.TrimSpace(shared.text) != "" && config.Search != nil,
 	}
 	program := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := program.Run()
@@ -164,7 +183,11 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.input.Width = max(10, msg.Width-9)
+		inputWidth := msg.Width - 52
+		if msg.Width < 80 {
+			inputWidth = msg.Width - 30
+		}
+		m.input.Width = max(10, min(48, inputWidth))
 		return m, nil
 	case logMsg:
 		event := core.LogEvent(msg)
@@ -172,9 +195,15 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = event.Err.Error()
 			if event.Closed {
 				m.notice += "; reconnecting..."
+				m.reconnecting = true
 			}
 		}
 		if !event.Closed {
+			wasReconnecting := m.reconnecting
+			m.reconnecting = false
+			if wasReconnecting && strings.HasSuffix(m.notice, "; reconnecting...") {
+				m.notice = ""
+			}
 			m.heartbeat.Add(event.Pod, event.Container, event.Message, event.ObservedAt)
 			lines := m.config.Formatter.Format(event.Pod, event.Container, event.Message, true)
 			added := m.state.Append(lines...)
@@ -196,10 +225,14 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.err != nil {
+			m.searching = false
+			m.searchMatches = 0
+			m.searchLines = 0
 			m.notice = "Full history search failed: " + msg.err.Error()
 			return m, nil
 		}
 		if m.state.SetSearchResults(msg.query, msg.lines) {
+			m.searching = false
 			m.selected = m.state.MatchIndex()
 			m.scrollToSelection()
 			matches := 0
@@ -209,11 +242,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					matches++
 				}
 			}
-			if m.state.MatchesOnly() {
-				m.notice = fmt.Sprintf("Loaded %d matching log lines", matches)
-			} else {
-				m.notice = fmt.Sprintf("Loaded %d lines from earliest match (%d matches)", len(msg.lines), matches)
-			}
+			m.searchMatches = matches
+			m.searchLines = len(msg.lines)
+			m.notice = ""
 		}
 		return m, nil
 	case resourceListMsg:
@@ -246,6 +277,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.state.SetFilter(shared.text)
 				m.generation++
 				m.cancelSearch()
+				m.searching = strings.TrimSpace(shared.text) != "" && m.config.Search != nil
+				m.searchMatches = 0
+				m.searchLines = 0
 				m.selected = len(m.state.Lines()) - 1
 				m.followsLive = true
 				if strings.TrimSpace(shared.text) != "" {
@@ -311,7 +345,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.lastSharedMode = mode
 				m.lastModeRev = revision
-				m.notice = fmt.Sprintf("F1 matches only [%s]", map[bool]string{true: "ON", false: "OFF"}[mode])
+				m.notice = ""
 			}
 			m.selected = m.state.MatchIndex()
 			m.scrollToSelection()
@@ -373,6 +407,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.state.SetFilter(after)
 			m.generation++
 			m.cancelSearch()
+			m.searching = strings.TrimSpace(after) != "" && m.config.Search != nil
+			m.searchMatches = 0
+			m.searchLines = 0
 			m.selected = len(m.state.Lines()) - 1
 			m.followsLive = true
 			m.scroll = 0
@@ -425,29 +462,12 @@ func (m model) View() string {
 	end := min(len(lines), start+height)
 	visible := make([]string, 0, height)
 	for index := start; index < end; index++ {
-		line := lines[index]
-		if index == m.selected {
-			line = selectedStyle.Render(core.StripANSI(line))
-		}
-		visible = append(visible, truncate(line, m.width))
+		visible = append(visible, renderLogRow(lines[index], m.input.Value(), index == m.selected, m.width, m.config.Formatter.ShowPod, m.config.Formatter.Color))
 	}
 	for len(visible) < height {
 		visible = append(visible, "")
 	}
-	heartbeatSeverity := m.heartbeat.Severity(m.config.HeartbeatWindow)
-	mode := "OFF"
-	if m.state.MatchesOnly() {
-		mode = "ON"
-	}
-	live := "LIVE"
-	if !m.followsLive {
-		live = fmt.Sprintf("SCROLLED -%d", m.scroll)
-	}
-	status := fmt.Sprintf("F1 matches only [%s] | F2 pod resources | %s | %s", mode, styleSeverity(heartbeatSeverity).Render("F5 heartbeat ["+heartbeatSeverity+"]"), live)
-	if m.notice != "" {
-		status = m.notice
-	}
-	return strings.Join([]string{headerStyle.Render(m.config.Title), strings.Repeat("-", max(1, m.width)), strings.Join(visible, "\n"), strings.Repeat("-", max(1, m.width)), m.input.View(), truncate(status, m.width)}, "\n")
+	return strings.Join([]string{m.renderHeader(), renderRule(m.width, m.config.Formatter.Color), strings.Join(visible, "\n"), renderRule(m.width, m.config.Formatter.Color), m.renderFilterBar(), m.renderFooter()}, "\n")
 }
 
 func (m model) panel(title, body, footer string) string {
@@ -459,9 +479,276 @@ func (m model) panel(title, body, footer string) string {
 	for len(lines) < height {
 		lines = append(lines, "")
 	}
-	return strings.Join([]string{headerStyle.Render(title), strings.Repeat("-", max(1, m.width)), strings.Join(lines, "\n"), dimStyle.Render(footer)}, "\n")
+	header := renderWithColor(headerStyle, "tailg", m.config.Formatter.Color) + "  " + title
+	return strings.Join([]string{truncate(header, m.width), renderRule(m.width, m.config.Formatter.Color), strings.Join(lines, "\n"), truncate(renderWithColor(dimStyle, footer, m.config.Formatter.Color), m.width)}, "\n")
 }
 func (m model) logHeight() int { return max(1, m.height-6) }
+
+func (m model) renderHeader() string {
+	services := strings.Join(core.ServiceNames(m.items), ",")
+	if services == "" {
+		services = "logs"
+	}
+	namespace := m.config.Namespace
+	if namespace == "" {
+		namespace = "default"
+	}
+	podCount := len(core.UniquePods(m.items))
+	podLabel := fmt.Sprintf("%d pods", podCount)
+	if podCount == 1 {
+		podLabel = "1 pod"
+	}
+	left := strings.Join([]string{
+		renderWithColor(headerStyle, "tailg", m.config.Formatter.Color),
+		truncate(services, 32),
+		renderWithColor(dimStyle, namespace, m.config.Formatter.Color),
+		renderWithColor(dimStyle, podLabel, m.config.Formatter.Color),
+	}, "  ")
+	if m.width >= 110 && m.config.KubeContext != "" {
+		left += "  " + renderWithColor(dimStyle, "context "+m.config.KubeContext, m.config.Formatter.Color)
+	}
+
+	state := "● LIVE"
+	stateStyle := okStyle
+	if m.reconnecting {
+		state = "↻ RECONNECTING"
+		stateStyle = warnStyle
+	} else if !m.followsLive {
+		state = fmt.Sprintf("Ⅱ PAUSED -%d", m.scroll)
+		stateStyle = warnStyle
+	}
+	return joinSides(left, renderWithColor(stateStyle, state, m.config.Formatter.Color), m.width)
+}
+
+func (m model) renderFilterBar() string {
+	mode := "CONTEXT"
+	if m.state.MatchesOnly() {
+		mode = "MATCHES ONLY"
+	}
+	modeLabel := "[" + mode + "]"
+	if m.config.Formatter.Color {
+		modeLabel = modeStyle.Render(mode)
+	}
+	left := renderWithColor(filterLabelStyle, "FILTER", m.config.Formatter.Color) + "  " + m.input.View() + "  " + modeLabel
+	right := ""
+	if m.width >= 80 {
+		right = m.searchStatus()
+	}
+	return joinSides(left, renderWithColor(dimStyle, right, m.config.Formatter.Color), m.width)
+}
+
+func (m model) searchStatus() string {
+	if strings.TrimSpace(m.input.Value()) == "" {
+		return ""
+	}
+	if m.searching {
+		return "searching history..."
+	}
+	return fmt.Sprintf("%d matches • %d lines", m.searchMatches, m.searchLines)
+}
+
+func (m model) renderFooter() string {
+	if m.notice != "" {
+		return truncate(renderWithColor(alertStyle, m.notice, m.config.Formatter.Color), m.width)
+	}
+	if m.width < 80 && m.searchStatus() != "" {
+		return truncate(renderWithColor(dimStyle, m.searchStatus(), m.config.Formatter.Color), m.width)
+	}
+	shortcuts := []string{
+		renderKey("F1", "mode", m.config.Formatter.Color),
+		renderKey("F2", "resources", m.config.Formatter.Color),
+		m.renderHeartbeatKey(),
+		renderKey("Enter", "inspect", m.config.Formatter.Color),
+		renderKey("Ctrl+Q", "quit", m.config.Formatter.Color),
+	}
+	return truncate(strings.Join(shortcuts, "  "), m.width)
+}
+
+func (m model) renderHeartbeatKey() string {
+	severity := "UNKNOWN"
+	if m.heartbeat != nil {
+		severity = m.heartbeat.Severity(m.config.HeartbeatWindow)
+	}
+	key := "F5"
+	if m.config.Formatter.Color {
+		key = styleSeverity(severity).Render(key)
+	}
+	return key + " " + renderWithColor(dimStyle, "heartbeat ["+severity+"]", m.config.Formatter.Color)
+}
+
+type logColumns struct {
+	time    string
+	level   string
+	pod     string
+	message string
+}
+
+func parseLogColumns(value string, showPod bool) logColumns {
+	remaining := strings.TrimSpace(core.StripANSI(value))
+	columns := logColumns{}
+	if showPod {
+		if match := leadingBracketPattern.FindStringSubmatchIndex(remaining); len(match) == 4 {
+			columns.pod = remaining[match[2]:match[3]]
+			remaining = strings.TrimSpace(remaining[match[1]:])
+		}
+	}
+	if match := bracketTimeLevelPattern.FindStringSubmatchIndex(remaining); len(match) == 6 {
+		columns.time = remaining[match[2]:match[3]]
+		columns.level = normalizeLevel(remaining[match[4]:match[5]])
+		remaining = strings.TrimSpace(remaining[match[1]:])
+	} else if match := plainTimeLevelPattern.FindStringSubmatchIndex(remaining); len(match) == 6 {
+		columns.time = remaining[match[2]:match[3]]
+		columns.level = normalizeLevel(remaining[match[4]:match[5]])
+		remaining = strings.TrimSpace(remaining[match[1]:])
+	}
+	columns.message = remaining
+	return columns
+}
+
+func normalizeLevel(level string) string {
+	switch strings.ToUpper(strings.TrimSpace(level)) {
+	case "ERROR", "FATAL", "CRIT", "CRITICAL":
+		return "ERR"
+	case "WARN", "WARNING":
+		return "WRN"
+	case "INFO", "INFORMATION":
+		return "INF"
+	case "DEBUG":
+		return "DBG"
+	case "VERBOSE":
+		return "VRB"
+	case "TRACE":
+		return "TRC"
+	default:
+		return strings.ToUpper(strings.TrimSpace(level))
+	}
+}
+
+func renderLogRow(value, query string, selected bool, width int, showPod, color bool) string {
+	columns := parseLogColumns(value, showPod)
+	gutter := "  "
+	if selected {
+		gutter = "> "
+		if color {
+			gutter = headerStyle.Render("▌ ")
+		}
+	}
+	prefix := gutter
+	if width >= 60 {
+		prefix += renderCell(columns.time, 13, dimStyle, color && !selected)
+		prefix += renderCell(columns.level, 5, levelRenderStyle(columns.level), color && !selected)
+	}
+	if showPod && width >= 96 {
+		prefix += renderCell(columns.pod, 18, dimStyle, color && !selected)
+	}
+	messageWidth := max(1, width-lipgloss.Width(prefix))
+	message := truncatePlain(columns.message, messageWidth)
+	errorLine := strings.Contains(value, "\x1b[31m") && columns.level == ""
+	renderedMessage := highlightText(message, query, color, errorLine && !selected)
+	row := prefix + renderedMessage
+	if selected && color {
+		row = selectedStyle.Width(max(1, width)).Render(row)
+	}
+	return truncate(row, width)
+}
+
+func renderCell(value string, width int, style lipgloss.Style, color bool) string {
+	plain := truncatePlain(value, max(1, width-1))
+	rendered := renderWithColor(style, plain, color)
+	return rendered + strings.Repeat(" ", max(1, width-lipgloss.Width(plain)))
+}
+
+func levelRenderStyle(level string) lipgloss.Style {
+	switch normalizeLevel(level) {
+	case "ERR":
+		return alertStyle
+	case "WRN":
+		return warnStyle
+	case "INF":
+		return headerStyle
+	default:
+		return dimStyle
+	}
+}
+
+func highlightText(value, query string, color, errorLine bool) string {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" || !color {
+		if errorLine && color {
+			return alertStyle.Render(value)
+		}
+		return value
+	}
+	lower := strings.ToLower(value)
+	var builder strings.Builder
+	start := 0
+	for {
+		index := strings.Index(lower[start:], query)
+		if index < 0 {
+			remaining := value[start:]
+			if errorLine {
+				remaining = alertStyle.Render(remaining)
+			}
+			builder.WriteString(remaining)
+			break
+		}
+		index += start
+		before := value[start:index]
+		if errorLine {
+			before = alertStyle.Render(before)
+		}
+		builder.WriteString(before)
+		builder.WriteString(matchStyle.Render(value[index : index+len(query)]))
+		start = index + len(query)
+	}
+	return builder.String()
+}
+
+func renderKey(key, label string, color bool) string {
+	return renderWithColor(keyStyle, key, color) + " " + renderWithColor(dimStyle, label, color)
+}
+
+func renderRule(width int, color bool) string {
+	return renderWithColor(dimStyle, strings.Repeat("─", max(1, width)), color)
+}
+
+func renderWithColor(style lipgloss.Style, value string, color bool) string {
+	if !color {
+		return value
+	}
+	return style.Render(value)
+}
+
+func joinSides(left, right string, width int) string {
+	if right == "" {
+		return truncate(left, width)
+	}
+	leftWidth := lipgloss.Width(left)
+	rightWidth := lipgloss.Width(right)
+	if leftWidth+rightWidth+1 > width {
+		left = truncate(left, max(1, width-rightWidth-1))
+		leftWidth = lipgloss.Width(left)
+	}
+	spaces := max(1, width-leftWidth-rightWidth)
+	return truncate(left+strings.Repeat(" ", spaces)+right, width)
+}
+
+func truncatePlain(value string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if lipgloss.Width(value) <= width {
+		return value
+	}
+	runes := []rune(value)
+	if width == 1 {
+		return "…"
+	}
+	if len(runes) > width-1 {
+		runes = runes[:width-1]
+	}
+	return string(runes) + "…"
+}
 func (m *model) moveSelection(delta int) {
 	count := len(m.state.Lines())
 	if count == 0 {

@@ -66,6 +66,11 @@ for the chosen time window. The live buffer retains at most 50,000 lines by
 default; use `--buffer-lines` to choose a different positive limit. Interrupted
 pod log streams reconnect automatically with a capped backoff.
 
+The header shows the service, namespace, pod count, and live connection state.
+Log rows align timestamps, levels, and pod identifiers when space permits;
+matching text is highlighted and complete-history search progress appears next
+to the filter mode.
+
 | Key | Action |
 | --- | --- |
 | `F1` | Toggle between context view and matching lines only |
