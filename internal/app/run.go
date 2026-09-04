@@ -102,6 +102,9 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 		fmt.Fprintln(stderr, "a target is required; use '*' for the app picker or --namespace to open every pod")
 		return 2
 	}
+	pickerLoop := options.Target == "*" && options.LiveFilter && !options.NoFollow && !options.SplitPanes && !options.TileWindows
+
+pickAgain:
 	effectiveNamespace := options.Namespace
 	resolvedTarget := "pod/*"
 	var selectedPods, selectedSelectors []string
@@ -267,6 +270,10 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
+	}
+	if pickerLoop {
+		runner.Namespace = options.Namespace
+		goto pickAgain
 	}
 	return 0
 }
