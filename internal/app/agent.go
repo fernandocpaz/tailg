@@ -60,8 +60,14 @@ func newAgentCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Wri
 			if len(args) > 1 {
 				options.LegacyNamespace = args[1]
 			}
+			if mode == agent.ModeDiagnose && cmd.CalledAs() == "troubleshoot" && !cmd.Flags().Changed("output") {
+				options.Output = "text"
+			}
 			return executeAgent(ctx, options, mode, stdout)
 		},
+	}
+	if mode == agent.ModeDiagnose {
+		command.Aliases = []string{"troubleshoot"}
 	}
 	addAgentFlags(command, &options)
 	command.SetIn(stdin)
@@ -141,7 +147,7 @@ func addAgentFlags(command *cobra.Command, options *agentOptions) {
 	flags.StringArrayVar(&options.Include, "include", nil, "regular expression; only matching log lines are analyzed (repeatable)")
 	flags.StringArrayVar(&options.Exclude, "exclude", nil, "regular expression; matching log lines are ignored (repeatable)")
 	flags.BoolVar(&options.NoDefaultExclude, "no-default-exclude", false, "analyze health, ready, and live probe traffic")
-	flags.StringVarP(&options.Output, "output", "o", "json", "structured output format: json or ndjson")
+	flags.StringVarP(&options.Output, "output", "o", "json", "output format: json, ndjson, or text")
 	flags.DurationVar(&options.Timeout, "timeout", 30*time.Second, "maximum collection time")
 	flags.IntVar(&options.MaxLines, "max-lines", defaultAgentMaxLines, "maximum log lines retained across all containers")
 	flags.IntVar(&options.MaxIssues, "max-issues", defaultAgentMaxIssues, "maximum grouped issues")
@@ -267,12 +273,12 @@ func collectAgentReport(parent context.Context, options agentOptions, mode agent
 	if err != nil {
 		return report, err
 	}
-	return agent.LimitReport(report, "json")
+	return agent.LimitReport(report, options.Output)
 }
 
 func validateAgentOptions(options agentOptions) error {
-	if options.Output != "json" && options.Output != "ndjson" {
-		return fmt.Errorf("--output must be json or ndjson")
+	if options.Output != "json" && options.Output != "ndjson" && options.Output != "text" {
+		return fmt.Errorf("--output must be json, ndjson, or text")
 	}
 	if options.Timeout <= 0 {
 		return fmt.Errorf("--timeout must be greater than zero")

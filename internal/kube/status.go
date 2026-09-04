@@ -21,13 +21,29 @@ type StatusOptions struct {
 	ExamineRepos func([]string) error
 }
 
+type ContainerStatusSummary struct {
+	Name           string
+	Kind           string
+	Ready          bool
+	Restarts       int
+	State          string
+	Reason         string
+	ExitCode       int
+	StartedAt      string
+	FinishedAt     string
+	LastReason     string
+	LastExitCode   int
+	LastFinishedAt string
+}
+
 type PodStatusSummary struct {
-	Name     string
-	Phase    string
-	Ready    int
-	Total    int
-	Restarts int
-	Issues   []string
+	Name       string
+	Phase      string
+	Ready      int
+	Total      int
+	Restarts   int
+	Issues     []string
+	Containers []ContainerStatusSummary
 }
 
 func PodStatusSummaries(payload map[string]any) []PodStatusSummary {
@@ -37,11 +53,53 @@ func PodStatusSummaries(payload map[string]any) []PodStatusSummary {
 		ready, total := readyCounts(pod)
 		result = append(result, PodStatusSummary{
 			Name: podName(pod), Phase: podPhase(pod), Ready: ready, Total: total,
-			Restarts: restartCount(pod), Issues: PodHealthIssues(pod),
+			Restarts: restartCount(pod), Issues: PodHealthIssues(pod), Containers: ContainerStatusSummaries(pod),
 		})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result
+}
+
+func ContainerStatusSummaries(pod map[string]any) []ContainerStatusSummary {
+	status := mapValue(pod["status"])
+	groups := []struct {
+		kind   string
+		values []any
+	}{{"container", sliceValue(status["containerStatuses"])}, {"init", sliceValue(status["initContainerStatuses"])}}
+	var result []ContainerStatusSummary
+	for _, group := range groups {
+		for _, raw := range group.values {
+			container := mapValue(raw)
+			state, reason, exitCode, startedAt, finishedAt := summarizeContainerState(mapValue(container["state"]))
+			_, lastReason, lastExitCode, _, lastFinishedAt := summarizeContainerState(mapValue(container["lastState"]))
+			result = append(result, ContainerStatusSummary{
+				Name: valueOr(stringValue(container["name"]), "unknown"), Kind: group.kind,
+				Ready: boolValue(container["ready"]), Restarts: intValue(container["restartCount"]),
+				State: state, Reason: reason, ExitCode: exitCode, StartedAt: startedAt, FinishedAt: finishedAt,
+				LastReason: lastReason, LastExitCode: lastExitCode, LastFinishedAt: lastFinishedAt,
+			})
+		}
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		if result[i].Kind != result[j].Kind {
+			return result[i].Kind < result[j].Kind
+		}
+		return result[i].Name < result[j].Name
+	})
+	return result
+}
+
+func summarizeContainerState(state map[string]any) (name, reason string, exitCode int, startedAt, finishedAt string) {
+	if running := mapValue(state["running"]); len(running) > 0 {
+		return "running", "", 0, stringValue(running["startedAt"]), ""
+	}
+	if waiting := mapValue(state["waiting"]); len(waiting) > 0 {
+		return "waiting", stringValue(waiting["reason"]), 0, "", ""
+	}
+	if terminated := mapValue(state["terminated"]); len(terminated) > 0 {
+		return "terminated", stringValue(terminated["reason"]), intValue(terminated["exitCode"]), stringValue(terminated["startedAt"]), stringValue(terminated["finishedAt"])
+	}
+	return "unknown", "", 0, "", ""
 }
 
 func PodHealthIssues(pod map[string]any) []string {

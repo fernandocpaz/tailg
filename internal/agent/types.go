@@ -65,13 +65,29 @@ type Issue struct {
 	Context    IssueContext `json:"context"`
 }
 
+type Container struct {
+	Name           string `json:"name"`
+	Kind           string `json:"kind,omitempty"`
+	Ready          bool   `json:"ready"`
+	Restarts       int    `json:"restarts"`
+	State          string `json:"state,omitempty"`
+	Reason         string `json:"reason,omitempty"`
+	ExitCode       int    `json:"exitCode,omitempty"`
+	StartedAt      string `json:"startedAt,omitempty"`
+	FinishedAt     string `json:"finishedAt,omitempty"`
+	LastReason     string `json:"lastReason,omitempty"`
+	LastExitCode   int    `json:"lastExitCode,omitempty"`
+	LastFinishedAt string `json:"lastFinishedAt,omitempty"`
+}
+
 type Pod struct {
-	Name     string   `json:"name"`
-	Phase    string   `json:"phase"`
-	Ready    int      `json:"ready"`
-	Total    int      `json:"total"`
-	Restarts int      `json:"restarts"`
-	Issues   []string `json:"issues"`
+	Name       string      `json:"name"`
+	Phase      string      `json:"phase"`
+	Ready      int         `json:"ready"`
+	Total      int         `json:"total"`
+	Restarts   int         `json:"restarts"`
+	Issues     []string    `json:"issues"`
+	Containers []Container `json:"containers,omitempty"`
 }
 
 type KubernetesEvent struct {
@@ -98,6 +114,7 @@ type Report struct {
 	Pods             []Pod             `json:"pods"`
 	Issues           []Issue           `json:"issues"`
 	KubernetesEvents []KubernetesEvent `json:"kubernetesEvents"`
+	Recommendations  []string          `json:"recommendations,omitempty"`
 	CollectionErrors []CollectionError `json:"collectionErrors"`
 	Truncated        bool              `json:"truncated"`
 }

@@ -43,7 +43,7 @@ func (c Collector) Collect(ctx context.Context, items []core.InventoryItem, opti
 		SchemaVersion: SchemaVersion, Kind: kind, GeneratedAt: timestamp(now),
 		Window: valueOr(options.Since, "tail"), Limits: options.Limits,
 		Scope: Scope{Context: options.Context, Namespace: options.Namespace, Target: options.Target, Pods: core.UniquePods(items)},
-		Pods:  []Pod{}, Issues: []Issue{}, KubernetesEvents: []KubernetesEvent{}, CollectionErrors: []CollectionError{},
+		Pods:  []Pod{}, Issues: []Issue{}, KubernetesEvents: []KubernetesEvent{}, Recommendations: []string{}, CollectionErrors: []CollectionError{},
 	}
 	selectedPods := make(map[string]bool, len(report.Scope.Pods))
 	for _, pod := range report.Scope.Pods {
@@ -59,7 +59,16 @@ func (c Collector) Collect(ctx context.Context, items []core.InventoryItem, opti
 				if !selectedPods[status.Name] {
 					continue
 				}
-				report.Pods = append(report.Pods, Pod{Name: status.Name, Phase: status.Phase, Ready: status.Ready, Total: status.Total, Restarts: status.Restarts, Issues: redactStrings(status.Issues)})
+				pod := Pod{Name: status.Name, Phase: status.Phase, Ready: status.Ready, Total: status.Total, Restarts: status.Restarts, Issues: redactStrings(status.Issues), Containers: []Container{}}
+				for _, container := range status.Containers {
+					pod.Containers = append(pod.Containers, Container{
+						Name: container.Name, Kind: container.Kind, Ready: container.Ready, Restarts: container.Restarts,
+						State: container.State, Reason: Redact(container.Reason), ExitCode: container.ExitCode,
+						StartedAt: container.StartedAt, FinishedAt: container.FinishedAt,
+						LastReason: Redact(container.LastReason), LastExitCode: container.LastExitCode, LastFinishedAt: container.LastFinishedAt,
+					})
+				}
+				report.Pods = append(report.Pods, pod)
 				if len(status.Issues) > 0 {
 					report.Summary.UnhealthyPods++
 				}
@@ -146,6 +155,7 @@ func (c Collector) Collect(ctx context.Context, items []core.InventoryItem, opti
 		})
 	}
 	refreshSummary(&report)
+	report.Recommendations = recommendations(report)
 	return report, nil
 }
 
@@ -170,6 +180,59 @@ func refreshSummary(report *Report) {
 	default:
 		report.Summary.Status = "healthy"
 	}
+}
+
+func recommendations(report Report) []string {
+	result := make([]string, 0, 8)
+	seen := map[string]bool{}
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] || len(result) >= 8 {
+			return
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	for _, pod := range report.Pods {
+		for _, container := range pod.Containers {
+			currentReason := strings.ToLower(container.Reason)
+			lastReason := strings.ToLower(container.LastReason)
+			switch lastReason {
+			case "oomkilled":
+				add(fmt.Sprintf("%s/%s was OOMKilled (exit %d); capture a --dump bundle to preserve previous logs and review memory requests, limits, and usage.", pod.Name, container.Name, container.LastExitCode))
+			case "error":
+				if container.Restarts > 0 {
+					add(fmt.Sprintf("%s/%s restarted %d time(s) after an error; inspect previous-container logs and the first failure before the restart.", pod.Name, container.Name, container.Restarts))
+				}
+			}
+			switch currentReason {
+			case "crashloopbackoff":
+				add(fmt.Sprintf("%s/%s is in CrashLoopBackOff; inspect its last termination and previous logs before changing the deployment.", pod.Name, container.Name))
+			case "imagepullbackoff", "errimagepull":
+				add(fmt.Sprintf("%s/%s cannot pull its image; verify the image/tag, registry reachability, and imagePullSecrets using the Warning event details.", pod.Name, container.Name))
+			case "createcontainerconfigerror", "createcontainererror":
+				add(fmt.Sprintf("%s/%s cannot start because of container configuration; inspect referenced ConfigMaps, Secrets, volumes, and Warning events.", pod.Name, container.Name))
+			}
+		}
+		for _, issue := range pod.Issues {
+			lower := strings.ToLower(issue)
+			switch {
+			case strings.Contains(lower, "not fully ready") || strings.Contains(lower, "not ready"):
+				add("A selected pod is not ready; inspect readiness/liveness probe configuration, endpoint health, dependencies, and recent Warning events.")
+			case strings.Contains(lower, "scheduling"):
+				add("A selected pod is not scheduling; inspect resource requests, node selectors/affinity, taints/tolerations, and PVC binding.")
+			}
+		}
+	}
+	if len(report.KubernetesEvents) > 0 {
+		add("Review the recent Kubernetes Warning events alongside the first matching log error; event reasons often identify scheduling, probe, mount, or image failures before the application logs do.")
+	}
+	for _, issue := range report.Issues {
+		if issue.Increasing {
+			add(fmt.Sprintf("Issue %s (%s) is increasing; use its stable issue ID with `tailg issue` to inspect bounded context before the signal scrolls out of retention.", issue.ID, issue.Kind))
+		}
+	}
+	return result
 }
 
 func severityName(value core.IssueSeverity) string {

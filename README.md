@@ -43,6 +43,7 @@ tailg --namespace default
 tailg --status --namespace default
 tailg example-app default --dump
 tailg deployment/example-app default --deployment-dump
+tailg troubleshoot example-app default
 tailg issues example-app default
 tailg diagnose example-app default --output ndjson
 ```
@@ -114,6 +115,19 @@ recover. Use `--status-interval` and `--status-timeout` to adjust its polling an
 deadline. In an interactive terminal it can open consoles for unhealthy pods;
 when `git` is available, it can also inspect configured workload repositories.
 
+For a fast human-oriented investigation, run:
+
+```sh
+tailg troubleshoot example-app default
+```
+
+`troubleshoot` is an alias for `diagnose` that defaults to readable terminal
+output. It correlates application log issues with current pod health, container
+state, restart counts, the last container termination reason and exit code,
+recent Kubernetes Warning events, and evidence-based next actions. Historical
+restarts are diagnostic evidence only; a recovered pod is not marked unhealthy
+just because it restarted earlier.
+
 `--dump` writes cluster context, namespace events and pod state, resource YAML,
 pod descriptions, and current/previous logs. `--deployment-dump` additionally
 collects rollout status and history. Each bundle includes `README.md`,
@@ -121,20 +135,23 @@ collects rollout status and history. Each bundle includes `README.md`,
 
 ## Scripts and AI agents
 
-`tailg issues` and `tailg diagnose` are one-shot, read-only commands. They emit
-the versioned `tailg.ai/v1` schema as JSON or newline-delimited JSON and never
-launch the TUI. Issue IDs are stable across dynamic values such as request IDs,
-so an agent can request the same issue's bounded context:
+`tailg issues` and `tailg diagnose` are one-shot, read-only commands. JSON and
+NDJSON emit the versioned `tailg.ai/v1` schema and never launch the TUI. The
+schema includes pod/container crash evidence and bounded troubleshooting
+recommendations. Human-readable text is also available explicitly:
 
 ```sh
 tailg issues example-app default
 tailg issue 8d769df321ca3f17 example-app default
 tailg diagnose --namespace default --max-lines 5000 --max-bytes 2097152
+tailg diagnose example-app default --output text
 ```
 
-The commands apply strict limits for collection time, lines, grouped issues,
-context lines, and encoded bytes. Common bearer tokens, JWTs, passwords, API
-keys, and secrets are redacted before output. Secret values are never fetched.
+Issue IDs are stable across dynamic values such as request IDs, so an agent can
+request the same issue's bounded context. The commands apply strict limits for
+collection time, lines, grouped issues, context lines, and encoded bytes. Common
+bearer tokens, JWTs, passwords, API keys, and secrets are redacted before output.
+Secret values are never fetched.
 
 Exit codes are designed for automation: `0` is healthy, `1` means warnings,
 `2` means errors or unhealthy pods, and `3` means collection or output failed.

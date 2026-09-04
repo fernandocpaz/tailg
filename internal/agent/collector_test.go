@@ -39,7 +39,11 @@ func TestCollectorProducesStableBoundedIssueContext(t *testing.T) {
 		}},
 		pods: map[string]any{"items": []any{map[string]any{
 			"metadata": map[string]any{"name": item.Pod}, "spec": map[string]any{"containers": []any{map[string]any{"name": "api"}}},
-			"status": map[string]any{"phase": "Running", "containerStatuses": []any{map[string]any{"name": "api", "ready": true, "restartCount": float64(0)}}},
+			"status": map[string]any{"phase": "Running", "containerStatuses": []any{map[string]any{
+				"name": "api", "ready": true, "restartCount": float64(2),
+				"state":     map[string]any{"running": map[string]any{"startedAt": "2026-08-27T11:59:00Z"}},
+				"lastState": map[string]any{"terminated": map[string]any{"reason": "OOMKilled", "exitCode": float64(137), "finishedAt": "2026-08-27T11:58:59Z"}},
+			}}},
 		}}},
 		events: map[string]any{"items": []any{}},
 	}
@@ -62,6 +66,19 @@ func TestCollectorProducesStableBoundedIssueContext(t *testing.T) {
 	}
 	if len(issue.Context.Before) != 1 || len(issue.Context.After) != 1 {
 		t.Fatalf("unexpected context: %+v", issue.Context)
+	}
+	if len(report.Pods) != 1 || len(report.Pods[0].Containers) != 1 || report.Pods[0].Containers[0].LastReason != "OOMKilled" || report.Pods[0].Containers[0].LastExitCode != 137 {
+		t.Fatalf("missing container crash evidence: %+v", report.Pods)
+	}
+	foundOOMRecommendation := false
+	for _, recommendation := range report.Recommendations {
+		if strings.Contains(recommendation, "OOMKilled") {
+			foundOOMRecommendation = true
+			break
+		}
+	}
+	if !foundOOMRecommendation {
+		t.Fatalf("recommendations=%#v", report.Recommendations)
 	}
 	if ExitCode(report) != 2 {
 		t.Fatalf("exit code = %d", ExitCode(report))
@@ -103,6 +120,27 @@ func TestWriteReportProducesNDJSONRecords(t *testing.T) {
 		}
 		if record["schemaVersion"] != SchemaVersion {
 			t.Fatalf("missing schema version: %v", record)
+		}
+	}
+}
+
+func TestWriteReportProducesHumanTroubleshootingText(t *testing.T) {
+	report := Report{
+		SchemaVersion: SchemaVersion, Kind: "DiagnosticReport", GeneratedAt: "2026-09-04T15:00:00Z", Window: "tail",
+		Scope:  Scope{Namespace: "apollo", Target: "api", Pods: []string{"api-7d9"}},
+		Limits: Limits{MaxBytes: 64 * 1024}, Summary: Summary{Status: "error", IssueGroups: 1, IssueEvents: 3, LogLines: 50},
+		Pods:            []Pod{{Name: "api-7d9", Phase: "Running", Ready: 1, Total: 1, Restarts: 2, Containers: []Container{{Name: "api", Kind: "container", Ready: true, State: "running", Restarts: 2, LastReason: "OOMKilled", LastExitCode: 137}}}},
+		Issues:          []Issue{{ID: "abc123", Severity: "error", Kind: "TIMEOUT", Count: 3, Service: "api", Summary: "upstream timeout", Context: IssueContext{Match: LogLine{Pod: "api-7d9", Container: "api", Message: "ERROR upstream timeout"}}}},
+		Recommendations: []string{"Review memory limits."},
+	}
+	var output strings.Builder
+	if err := WriteReport(&output, report, "text"); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	for _, expected := range []string{"ERROR | DiagnosticReport", "PODS", "last=OOMKilled/exit=137", "LOG ISSUES", "TIMEOUT x3", "NEXT ACTIONS", "Review memory limits."} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("missing %q in:\n%s", expected, text)
 		}
 	}
 }

@@ -22,3 +22,32 @@ func TestSucceededPodIsHealthy(t *testing.T) {
 		t.Fatalf("issues=%#v", issues)
 	}
 }
+
+func TestPodStatusSummaryKeepsHistoricalCrashEvidenceWithoutMarkingPodUnhealthy(t *testing.T) {
+	pod := map[string]any{
+		"metadata": map[string]any{"name": "api-7d9"},
+		"spec":     map[string]any{"containers": []any{map[string]any{"name": "api"}}},
+		"status": map[string]any{
+			"phase": "Running",
+			"containerStatuses": []any{map[string]any{
+				"name": "api", "ready": true, "restartCount": float64(2),
+				"state": map[string]any{"running": map[string]any{"startedAt": "2026-09-04T15:00:00Z"}},
+				"lastState": map[string]any{"terminated": map[string]any{
+					"reason": "OOMKilled", "exitCode": float64(137), "finishedAt": "2026-09-04T14:59:58Z",
+				}},
+			}},
+		},
+	}
+	payload := map[string]any{"items": []any{pod}}
+	summaries := PodStatusSummaries(payload)
+	if len(summaries) != 1 || len(summaries[0].Containers) != 1 {
+		t.Fatalf("summaries=%#v", summaries)
+	}
+	container := summaries[0].Containers[0]
+	if container.State != "running" || container.Restarts != 2 || container.LastReason != "OOMKilled" || container.LastExitCode != 137 || container.LastFinishedAt != "2026-09-04T14:59:58Z" {
+		t.Fatalf("container=%+v", container)
+	}
+	if issues := PodHealthIssues(pod); len(issues) != 0 {
+		t.Fatalf("historical restart should not make a healthy pod unhealthy: %#v", issues)
+	}
+}
