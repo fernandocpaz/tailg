@@ -14,6 +14,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/fernandocpaz/tailg/internal/core"
 )
@@ -331,6 +332,49 @@ func TestRenderLogRowStaysWithinTerminalWidth(t *testing.T) {
 	row := renderLogRow("[pod-7d9] [14:22:10 INF] "+strings.Repeat("message ", 30), "message", false, 72, true, false)
 	if width := lipgloss.Width(row); width > 72 {
 		t.Fatalf("row width = %d, want <= 72: %q", width, row)
+	}
+}
+
+func TestRenderErrorLevelColorProfiles(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
+
+	for _, tc := range []struct {
+		name    string
+		profile termenv.Profile
+		color   string
+	}{
+		{"truecolor", termenv.TrueColor, "38;2;255;107;107mERR"},
+		{"256 colors", termenv.ANSI256, "38;5;203mERR"},
+		{"16 colors", termenv.ANSI, "31mERR"},
+		{"plain terminal", termenv.Ascii, "ERR"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lipgloss.SetColorProfile(tc.profile)
+			formatter := core.Formatter{Color: true}
+			for _, message := range []string{
+				"[16:16:48 ERR] [] [pid:55] request failed",
+				`{"ts":"2026-09-08T16:16:48Z","level":"ERROR","message":"request failed"}`,
+			} {
+				line := formatter.Format("api-pod", "api", message, false)[0]
+				row := renderLogRow(line, "", false, 100, false, true)
+				if !strings.Contains(row, tc.color) {
+					t.Fatalf("error level missing readable color %q: %q", tc.color, row)
+				}
+				for _, selected := range []bool{false, true} {
+					for _, color := range []bool{false, true} {
+						row := renderLogRow(line, "", selected, 100, false, color)
+						plain := core.StripANSI(row)
+						if !strings.Contains(plain, "ERR") || !strings.Contains(plain, "request failed") {
+							t.Fatalf("error text missing (selected=%t, color=%t): %q", selected, color, row)
+						}
+						if !color && row != plain {
+							t.Fatalf("color disabled but row contains ANSI: %q", row)
+						}
+					}
+				}
+			}
+		})
 	}
 }
 
