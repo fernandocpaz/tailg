@@ -223,10 +223,16 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if len(lines) > 0 {
 				m.issues.Observe(event)
 			}
+			previousCount := 0
+			if !m.followsLive {
+				previousCount = len(m.state.Lines())
+			}
 			added := m.state.Append(lines...)
 			if m.followsLive && added > 0 {
 				m.selected = len(m.state.Lines()) - 1
 				m.scroll = 0
+			} else if !m.followsLive {
+				m.scroll += max(0, len(m.state.Lines())-previousCount)
 			}
 		}
 		return m, waitForEvent(m.events)
@@ -251,6 +257,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.state.SetSearchResults(msg.query, msg.lines) {
 			m.searching = false
+			m.followsLive = false
 			m.selected = m.state.MatchIndex()
 			m.scrollToSelection()
 			matches := 0
@@ -300,6 +307,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.searchLines = 0
 				m.selected = len(m.state.Lines()) - 1
 				m.followsLive = true
+				m.scroll = 0
 				if strings.TrimSpace(shared.text) != "" {
 					commands = append(commands, m.searchCommand(m.generation, shared.text))
 				}
@@ -310,8 +318,11 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if shared.mode != m.lastSharedMode {
 				m.lastSharedMode = shared.mode
 				m.state.SetMatchesOnly(shared.mode)
-				m.selected = m.state.MatchIndex()
-				m.scrollToSelection()
+				if strings.TrimSpace(m.input.Value()) != "" {
+					m.followsLive = false
+					m.selected = m.state.MatchIndex()
+					m.scrollToSelection()
+				}
 			}
 		}
 		commands = append(commands, sharedTick())
@@ -370,6 +381,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.lastModeRev = revision
 				m.notice = ""
 			}
+			m.followsLive = false
 			m.selected = m.state.MatchIndex()
 			m.scrollToSelection()
 			return m, nil
@@ -414,6 +426,13 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.scrollToSelection()
 			return m, nil
 		case "end":
+			// Leave historical results and reject any search still in flight.
+			m.generation++
+			m.cancelSearch()
+			m.searching = false
+			m.searchMatches = 0
+			m.searchLines = 0
+			m.state.SetFilter(m.input.Value())
 			m.selected = len(m.state.Lines()) - 1
 			m.followsLive = true
 			m.scroll = 0
