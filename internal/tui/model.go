@@ -128,9 +128,12 @@ var (
 	modeStyle        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("12")).Padding(0, 1)
 	okStyle          = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10"))
 	warnStyle        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("11"))
-	alertStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9"))
-	dimStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	keyStyle         = lipgloss.NewStyle().Bold(true)
+	// Avoid the theme's bright-red slot: it can make error labels invisible.
+	alertStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.CompleteColor{
+		TrueColor: "#FF6B6B", ANSI256: "203", ANSI: "1",
+	})
+	dimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	keyStyle = lipgloss.NewStyle().Bold(true)
 )
 
 var (
