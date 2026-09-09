@@ -70,16 +70,35 @@ for the chosen time window. The live buffer retains at most 50,000 lines by
 default; use `--buffer-lines` to choose a different positive limit. Interrupted
 pod log streams reconnect automatically with a capped backoff.
 
+In the full-screen view, reconnects resume near the last received Kubernetes
+timestamp instead of requesting the initial tail again. The overlap is checked
+against previously delivered occurrences, so replayed lines do not reappear or
+inflate Issue Radar counts. Reconnects read all retained logs after that position,
+even when more lines arrived during a disconnect than the initial `--tail` limit.
+Replay tracking is bounded to 4,096 timestamp/message identities per container;
+untracked or undated lines are preserved even if they might be repeats. Kubernetes
+log rotation can still remove history before it is recovered.
+
 The header shows the service, namespace, pod count, and live connection state.
 Log rows align timestamps, levels, and pod identifiers when space permits;
 matching text is highlighted and complete-history search progress appears next
 to the filter mode.
+
+The header also shows receipt age (`recv`) and the age of the last received log
+(`log`) for a single stream. An old log received just now still shows its original
+age. `WAITING` means no data has confirmed the current attempt; `QUIET` means no
+line has arrived for 30 seconds and does not imply that the pod is unhealthy.
+Filtered probe and heartbeat lines still count as stream activity. For multiple
+streams, press `F4` to inspect each pod/container independently, along with replay
+counts, queued events and live buffer usage. The ages continue updating while
+the view is paused or the service is quiet.
 
 | Key | Action |
 | --- | --- |
 | `F1` | Toggle between context view and matching lines only |
 | `F2` | Browse ConfigMaps and Secrets mapped into the pod |
 | `F3` | Open the Issue Radar for grouped errors and warnings |
+| `F4` | Inspect per-container log freshness, replay counts and buffer usage |
 | `F5` | Open heartbeat diagnostics |
 | `Up` / `Down` | Move the selected log line |
 | `PageUp` / `PageDown` | Move by one screen |

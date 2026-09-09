@@ -41,6 +41,9 @@ type LogEvent struct {
 	Container  string
 	Message    string
 	ObservedAt time.Time
+	ReceivedAt time.Time
+	Started    bool // kubectl started; the remote stream is not yet confirmed
+	Replayed   bool // already delivered on an earlier attempt; activity only
 	Closed     bool
 	Err        error
 }

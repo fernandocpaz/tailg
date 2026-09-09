@@ -140,6 +140,12 @@ func (s *FilterState) AllLines() []string {
 	return append([]string(nil), s.allLines...)
 }
 
+func (s *FilterState) BufferUsage() (int, int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.allLines), s.maxLines
+}
+
 func (s *FilterState) Selected(index int) string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
