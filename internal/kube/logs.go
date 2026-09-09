@@ -17,6 +17,7 @@ type LogOptions struct {
 	Since  string
 	Tail   int
 	Follow bool
+	Cursor *core.LogCursor
 }
 
 func (r Runner) Stream(ctx context.Context, item core.InventoryItem, options LogOptions, output chan<- core.LogEvent) (streamErr error) {
@@ -25,13 +26,8 @@ func (r Runner) Stream(ctx context.Context, item core.InventoryItem, options Log
 			sendLogEvent(ctx, output, core.LogEvent{Pod: item.Pod, Container: item.Container, Closed: true, Err: streamErr})
 		}
 	}()
-	args := []string{"logs", "pod/" + item.Pod, "-c", item.Container, "--ignore-errors=true", "--timestamps=true", "--tail", strconv.Itoa(options.Tail)}
-	if options.Since != "" {
-		args = append(args, "--since", options.Since)
-	}
-	if options.Follow {
-		args = append(args, "-f")
-	}
+	replay := options.Cursor.Resume()
+	args := streamArgs(item, options, replay.Since)
 	cmd := r.Command(ctx, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -49,14 +45,20 @@ func (r Runner) Stream(ctx context.Context, item core.InventoryItem, options Log
 		stderrBytes, _ := io.ReadAll(stderr)
 		stderrDone <- stderrBytes
 	}()
+	sendLogEvent(ctx, output, core.LogEvent{Pod: item.Pod, Container: item.Container, Started: true})
 
 	scanner := bufio.NewScanner(stdout)
 	buffer := make([]byte, 64*1024)
 	scanner.Buffer(buffer, 4*1024*1024)
 	for scanner.Scan() {
 		message, observed := SplitTimestamp(scanner.Text())
-		if !sendLogEvent(ctx, output, core.LogEvent{Pod: item.Pod, Container: item.Container, Message: message, ObservedAt: observed}) {
+		event := core.LogEvent{Pod: item.Pod, Container: item.Container, Message: message, ObservedAt: observed, ReceivedAt: time.Now()}
+		event.Replayed = replay.Duplicate(event)
+		if !sendLogEvent(ctx, output, event) {
 			break
+		}
+		if !event.Replayed {
+			options.Cursor.Observe(event)
 		}
 	}
 	scanErr := scanner.Err()
@@ -78,7 +80,28 @@ func (r Runner) Stream(ctx context.Context, item core.InventoryItem, options Log
 	return nil
 }
 
+func streamArgs(item core.InventoryItem, options LogOptions, sinceTime time.Time) []string {
+	tail := options.Tail
+	if !sinceTime.IsZero() {
+		// A fixed tail cap on reconnect could skip logs written while disconnected.
+		tail = -1
+	}
+	args := []string{"logs", "pod/" + item.Pod, "-c", item.Container, "--ignore-errors=true", "--timestamps=true", "--tail", strconv.Itoa(tail)}
+	if !sinceTime.IsZero() {
+		args = append(args, "--since-time", sinceTime.UTC().Format(time.RFC3339))
+	} else if options.Since != "" {
+		args = append(args, "--since", options.Since)
+	}
+	if options.Follow {
+		args = append(args, "-f")
+	}
+	return args
+}
+
 func sendLogEvent(ctx context.Context, output chan<- core.LogEvent, event core.LogEvent) bool {
+	if ctx.Err() != nil {
+		return false
+	}
 	select {
 	case output <- event:
 		return true

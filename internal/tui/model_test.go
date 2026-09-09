@@ -218,7 +218,7 @@ func TestManageStreamsRestartsCompletedStream(t *testing.T) {
 	var starts atomic.Int32
 	config := Config{
 		Items: []core.InventoryItem{{Pod: "pod-1", Container: "app"}},
-		Stream: func(streamCtx context.Context, _ core.InventoryItem, _ chan<- core.LogEvent) error {
+		Stream: func(streamCtx context.Context, _ core.InventoryItem, _ *core.LogCursor, _ chan<- core.LogEvent) error {
 			count := starts.Add(1)
 			started <- count
 			if count == 1 {
@@ -230,7 +230,7 @@ func TestManageStreamsRestartsCompletedStream(t *testing.T) {
 	}
 	closed := make(chan struct{})
 	go func() {
-		manageStreams(ctx, config, events)
+		manageStreams(ctx, config, events, nil)
 		close(closed)
 	}()
 
@@ -259,7 +259,7 @@ func TestManageStreamsWaitsBeforeClosingEvents(t *testing.T) {
 	release := make(chan struct{})
 	config := Config{
 		Items: []core.InventoryItem{{Pod: "pod-1", Container: "app"}},
-		Stream: func(streamCtx context.Context, _ core.InventoryItem, _ chan<- core.LogEvent) error {
+		Stream: func(streamCtx context.Context, _ core.InventoryItem, _ *core.LogCursor, _ chan<- core.LogEvent) error {
 			close(started)
 			<-streamCtx.Done()
 			<-release
@@ -268,7 +268,7 @@ func TestManageStreamsWaitsBeforeClosingEvents(t *testing.T) {
 	}
 	closed := make(chan struct{})
 	go func() {
-		manageStreams(ctx, config, events)
+		manageStreams(ctx, config, events, nil)
 		close(closed)
 	}()
 	<-started
@@ -320,6 +320,7 @@ func TestViewRendersOperationsConsoleLayout(t *testing.T) {
 		searchMatches: 1,
 		searchLines:   8,
 	}
+	m.recordFreshness(core.LogEvent{Pod: "checkout-7d9", Container: "checkout-api", ReceivedAt: time.Now(), ObservedAt: time.Now()})
 	view := m.View()
 	for _, expected := range []string{"tailg", "checkout-api", "production", "1 pod", "LIVE", "FILTER", "[CONTEXT]", "1 matches • 8 lines", "14:22:10", "ERR", "pod-7d9", "request timeout"} {
 		if !strings.Contains(view, expected) {
@@ -390,11 +391,11 @@ func TestHighlightTextUsesOriginalUnicodeOffsets(t *testing.T) {
 
 func TestReconnectStateIsTrackedPerStream(t *testing.T) {
 	m := model{
-		config:       Config{Formatter: core.Formatter{}},
-		state:        core.NewFilterState(10),
-		heartbeat:    &core.HeartbeatAnalyzer{},
-		width:        100,
-		height:       10,
+		config:      Config{Formatter: core.Formatter{}},
+		state:       core.NewFilterState(10),
+		heartbeat:   &core.HeartbeatAnalyzer{},
+		width:       100,
+		height:      10,
 		followsLive: true,
 	}
 

@@ -31,7 +31,7 @@ type Config struct {
 	RefreshInterval time.Duration
 	BufferLines     int
 	FilterFile      string
-	Stream          func(context.Context, core.InventoryItem, chan<- core.LogEvent) error
+	Stream          func(context.Context, core.InventoryItem, *core.LogCursor, chan<- core.LogEvent) error
 	Inventory       func(context.Context) ([]core.InventoryItem, error)
 	Search          func(context.Context, string) ([]string, error)
 	MappedResources func(context.Context, string) ([]core.MappedResource, error)
@@ -63,6 +63,7 @@ type model struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 	config         Config
+	inventory      <-chan inventoryMsg
 	events         <-chan core.LogEvent
 	state          *core.FilterState
 	heartbeat      *core.HeartbeatAnalyzer
@@ -93,6 +94,9 @@ type model struct {
 	issues         *core.IssueRadar
 	issueOpen      bool
 	issueIndex     int
+	freshness      map[string]streamFreshness
+	freshnessOpen  bool
+	freshnessIndex int
 }
 
 type searchController struct {
@@ -147,7 +151,8 @@ func Run(parent context.Context, config Config) error {
 	defer cancel()
 	events := make(chan core.LogEvent, 1024)
 	items := append([]core.InventoryItem(nil), config.Items...)
-	go manageStreams(ctx, config, events)
+	inventory := make(chan inventoryMsg, 1)
+	go manageStreams(ctx, config, events, inventory)
 
 	input := textinput.New()
 	input.Prompt = ""
@@ -164,14 +169,14 @@ func Run(parent context.Context, config Config) error {
 	}
 	state.SetMatchesOnly(shared.modeValid && shared.mode)
 	m := model{
-		ctx: ctx, cancel: cancel, config: config, events: events, state: state,
+		ctx: ctx, cancel: cancel, config: config, events: events, inventory: inventory, state: state,
 		heartbeat: &core.HeartbeatAnalyzer{}, input: input, items: items,
 		selected: -1, followsLive: true,
 		lastSharedText: shared.text, lastSharedMode: shared.mode,
 		lastTextRev: shared.textRevision, lastModeRev: shared.modeRevision,
-		searches: &searchController{},
+		searches:  &searchController{},
 		searching: strings.TrimSpace(shared.text) != "" && config.Search != nil,
-		issues: core.NewIssueRadar(200),
+		issues:    core.NewIssueRadar(200),
 	}
 	program := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := program.Run()
@@ -179,7 +184,7 @@ func Run(parent context.Context, config Config) error {
 }
 
 func (m model) Init() tea.Cmd {
-	commands := []tea.Cmd{waitForEvent(m.events), sharedTick()}
+	commands := []tea.Cmd{waitForEvent(m.events), waitForInventory(m.inventory), sharedTick()}
 	if m.config.Search != nil && strings.TrimSpace(m.input.Value()) != "" {
 		commands = append(commands, m.searchCommand(m.generation, m.input.Value()))
 	}
@@ -198,6 +203,14 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case logMsg:
 		event := core.LogEvent(msg)
+		m.recordFreshness(event)
+		if event.Started {
+			m.markConnected(event.Pod, event.Container)
+			if !m.isReconnecting() && strings.HasSuffix(m.notice, "; reconnecting...") {
+				m.notice = ""
+			}
+			return m, waitForEvent(m.events)
+		}
 		if m.issues == nil {
 			m.issues = core.NewIssueRadar(200)
 		}
@@ -217,6 +230,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.markConnected(event.Pod, event.Container)
 			if wasReconnecting && !m.isReconnecting() && strings.HasSuffix(m.notice, "; reconnecting...") {
 				m.notice = ""
+			}
+			if event.Replayed {
+				return m, waitForEvent(m.events)
 			}
 			m.heartbeat.Add(event.Pod, event.Container, event.Message, event.ObservedAt)
 			lines := m.config.Formatter.Format(event.Pod, event.Container, event.Message, true)
@@ -242,8 +258,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.items = msg.items
 			m.pruneReconnects(msg.items)
+			m.pruneFreshness(msg.items)
 		}
-		return m, nil
+		return m, waitForInventory(m.inventory)
 	case searchMsg:
 		if msg.generation != m.generation || strings.TrimSpace(msg.query) != strings.TrimSpace(m.input.Value()) {
 			return m, nil
@@ -338,6 +355,8 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.detail = ""
 			} else if m.issueOpen {
 				m.issueOpen = false
+			} else if m.freshnessOpen {
+				m.freshnessOpen = false
 			} else if m.heartbeatOpen {
 				m.heartbeatOpen = false
 			} else if m.resourceDetail != "" {
@@ -346,6 +365,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.resourceOpen = false
 			}
 			return m, nil
+		}
+		if m.freshnessOpen {
+			return m.updateFreshnessKey(key)
 		}
 		if m.heartbeatOpen {
 			if key == "f5" {
@@ -404,6 +426,10 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.issueOpen = true
 			m.issueIndex = 0
 			m.notice = ""
+			return m, nil
+		case "f4":
+			m.freshnessOpen = true
+			m.freshnessIndex = 0
 			return m, nil
 		case "f5":
 			m.heartbeatOpen = true
@@ -479,6 +505,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	if m.width <= 0 || m.height <= 0 {
 		return "starting tailg..."
+	}
+	if m.freshnessOpen {
+		return m.renderFreshness(time.Now())
 	}
 	if m.heartbeatOpen {
 		return m.panel("Heartbeat health", core.HeartbeatReport(m.heartbeat.Intervals(m.config.HeartbeatWindow, time.Now())), "F5/Esc closes")
@@ -567,6 +596,13 @@ func (m model) renderHeader() string {
 		state = fmt.Sprintf("Ⅱ PAUSED -%d", m.scroll)
 		stateStyle = warnStyle
 	}
+	if m.followsLive && !m.isReconnecting() && m.waitingStreams() > 0 {
+		state = fmt.Sprintf("WAITING %d", m.waitingStreams())
+		stateStyle = warnStyle
+	}
+	if m.width >= 80 {
+		state += m.freshnessSummary(time.Now())
+	}
 	right := renderWithColor(stateStyle, state, m.config.Formatter.Color)
 	stats := m.issueStats()
 	if stats.Groups > 0 {
@@ -621,6 +657,7 @@ func (m model) renderFooter() string {
 		renderKey("F1", "mode", m.config.Formatter.Color),
 		renderKey("F2", "resources", m.config.Formatter.Color),
 		m.renderIssueKey(),
+		renderKey("F4", "streams", m.config.Formatter.Color),
 		m.renderHeartbeatKey(),
 		renderKey("Enter", "inspect", m.config.Formatter.Color),
 		renderKey("Ctrl+Q", "quit", m.config.Formatter.Color),
@@ -920,7 +957,7 @@ func highlightText(value, query string, color, errorLine bool) string {
 		}
 		return value
 	}
-	matches := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(query)).FindAllStringIndex(value, -1)
+	matches := regexp.MustCompile(`(?i)`+regexp.QuoteMeta(query)).FindAllStringIndex(value, -1)
 	if len(matches) == 0 {
 		if errorLine {
 			return alertStyle.Render(value)
@@ -1140,6 +1177,7 @@ type managedStream struct {
 	cancel     context.CancelFunc
 	generation uint64
 	attempt    int
+	cursor     *core.LogCursor
 }
 
 type managedStreamDone struct {
@@ -1171,8 +1209,11 @@ func streamRetryDelay(attempt int) time.Duration {
 	return min(delay, streamRetryLimit)
 }
 
-func manageStreams(ctx context.Context, config Config, events chan<- core.LogEvent) {
+func manageStreams(ctx context.Context, config Config, events chan<- core.LogEvent, updates chan inventoryMsg) {
 	defer close(events)
+	if updates != nil {
+		defer close(updates)
+	}
 	if config.Stream == nil {
 		return
 	}
@@ -1187,13 +1228,17 @@ func manageStreams(ctx context.Context, config Config, events chan<- core.LogEve
 	start := func(item core.InventoryItem, attempt int) {
 		generation++
 		streamCtx, cancel := context.WithCancel(ctx)
-		handle := &managedStream{item: item, cancel: cancel, generation: generation, attempt: attempt}
+		cursor := &core.LogCursor{}
+		if previous := active[item.Key()]; previous != nil {
+			cursor = previous.cursor
+		}
+		handle := &managedStream{item: item, cancel: cancel, generation: generation, attempt: attempt, cursor: cursor}
 		active[item.Key()] = handle
 		streams.Add(1)
 		go func() {
 			defer streams.Done()
 			started := time.Now()
-			_ = config.Stream(streamCtx, item, events)
+			_ = config.Stream(streamCtx, item, handle.cursor, events)
 			completion := managedStreamDone{key: item.Key(), generation: handle.generation, attempt: handle.attempt, lifetime: time.Since(started)}
 			select {
 			case done <- completion:
@@ -1220,6 +1265,13 @@ func manageStreams(ctx context.Context, config Config, events chan<- core.LogEve
 				handle.cancel()
 			}
 			delete(active, key)
+		}
+		if updates != nil {
+			select {
+			case <-updates:
+			default:
+			}
+			updates <- inventoryMsg{items: append([]core.InventoryItem(nil), items...)}
 		}
 	}
 
