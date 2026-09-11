@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -290,10 +291,11 @@ pickAgain:
 			return runner.CompleteRecords(searchCtx, current, options.Since, formatter, query, searchLimit)
 		}, Trace: func(traceCtx context.Context, traceID string) ([]core.LogRecord, error) {
 			current, inventoryErr := traceInventoryProvider(traceCtx)
-			if inventoryErr != nil {
+			if len(current) == 0 && inventoryErr != nil {
 				return nil, inventoryErr
 			}
-			return runner.CompleteTrace(traceCtx, current, options.Since, formatter, traceID, options.BufferLines)
+			records, traceErr := runner.CompleteTrace(traceCtx, current, options.Since, formatter, traceID, options.BufferLines)
+			return records, errors.Join(inventoryErr, traceErr)
 		}, ExplainReplicas: runner.ExplainReplicas, MappedResources: runner.MappedResources, ResourceDetail: runner.ResourceDetail})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -307,14 +309,8 @@ pickAgain:
 }
 
 func selectedInventory(ctx context.Context, runner kube.Runner, pods, selectors []string) ([]core.InventoryItem, error) {
-	podItems, err := runner.InventoryForPods(ctx, pods)
-	if err != nil {
-		return nil, err
-	}
-	selectorItems, err := runner.InventoryForSelectors(ctx, selectors)
-	if err != nil {
-		return nil, err
-	}
+	podItems, podErr := runner.InventoryForPods(ctx, pods)
+	selectorItems, selectorErr := runner.InventoryForSelectors(ctx, selectors)
 	seen := map[string]bool{}
 	var result []core.InventoryItem
 	for _, item := range append(podItems, selectorItems...) {
@@ -323,7 +319,7 @@ func selectedInventory(ctx context.Context, runner kube.Runner, pods, selectors 
 			result = append(result, item)
 		}
 	}
-	return result, nil
+	return result, errors.Join(podErr, selectorErr)
 }
 
 func uniqueStrings(values []string) []string {

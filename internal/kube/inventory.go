@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path"
 	"sort"
@@ -74,26 +75,30 @@ func (r Runner) Inventory(ctx context.Context, target, selector string) ([]core.
 
 func (r Runner) InventoryForPods(ctx context.Context, pods []string) ([]core.InventoryItem, error) {
 	var result []core.InventoryItem
+	var inventoryErrors []error
 	for _, pod := range uniqueStrings(pods) {
 		items, err := r.Inventory(ctx, "pod/"+pod, "")
 		if err != nil {
-			return nil, err
+			inventoryErrors = append(inventoryErrors, fmt.Errorf("pod/%s: %w", pod, err))
+			continue
 		}
 		result = append(result, items...)
 	}
-	return dedupeInventory(result), nil
+	return dedupeInventory(result), errors.Join(inventoryErrors...)
 }
 
 func (r Runner) InventoryForSelectors(ctx context.Context, selectors []string) ([]core.InventoryItem, error) {
 	var result []core.InventoryItem
+	var inventoryErrors []error
 	for _, selector := range uniqueStrings(selectors) {
 		items, err := r.Inventory(ctx, "pod/*", selector)
 		if err != nil {
-			return nil, err
+			inventoryErrors = append(inventoryErrors, fmt.Errorf("selector %q: %w", selector, err))
+			continue
 		}
 		result = append(result, items...)
 	}
-	return dedupeInventory(result), nil
+	return dedupeInventory(result), errors.Join(inventoryErrors...)
 }
 
 func (r Runner) Apps(ctx context.Context) ([]core.AppChoice, error) {
