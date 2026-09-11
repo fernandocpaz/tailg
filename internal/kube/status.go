@@ -19,6 +19,9 @@ type StatusOptions struct {
 	Timeout      time.Duration
 	Output       io.Writer
 	Input        io.Reader
+	Decorated    bool
+	Color        bool
+	Width        int
 	OpenConsoles func([]string) error
 	ExamineRepos func([]string) error
 }
@@ -185,10 +188,14 @@ func NamespaceStatusReport(payload map[string]any, namespace string) (string, in
 }
 
 func namespaceStatusReportAt(payload map[string]any, namespace string, checkedAt time.Time) (string, int) {
+	return namespaceStatusReportAtStyled(payload, namespace, checkedAt, statusVisuals{})
+}
+
+func namespaceStatusReportAtStyled(payload map[string]any, namespace string, checkedAt time.Time, visuals statusVisuals) (string, int) {
 	pods := sliceValue(payload["items"])
 	sort.Slice(pods, func(i, j int) bool { return podName(mapValue(pods[i])) < podName(mapValue(pods[j])) })
 	if len(pods) == 0 {
-		return statusTable(namespace, checkedAt, "ALERT", 0, 0, nil), 1
+		return statusTable(namespace, checkedAt, "ALERT", 0, 0, nil, visuals), 1
 	}
 	unhealthy := 0
 	var rows [][]string
@@ -202,25 +209,45 @@ func namespaceStatusReportAt(payload map[string]any, namespace string, checkedAt
 		}
 	}
 	if unhealthy == 0 {
-		return statusTable(namespace, checkedAt, "OK", 0, len(pods), rows), 0
+		return statusTable(namespace, checkedAt, "OK", 0, len(pods), rows, visuals), 0
 	}
-	return statusTable(namespace, checkedAt, "ALERT", unhealthy, len(pods), rows), unhealthy
+	return statusTable(namespace, checkedAt, "ALERT", unhealthy, len(pods), rows, visuals), unhealthy
 }
 
-func statusTable(namespace string, checkedAt time.Time, result string, unhealthy, pods int, rows [][]string) string {
+func statusTable(namespace string, checkedAt time.Time, result string, unhealthy, pods int, rows [][]string, visuals statusVisuals) string {
 	message := "Review unhealthy pods"
 	if pods == 0 {
 		message = "No pods found"
 	} else if result == "OK" {
 		message = "all pods healthy"
 	}
-	report := "STATUS\n" + formatTable(
-		[]string{"Result", "Namespace", "Checked At", "Pods", "Unhealthy", "Message"},
-		[][]string{{result, namespace, formatStatusTime(checkedAt), fmt.Sprint(pods), fmt.Sprint(unhealthy), message}},
-		[]int{7, 24, 25, 6, 9, 24},
-	)
+	healthy := max(0, pods-unhealthy)
+	statusRows := [][]string{{result, namespace, formatStatusTime(checkedAt), fmt.Sprint(pods), fmt.Sprintf("%d/%d", healthy, pods), fmt.Sprint(unhealthy), message}}
+	statusHeaders := []string{"Result", "Namespace", "Checked At", "Pods", "Healthy", "Unhealthy", "Message"}
+	statusMaximums := []int{7, 24, 25, 6, 9, 9, 24}
+	if narrowStatusLayout(visuals) {
+		statusHeaders = []string{"Status", "Value"}
+		statusRows = [][]string{{"Result", result}, {"Namespace", namespace}, {"Checked At", formatStatusTime(checkedAt)}, {"Pods", fmt.Sprint(pods)}, {"Healthy", fmt.Sprintf("%d/%d", healthy, pods)}, {"Unhealthy", fmt.Sprint(unhealthy)}, {"Message", message}}
+		statusMaximums = []int{12, max(20, visuals.Width-18)}
+	}
+	tone := toneAlert
+	if result == "OK" {
+		tone = toneHealthy
+	}
+	report := statusSection("TAILG STATUS", visuals, tone) + formatTableStyled(statusHeaders, statusRows, statusMaximums, visuals, tone, false)
 	if len(rows) > 0 {
-		report += "UNHEALTHY PODS\n" + formatTable([]string{"Pod", "Phase", "Ready", "Restarts", "Details"}, rows, []int{32, 12, 7, 8, 44})
+		headers := []string{"Pod", "Phase", "Ready", "Restarts", "Problem"}
+		maximums := []int{32, 12, 7, 8, 44}
+		if narrowStatusLayout(visuals) {
+			headers = []string{"Pod", "Health", "Problem"}
+			maximums = []int{28, 24, max(24, visuals.Width-60)}
+			compact := make([][]string, 0, len(rows))
+			for _, row := range rows {
+				compact = append(compact, []string{row[0], fmt.Sprintf("%s | ready %s | restarts %s", row[1], row[2], row[3]), row[4]})
+			}
+			rows = compact
+		}
+		report += "\n" + statusSection(fmt.Sprintf("%d UNHEALTHY POD(S)", unhealthy), visuals, toneAlert) + formatTableStyled(headers, rows, maximums, visuals, toneAlert, true)
 	}
 	return report
 }
@@ -255,11 +282,16 @@ type recentErrorGroup struct {
 	issue    core.Issue
 	count    int
 	lastSeen time.Time
+	sources  map[string]bool
 }
 
 // RecentErrorReport scans the current application containers. Collection
 // failures are returned with a useful partial report.
 func (r Runner) RecentErrorReport(ctx context.Context, pods map[string]any, lookback time.Duration) (string, error) {
+	return r.recentErrorReport(ctx, pods, lookback, statusVisuals{})
+}
+
+func (r Runner) recentErrorReport(ctx context.Context, pods map[string]any, lookback time.Duration, visuals statusVisuals) (string, error) {
 	if lookback <= 0 {
 		lookback = core.DefaultStatusLookback
 	}
@@ -285,17 +317,18 @@ func (r Runner) RecentErrorReport(ctx context.Context, pods map[string]any, look
 			}
 			group := groups[issue.Key]
 			if group == nil {
-				group = &recentErrorGroup{issue: issue}
+				group = &recentErrorGroup{issue: issue, sources: map[string]bool{}}
 				groups[issue.Key] = group
 			}
 			group.count++
+			group.sources[item.Pod+"/"+item.Container] = true
 			if event.ObservedAt.After(group.lastSeen) {
 				group.lastSeen = event.ObservedAt
 			}
 		}
 	}
 	failed := len(items) - succeeded
-	report := FormatRecentErrorReport(groups, lookback, len(items), failed)
+	report := formatRecentErrorReportAtStyled(groups, lookback, len(items), failed, time.Now(), visuals)
 	if len(scanErrors) > 0 {
 		return report, errors.Join(scanErrors...)
 	}
@@ -312,10 +345,15 @@ func FormatRecentErrorReport(groups map[string]*recentErrorGroup, lookback time.
 }
 
 func formatRecentErrorReportAt(groups map[string]*recentErrorGroup, lookback time.Duration, streams, failed int, checkedAt time.Time) string {
+	return formatRecentErrorReportAtStyled(groups, lookback, streams, failed, checkedAt, statusVisuals{})
+}
+
+func formatRecentErrorReportAtStyled(groups map[string]*recentErrorGroup, lookback time.Duration, streams, failed int, checkedAt time.Time, visuals statusVisuals) string {
 	minutes := max(int64(1), int64(lookback/time.Minute))
-	header := fmt.Sprintf("RECENT ERRORS | checked=%s | lookback=%dm | streams=%d | failed=%d", formatStatusTime(checkedAt), minutes, streams, failed)
+	header := fmt.Sprintf("checked=%s | lookback=%dm | streams=%d | failed=%d", formatStatusTime(checkedAt), minutes, streams, failed)
 	if len(groups) == 0 {
-		return header + " | events=0\n" + formatTable([]string{"Result"}, [][]string{{"No recent errors found"}}, []int{44})
+		return "\n" + statusSection("RECENT ERRORS", visuals, toneHealthy) +
+			formatTableStyled([]string{"Result", "Window"}, [][]string{{"No recent errors found", header + " | events=0"}}, []int{44, 72}, visuals, toneHealthy, false)
 	}
 	ordered := make([]*recentErrorGroup, 0, len(groups))
 	total := 0
@@ -333,12 +371,40 @@ func formatRecentErrorReportAt(groups map[string]*recentErrorGroup, lookback tim
 	for _, group := range ordered {
 		lastSeen := "-"
 		if !group.lastSeen.IsZero() {
-			lastSeen = formatStatusTime(group.lastSeen)
+			lastSeen = formatStatusTime(group.lastSeen) + "\n" + formatStatusAge(checkedAt, group.lastSeen)
 		}
-		rows = append(rows, []string{fmt.Sprint(group.count), lastSeen, group.issue.Kind, group.issue.Service, group.issue.Summary})
+		summary := group.issue.FullSummary
+		if summary == "" {
+			summary = group.issue.Summary
+		}
+		rows = append(rows, []string{fmt.Sprint(group.count), lastSeen, group.issue.Kind, group.issue.Service, recentErrorSources(group), summary})
 	}
-	return fmt.Sprintf("%s | groups=%d | events=%d\n", header, len(ordered), total) +
-		formatTable([]string{"Count", "Last Seen", "Type", "Service", "Summary"}, rows, []int{5, 25, 16, 18, 42})
+	headers := []string{"Count", "Last Seen", "Type", "Service", "Pod / Container", "Summary"}
+	maximums := []int{5, 25, 16, 18, 32, 48}
+	if narrowStatusLayout(visuals) {
+		headers = []string{"Count", "Last Seen", "Error"}
+		maximums = []int{5, 25, max(28, visuals.Width-42)}
+		compact := make([][]string, 0, len(rows))
+		for _, row := range rows {
+			compact = append(compact, []string{row[0], row[1], row[2] + " | " + row[3] + " | " + row[4] + " | " + row[5]})
+		}
+		rows = compact
+	}
+	return "\n" + statusSection(fmt.Sprintf("RECENT ERRORS · %d EVENT(S) IN %dm", total, minutes), visuals, toneAlert) +
+		statusMetadata(header+fmt.Sprintf(" | groups=%d | events=%d", len(ordered), total), visuals) +
+		formatTableStyled(headers, rows, maximums, visuals, toneAlert, true)
+}
+
+func recentErrorSources(group *recentErrorGroup) string {
+	if group == nil || len(group.sources) == 0 {
+		return "-"
+	}
+	values := make([]string, 0, len(group.sources))
+	for source := range group.sources {
+		values = append(values, source)
+	}
+	sort.Strings(values)
+	return strings.Join(values, ", ")
 }
 
 func formatStatusTime(value time.Time) string {
@@ -346,6 +412,23 @@ func formatStatusTime(value time.Time) string {
 		return "-"
 	}
 	return value.Format(time.RFC3339)
+}
+
+func formatStatusAge(checkedAt, observedAt time.Time) string {
+	age := checkedAt.Sub(observedAt)
+	if age < 0 {
+		age = 0
+	}
+	switch {
+	case age < time.Minute:
+		return "just now"
+	case age < time.Hour:
+		return fmt.Sprintf("%dm ago", int(age/time.Minute))
+	case age < 24*time.Hour:
+		return fmt.Sprintf("%dh %dm ago", int(age/time.Hour), int(age%time.Hour/time.Minute))
+	default:
+		return fmt.Sprintf("%dd %dh ago", int(age/(24*time.Hour)), int(age%(24*time.Hour)/time.Hour))
+	}
 }
 
 func (r Runner) RunStatus(ctx context.Context, namespace string, options StatusOptions) int {
@@ -363,6 +446,7 @@ func (r Runner) RunStatus(ctx context.Context, namespace string, options StatusO
 	}
 	statusRunner := r
 	statusRunner.Namespace = namespace
+	visuals := statusVisuals{Decorated: options.Decorated, Color: options.Color && options.Decorated, Width: options.Width}
 	started := time.Now()
 	offeredPods := map[string]bool{}
 	offeredWorkloads := map[string]bool{}
@@ -373,10 +457,10 @@ func (r Runner) RunStatus(ctx context.Context, namespace string, options StatusO
 			fmt.Fprintln(options.Output, err)
 			return 1
 		}
-		report, count := NamespaceStatusReport(payload, namespace)
+		report, count := namespaceStatusReportAtStyled(payload, namespace, time.Now(), visuals)
 		fmt.Fprint(options.Output, report)
 		if !errorsScanned {
-			errorReport, scanErr := statusRunner.RecentErrorReport(ctx, payload, options.Lookback)
+			errorReport, scanErr := statusRunner.recentErrorReport(ctx, payload, options.Lookback, visuals)
 			fmt.Fprint(options.Output, errorReport)
 			if scanErr != nil {
 				fmt.Fprintln(options.Output, "RECENT ERRORS INCOMPLETE |", scanErr)

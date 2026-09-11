@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/fernandocpaz/tailg/internal/core"
 )
 
@@ -33,7 +34,7 @@ esac
 	if code != 0 {
 		t.Fatalf("status code=%d output=%s", code, output.String())
 	}
-	for _, expected := range []string{"all pods healthy", "RECENT ERRORS", "lookback=20m", "Last Seen", "database timeout"} {
+	for _, expected := range []string{"all pods healthy", "RECENT ERRORS", "lookback=20m", "Last Seen", "Pod / Container", "api-pod/api", "database timeout"} {
 		if !strings.Contains(output.String(), expected) {
 			t.Fatalf("status output missing %q: %s", expected, output.String())
 		}
@@ -43,11 +44,11 @@ esac
 func TestFormatRecentErrorReportUsesLookbackAndCompactSummary(t *testing.T) {
 	checkedAt := time.Date(2026, 9, 11, 15, 30, 0, 0, time.FixedZone("EDT", -4*60*60))
 	groups := map[string]*recentErrorGroup{
-		"timeout": {issue: core.Issue{Kind: "TIMEOUT", Service: "api", Summary: "compact timeout detail", FullSummary: strings.Repeat("full detail ", 100)}, count: 3, lastSeen: checkedAt.Add(-time.Minute)},
+		"timeout": {issue: core.Issue{Kind: "TIMEOUT", Service: "api", Summary: "compact timeout detail", FullSummary: "complete timeout detail with database host"}, count: 3, lastSeen: checkedAt.Add(-time.Minute), sources: map[string]bool{"api-7c9/api": true}},
 		"http":    {issue: core.Issue{Kind: "HTTP 5XX", Service: "worker", Summary: "503"}, count: 1},
 	}
 	report := formatRecentErrorReportAt(groups, 20*time.Minute, 4, 1, checkedAt)
-	for _, expected := range []string{"checked=2026-09-11T15:30:00-04:00", "lookback=20m", "groups=2", "events=4", "streams=4", "failed=1", "| 3", "TIMEOUT", "2026-09-11T15:29:00-04:00", "compact timeout detail"} {
+	for _, expected := range []string{"checked=2026-09-11T15:30:00-04:00", "lookback=20m", "groups=2", "events=4", "streams=4", "failed=1", "| 3", "TIMEOUT", "2026-09-11T15:29:00-04:00", "1m ago", "api-7c9/api", "complete timeout detail with database host"} {
 		if !strings.Contains(report, expected) {
 			t.Fatalf("report missing %q: %s", expected, report)
 		}
@@ -79,13 +80,43 @@ func TestNamespaceStatusReportIsTimestampedTableWithWrappedFullDetails(t *testin
 		},
 	}}
 	report, unhealthy := namespaceStatusReportAt(payload, "apollo", time.Date(2026, 9, 11, 19, 5, 0, 0, time.UTC))
-	for _, expected := range []string{"Checked At", "2026-09-11T19:05:00Z", "UNHEALTHY PODS", "| Pod", "api-with-a-very-long-generated-", "pod-name-1234567890", "scheduling remains blocked"} {
+	for _, expected := range []string{"Checked At", "2026-09-11T19:05:00Z", "UNHEALTHY POD(S)", "| Pod", "api-with-a-very-long-generated-", "pod-name-1234567890", "scheduling remains blocked"} {
 		if !strings.Contains(report, expected) {
 			t.Fatalf("report missing %q: %s", expected, report)
 		}
 	}
 	if unhealthy != 1 || strings.Count(report, "scheduling") != 6 || strings.Contains(report, "…") {
 		t.Fatalf("unhealthy=%d; full detail was not preserved: %s", unhealthy, report)
+	}
+}
+
+func TestStyledStatusDashboardAdaptsToNarrowTerminal(t *testing.T) {
+	payload := map[string]any{"items": []any{
+		map[string]any{
+			"metadata": map[string]any{"name": "patient-api-7c9d8"},
+			"spec":     map[string]any{"containers": []any{map[string]any{"name": "api"}}},
+			"status": map[string]any{
+				"phase":             "Running",
+				"containerStatuses": []any{map[string]any{"name": "api", "ready": false, "restartCount": 4, "state": map[string]any{"waiting": map[string]any{"reason": "CrashLoopBackOff"}}}},
+			},
+		},
+	}}
+	report, unhealthy := namespaceStatusReportAtStyled(payload, "apollo", time.Date(2026, 9, 11, 19, 5, 0, 0, time.UTC), statusVisuals{Decorated: true, Width: 72})
+	for _, expected := range []string{"● TAILG STATUS", "╭", "Status", "Value", "Healthy", "● 1 UNHEALTHY POD(S)", "Health", "Problem", "CrashLoopBackOff"} {
+		if !strings.Contains(report, expected) {
+			t.Fatalf("dashboard missing %q: %s", expected, report)
+		}
+	}
+	if unhealthy != 1 {
+		t.Fatalf("unhealthy=%d", unhealthy)
+	}
+	if strings.Contains(report, "\x1b[") {
+		t.Fatalf("no-color dashboard contains ANSI escapes: %q", report)
+	}
+	for _, line := range strings.Split(report, "\n") {
+		if lipgloss.Width(line) > 72 {
+			t.Fatalf("dashboard line width=%d: %q", lipgloss.Width(line), line)
+		}
 	}
 }
 

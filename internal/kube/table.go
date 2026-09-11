@@ -2,146 +2,133 @@ package kube
 
 import (
 	"strings"
-	"unicode/utf8"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/lipgloss/table"
+	"github.com/charmbracelet/x/ansi"
 )
 
-// formatTable renders plain ASCII so status output remains readable in a
-// terminal, CI log, or redirected file. Cells wrap instead of losing text.
+type statusVisuals struct {
+	Decorated bool
+	Color     bool
+	Width     int
+}
+
+type tableTone int
+
+const (
+	toneNeutral tableTone = iota
+	toneHealthy
+	toneAlert
+)
+
+var asciiTableBorder = lipgloss.Border{
+	Top: "-", Bottom: "-", Left: "|", Right: "|",
+	TopLeft: "+", TopRight: "+", BottomLeft: "+", BottomRight: "+",
+	MiddleLeft: "+", MiddleRight: "+", Middle: "+", MiddleTop: "+", MiddleBottom: "+",
+}
+
+var (
+	statusGreen = lipgloss.AdaptiveColor{Light: "#006B3C", Dark: "#5AF78E"}
+	statusRed   = lipgloss.AdaptiveColor{Light: "#B00020", Dark: "#FF5F5F"}
+	statusGold  = lipgloss.AdaptiveColor{Light: "#7A5200", Dark: "#FFD75F"}
+	statusCyan  = lipgloss.AdaptiveColor{Light: "#005F87", Dark: "#5FD7FF"}
+	statusMuted = lipgloss.AdaptiveColor{Light: "#5F6368", Dark: "#A0A0A0"}
+)
+
+// formatTable preserves the plain ASCII API used by non-interactive callers.
 func formatTable(headers []string, rows [][]string, maximums []int) string {
-	widths := make([]int, len(headers))
-	for column, header := range headers {
-		widths[column] = runeWidth(header)
-	}
-	for _, row := range rows {
-		for column := range headers {
-			if column < len(row) {
-				widths[column] = max(widths[column], longestLine(row[column]))
+	return formatTableStyled(headers, rows, maximums, statusVisuals{}, toneNeutral, true)
+}
+
+func formatTableStyled(headers []string, rows [][]string, maximums []int, visuals statusVisuals, tone tableTone, separateRows bool) string {
+	prepared := make([][]string, len(rows))
+	for row := range rows {
+		prepared[row] = make([]string, len(rows[row]))
+		for column, value := range rows[row] {
+			if column < len(maximums) && maximums[column] > 0 {
+				value = ansi.Wrap(value, maximums[column], "")
 			}
-		}
-	}
-	for column, maximum := range maximums {
-		if column < len(widths) && maximum > 0 {
-			widths[column] = min(widths[column], maximum)
+			prepared[row][column] = value
 		}
 	}
 
-	border := tableBorder(widths)
-	lines := []string{border, tableLine(headers, widths), border}
-	for _, row := range rows {
-		wrapped := make([][]string, len(headers))
-		height := 1
-		for column := range headers {
+	border := asciiTableBorder
+	if visuals.Decorated {
+		border = lipgloss.RoundedBorder()
+	}
+	rendered := table.New().
+		Border(border).
+		BorderRow(separateRows).
+		Headers(headers...).
+		Rows(prepared...).
+		Wrap(true).
+		StyleFunc(func(row, column int) lipgloss.Style {
+			style := lipgloss.NewStyle().Padding(0, 1)
+			if !visuals.Color {
+				return style
+			}
+			if row == table.HeaderRow {
+				return style.Bold(true).Foreground(statusCyan)
+			}
 			value := ""
-			if column < len(row) {
-				value = row[column]
+			if row >= 0 && row < len(prepared) && column < len(prepared[row]) {
+				value = strings.ToUpper(strings.TrimSpace(prepared[row][column]))
 			}
-			wrapped[column] = wrapCell(value, widths[column])
-			height = max(height, len(wrapped[column]))
-		}
-		for line := 0; line < height; line++ {
-			values := make([]string, len(headers))
-			for column := range headers {
-				if line < len(wrapped[column]) {
-					values[column] = wrapped[column][line]
-				}
+			switch {
+			case value == "OK" || value == "HEALTHY":
+				return style.Bold(true).Foreground(statusGreen)
+			case value == "ALERT" || strings.Contains(value, "ERROR") || strings.Contains(value, "TIMEOUT") || strings.Contains(value, "FAILURE"):
+				return style.Bold(true).Foreground(statusRed)
+			case value == "WARN" || value == "WARNING" || value == "PENDING":
+				return style.Bold(true).Foreground(statusGold)
+			case tone == toneAlert && column == 0:
+				return style.Bold(true).Foreground(statusRed)
+			case tone == toneHealthy && column == 0:
+				return style.Bold(true).Foreground(statusGreen)
+			default:
+				return style
 			}
-			lines = append(lines, tableLine(values, widths))
-		}
-		lines = append(lines, border)
+		})
+	if visuals.Color {
+		rendered.BorderStyle(lipgloss.NewStyle().Foreground(statusMuted))
 	}
-	return strings.Join(lines, "\n") + "\n"
+	if visuals.Decorated && visuals.Width > 0 {
+		rendered.Width(max(36, visuals.Width))
+	}
+	return rendered.String() + "\n"
 }
 
-func tableBorder(widths []int) string {
-	var builder strings.Builder
-	builder.WriteByte('+')
-	for _, width := range widths {
-		builder.WriteString(strings.Repeat("-", width+2))
-		builder.WriteByte('+')
+func statusSection(title string, visuals statusVisuals, tone tableTone) string {
+	if !visuals.Decorated {
+		return title + "\n"
 	}
-	return builder.String()
-}
-
-func tableLine(values []string, widths []int) string {
-	var builder strings.Builder
-	builder.WriteByte('|')
-	for column, width := range widths {
-		value := ""
-		if column < len(values) {
-			value = values[column]
-		}
-		builder.WriteByte(' ')
-		builder.WriteString(value)
-		builder.WriteString(strings.Repeat(" ", max(0, width-runeWidth(value))))
-		builder.WriteString(" |")
-	}
-	return builder.String()
-}
-
-func wrapCell(value string, width int) []string {
-	if width <= 0 {
-		return []string{""}
-	}
-	var result []string
-	for _, sourceLine := range strings.Split(value, "\n") {
-		words := strings.Fields(sourceLine)
-		if len(words) == 0 {
-			result = append(result, "")
-			continue
-		}
-		line := ""
-		for _, word := range words {
-			for runeWidth(word) > width {
-				if line != "" {
-					result = append(result, line)
-					line = ""
-				}
-				chunk, rest := splitRunes(word, width)
-				result = append(result, chunk)
-				word = rest
-			}
-			if word == "" {
-				continue
-			}
-			if line == "" {
-				line = word
-			} else if runeWidth(line)+1+runeWidth(word) <= width {
-				line += " " + word
-			} else {
-				result = append(result, line)
-				line = word
-			}
-		}
-		if line != "" {
-			result = append(result, line)
+	style := lipgloss.NewStyle().Bold(true)
+	if visuals.Color {
+		switch tone {
+		case toneHealthy:
+			style = style.Foreground(statusGreen)
+		case toneAlert:
+			style = style.Foreground(statusRed)
+		default:
+			style = style.Foreground(statusCyan)
 		}
 	}
-	if len(result) == 0 {
-		return []string{""}
-	}
-	return result
+	return style.Render("● "+title) + "\n"
 }
 
-func splitRunes(value string, width int) (string, string) {
-	runes := []rune(value)
-	cut := width
-	// Pod and resource names are commonly hyphenated. Prefer a natural break
-	// near the edge while retaining the delimiter and every character.
-	for index := width - 1; index >= width/2; index-- {
-		if runes[index] == '-' || runes[index] == '/' {
-			cut = index + 1
-			break
-		}
+func statusMetadata(value string, visuals statusVisuals) string {
+	width := 118
+	if visuals.Width > 0 {
+		width = max(36, visuals.Width)
 	}
-	return string(runes[:cut]), string(runes[cut:])
+	value = ansi.Wrap(value, width, "")
+	if visuals.Color {
+		value = lipgloss.NewStyle().Foreground(statusMuted).Render(value)
+	}
+	return value + "\n"
 }
 
-func longestLine(value string) int {
-	longest := 0
-	for _, line := range strings.Split(value, "\n") {
-		longest = max(longest, runeWidth(line))
-	}
-	return longest
+func narrowStatusLayout(visuals statusVisuals) bool {
+	return visuals.Decorated && visuals.Width > 0 && visuals.Width < 90
 }
-
-func runeWidth(value string) int { return utf8.RuneCountInString(value) }

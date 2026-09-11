@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	xterm "github.com/charmbracelet/x/term"
 	"github.com/fernandocpaz/tailg/internal/bundle"
 	"github.com/fernandocpaz/tailg/internal/core"
 	"github.com/fernandocpaz/tailg/internal/kube"
@@ -82,7 +83,11 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 				return 1
 			}
 		}
-		statusOptions := kube.StatusOptions{Lookback: options.StatusLookback, Interval: options.StatusInterval, Timeout: options.StatusTimeout, Output: stdout}
+		decorated, statusWidth := terminalPresentation(stdout)
+		statusOptions := kube.StatusOptions{
+			Lookback: options.StatusLookback, Interval: options.StatusInterval, Timeout: options.StatusTimeout, Output: stdout,
+			Decorated: decorated, Color: decorated && !options.NoColor, Width: statusWidth,
+		}
 		if interactive(stdin) {
 			statusOptions.Input = stdin
 			if runtime.GOOS == "windows" {
@@ -525,6 +530,18 @@ func interactive(input io.Reader) bool {
 	}
 	info, err := file.Stat()
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+func terminalPresentation(output io.Writer) (bool, int) {
+	file, ok := output.(*os.File)
+	if !ok || !xterm.IsTerminal(file.Fd()) {
+		return false, 0
+	}
+	width, _, err := xterm.GetSize(file.Fd())
+	if err != nil || width <= 0 {
+		width = 118
+	}
+	return true, width
 }
 
 func valueOr(value, fallback string) string {

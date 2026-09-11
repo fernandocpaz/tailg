@@ -195,7 +195,11 @@ heartbeat settings.
 hours, and waits for unhealthy pods to recover. Pass a positive whole number of
 minutes as the optional positional value—for example, `tailg --status 20` scans
 the previous 20 minutes. Pod health and recent errors are shown in timestamped,
-wrapped tables; error groups include their most recent log time when available.
+wrapped tables; error groups include their exact and relative last-seen time,
+pod/container sources, and complete classified message when available.
+Interactive terminals use adaptive severity colors and rounded borders, with a
+stacked layout on narrow screens. Redirected output remains plain ASCII, and
+`--no-color` keeps the interactive layout without ANSI colors.
 The error scan runs once; recent errors are evidence and do not keep an otherwise
 healthy namespace in the recovery loop. Use
 `--status-interval` and `--status-timeout` to adjust polling and deadline. In an
