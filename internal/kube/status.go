@@ -181,35 +181,48 @@ func PodHealthIssues(pod map[string]any) []string {
 }
 
 func NamespaceStatusReport(payload map[string]any, namespace string) (string, int) {
+	return namespaceStatusReportAt(payload, namespace, time.Now())
+}
+
+func namespaceStatusReportAt(payload map[string]any, namespace string, checkedAt time.Time) (string, int) {
 	pods := sliceValue(payload["items"])
 	sort.Slice(pods, func(i, j int) bool { return podName(mapValue(pods[i])) < podName(mapValue(pods[j])) })
 	if len(pods) == 0 {
-		return fmt.Sprintf("NO PODS | namespace=%s | nothing to scan\n", namespace), 1
+		return statusTable(namespace, checkedAt, "ALERT", 0, 0, nil), 1
 	}
-	type unhealthyPod struct {
-		pod    map[string]any
-		issues []string
-	}
-	var unhealthy []unhealthyPod
+	unhealthy := 0
+	var rows [][]string
 	for _, raw := range pods {
 		pod := mapValue(raw)
-		if issues := PodHealthIssues(pod); len(issues) > 0 {
-			unhealthy = append(unhealthy, unhealthyPod{pod, issues})
+		issues := PodHealthIssues(pod)
+		if len(issues) > 0 {
+			unhealthy++
+			ready, total := readyCounts(pod)
+			rows = append(rows, []string{valueOr(podName(pod), "unknown"), podPhase(pod), fmt.Sprintf("%d/%d", ready, total), fmt.Sprint(restartCount(pod)), strings.Join(issues, "; ")})
 		}
 	}
-	if len(unhealthy) == 0 {
-		return fmt.Sprintf("OK | namespace=%s | pods=%d | all pods healthy\n", namespace, len(pods)), 0
+	if unhealthy == 0 {
+		return statusTable(namespace, checkedAt, "OK", 0, len(pods), rows), 0
 	}
-	lines := []string{fmt.Sprintf("ALERT | namespace=%s | unhealthy=%d/%d pods", namespace, len(unhealthy), len(pods)), ""}
-	for _, item := range unhealthy {
-		ready, total := readyCounts(item.pod)
-		lines = append(lines, fmt.Sprintf("%s | phase=%s | ready=%d/%d | restarts=%d", valueOr(podName(item.pod), "unknown"), podPhase(item.pod), ready, total, restartCount(item.pod)))
-		for _, issue := range item.issues {
-			lines = append(lines, "  - "+issue)
-		}
-		lines = append(lines, "")
+	return statusTable(namespace, checkedAt, "ALERT", unhealthy, len(pods), rows), unhealthy
+}
+
+func statusTable(namespace string, checkedAt time.Time, result string, unhealthy, pods int, rows [][]string) string {
+	message := "Review unhealthy pods"
+	if pods == 0 {
+		message = "No pods found"
+	} else if result == "OK" {
+		message = "all pods healthy"
 	}
-	return strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n", len(unhealthy)
+	report := "STATUS\n" + formatTable(
+		[]string{"Result", "Namespace", "Checked At", "Pods", "Unhealthy", "Message"},
+		[][]string{{result, namespace, formatStatusTime(checkedAt), fmt.Sprint(pods), fmt.Sprint(unhealthy), message}},
+		[]int{7, 24, 25, 6, 9, 24},
+	)
+	if len(rows) > 0 {
+		report += "UNHEALTHY PODS\n" + formatTable([]string{"Pod", "Phase", "Ready", "Restarts", "Details"}, rows, []int{32, 12, 7, 8, 44})
+	}
+	return report
 }
 
 func UnhealthyPodNames(payload map[string]any) []string {
@@ -239,8 +252,9 @@ func UnhealthyWorkloadNames(payload map[string]any) []string {
 }
 
 type recentErrorGroup struct {
-	issue core.Issue
-	count int
+	issue    core.Issue
+	count    int
+	lastSeen time.Time
 }
 
 // RecentErrorReport scans the current application containers. Collection
@@ -275,6 +289,9 @@ func (r Runner) RecentErrorReport(ctx context.Context, pods map[string]any, look
 				groups[issue.Key] = group
 			}
 			group.count++
+			if event.ObservedAt.After(group.lastSeen) {
+				group.lastSeen = event.ObservedAt
+			}
 		}
 	}
 	failed := len(items) - succeeded
@@ -291,9 +308,14 @@ func statusLookbackArgument(lookback time.Duration) string {
 }
 
 func FormatRecentErrorReport(groups map[string]*recentErrorGroup, lookback time.Duration, streams, failed int) string {
+	return formatRecentErrorReportAt(groups, lookback, streams, failed, time.Now())
+}
+
+func formatRecentErrorReportAt(groups map[string]*recentErrorGroup, lookback time.Duration, streams, failed int, checkedAt time.Time) string {
 	minutes := max(int64(1), int64(lookback/time.Minute))
+	header := fmt.Sprintf("RECENT ERRORS | checked=%s | lookback=%dm | streams=%d | failed=%d", formatStatusTime(checkedAt), minutes, streams, failed)
 	if len(groups) == 0 {
-		return fmt.Sprintf("NO RECENT ERRORS | lookback=%dm | streams=%d | failed=%d\n", minutes, streams, failed)
+		return header + " | events=0\n" + formatTable([]string{"Result"}, [][]string{{"No recent errors found"}}, []int{44})
 	}
 	ordered := make([]*recentErrorGroup, 0, len(groups))
 	total := 0
@@ -307,11 +329,23 @@ func FormatRecentErrorReport(groups map[string]*recentErrorGroup, lookback time.
 		}
 		return ordered[i].issue.Key < ordered[j].issue.Key
 	})
-	lines := []string{fmt.Sprintf("RECENT ERRORS | lookback=%dm | groups=%d | events=%d | streams=%d | failed=%d", minutes, len(ordered), total, streams, failed)}
+	rows := make([][]string, 0, len(ordered))
 	for _, group := range ordered {
-		lines = append(lines, fmt.Sprintf("  %d× %s | %s | %s", group.count, group.issue.Kind, group.issue.Service, group.issue.Summary))
+		lastSeen := "-"
+		if !group.lastSeen.IsZero() {
+			lastSeen = formatStatusTime(group.lastSeen)
+		}
+		rows = append(rows, []string{fmt.Sprint(group.count), lastSeen, group.issue.Kind, group.issue.Service, group.issue.Summary})
 	}
-	return strings.Join(lines, "\n") + "\n"
+	return fmt.Sprintf("%s | groups=%d | events=%d\n", header, len(ordered), total) +
+		formatTable([]string{"Count", "Last Seen", "Type", "Service", "Summary"}, rows, []int{5, 25, 16, 18, 42})
+}
+
+func formatStatusTime(value time.Time) string {
+	if value.IsZero() {
+		return "-"
+	}
+	return value.Format(time.RFC3339)
 }
 
 func (r Runner) RunStatus(ctx context.Context, namespace string, options StatusOptions) int {

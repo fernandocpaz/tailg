@@ -33,7 +33,7 @@ esac
 	if code != 0 {
 		t.Fatalf("status code=%d output=%s", code, output.String())
 	}
-	for _, expected := range []string{"all pods healthy", "RECENT ERRORS", "lookback=20m", "database timeout"} {
+	for _, expected := range []string{"all pods healthy", "RECENT ERRORS", "lookback=20m", "Last Seen", "database timeout"} {
 		if !strings.Contains(output.String(), expected) {
 			t.Fatalf("status output missing %q: %s", expected, output.String())
 		}
@@ -41,12 +41,13 @@ esac
 }
 
 func TestFormatRecentErrorReportUsesLookbackAndCompactSummary(t *testing.T) {
+	checkedAt := time.Date(2026, 9, 11, 15, 30, 0, 0, time.FixedZone("EDT", -4*60*60))
 	groups := map[string]*recentErrorGroup{
-		"timeout": {issue: core.Issue{Kind: "TIMEOUT", Service: "api", Summary: "compact timeout detail", FullSummary: strings.Repeat("full detail ", 100)}, count: 3},
+		"timeout": {issue: core.Issue{Kind: "TIMEOUT", Service: "api", Summary: "compact timeout detail", FullSummary: strings.Repeat("full detail ", 100)}, count: 3, lastSeen: checkedAt.Add(-time.Minute)},
 		"http":    {issue: core.Issue{Kind: "HTTP 5XX", Service: "worker", Summary: "503"}, count: 1},
 	}
-	report := FormatRecentErrorReport(groups, 20*time.Minute, 4, 1)
-	for _, expected := range []string{"lookback=20m", "groups=2", "events=4", "streams=4", "failed=1", "3× TIMEOUT", "compact timeout detail"} {
+	report := formatRecentErrorReportAt(groups, 20*time.Minute, 4, 1, checkedAt)
+	for _, expected := range []string{"checked=2026-09-11T15:30:00-04:00", "lookback=20m", "groups=2", "events=4", "streams=4", "failed=1", "| 3", "TIMEOUT", "2026-09-11T15:29:00-04:00", "compact timeout detail"} {
 		if !strings.Contains(report, expected) {
 			t.Fatalf("report missing %q: %s", expected, report)
 		}
@@ -57,9 +58,34 @@ func TestFormatRecentErrorReportUsesLookbackAndCompactSummary(t *testing.T) {
 }
 
 func TestFormatRecentErrorReportNoErrors(t *testing.T) {
-	report := FormatRecentErrorReport(nil, 2*time.Hour, 3, 0)
-	if report != "NO RECENT ERRORS | lookback=120m | streams=3 | failed=0\n" {
-		t.Fatalf("report = %q", report)
+	report := formatRecentErrorReportAt(nil, 2*time.Hour, 3, 0, time.Date(2026, 9, 11, 19, 0, 0, 0, time.UTC))
+	for _, expected := range []string{"checked=2026-09-11T19:00:00Z", "lookback=120m", "events=0", "| Result", "No recent errors found"} {
+		if !strings.Contains(report, expected) {
+			t.Fatalf("report missing %q: %s", expected, report)
+		}
+	}
+}
+
+func TestNamespaceStatusReportIsTimestampedTableWithWrappedFullDetails(t *testing.T) {
+	longMessage := strings.Repeat("scheduling remains blocked ", 5)
+	payload := map[string]any{"items": []any{
+		map[string]any{
+			"metadata": map[string]any{"name": "api-with-a-very-long-generated-pod-name-1234567890"},
+			"spec":     map[string]any{"containers": []any{map[string]any{"name": "api"}}},
+			"status": map[string]any{
+				"phase":      "Pending",
+				"conditions": []any{map[string]any{"type": "PodScheduled", "status": "False", "reason": "Unschedulable", "message": longMessage}},
+			},
+		},
+	}}
+	report, unhealthy := namespaceStatusReportAt(payload, "apollo", time.Date(2026, 9, 11, 19, 5, 0, 0, time.UTC))
+	for _, expected := range []string{"Checked At", "2026-09-11T19:05:00Z", "UNHEALTHY PODS", "| Pod", "api-with-a-very-long-generated-", "pod-name-1234567890", "scheduling remains blocked"} {
+		if !strings.Contains(report, expected) {
+			t.Fatalf("report missing %q: %s", expected, report)
+		}
+	}
+	if unhealthy != 1 || strings.Count(report, "scheduling") != 6 || strings.Contains(report, "…") {
+		t.Fatalf("unhealthy=%d; full detail was not preserved: %s", unhealthy, report)
 	}
 }
 
@@ -75,13 +101,13 @@ func TestRecentErrorReportCountsUnscannedStreamsAfterCancellation(t *testing.T) 
 	}
 }
 
-func TestNamespaceStatusReportsOnlyUnhealthyPods(t *testing.T) {
+func TestNamespaceStatusReportsUnhealthyPodsInTable(t *testing.T) {
 	payload := map[string]any{"items": []any{
 		map[string]any{"metadata": map[string]any{"name": "healthy"}, "spec": map[string]any{"containers": []any{map[string]any{"name": "api"}}}, "status": map[string]any{"phase": "Running", "containerStatuses": []any{map[string]any{"name": "api", "ready": true, "restartCount": float64(0), "state": map[string]any{"running": map[string]any{}}}}}},
 		map[string]any{"metadata": map[string]any{"name": "bad-worker"}, "spec": map[string]any{"containers": []any{map[string]any{"name": "worker"}}}, "status": map[string]any{"phase": "Running", "containerStatuses": []any{map[string]any{"name": "worker", "ready": false, "restartCount": float64(4), "state": map[string]any{"waiting": map[string]any{"reason": "CrashLoopBackOff", "message": "back-off 5m"}}}}}},
 	}}
 	report, count := NamespaceStatusReport(payload, "default")
-	if count != 1 || !strings.Contains(report, "unhealthy=1/2") || !strings.Contains(report, "CrashLoopBackOff") || strings.Contains(report, "healthy |") {
+	if count != 1 || !strings.Contains(report, "| ALERT  | default") || !strings.Contains(report, "| 2    | 1") || !strings.Contains(report, "Review unhealthy pods") || !strings.Contains(report, "CrashLoopBackOff") || !strings.Contains(report, "| bad-worker") || strings.Contains(report, "| healthy") {
 		t.Fatalf("count=%d report=%s", count, report)
 	}
 }

@@ -194,8 +194,10 @@ heartbeat settings.
 `tailg --status` scans pod health, reports grouped errors from the previous two
 hours, and waits for unhealthy pods to recover. Pass a positive whole number of
 minutes as the optional positional value—for example, `tailg --status 20` scans
-the previous 20 minutes. The error scan runs once; recent errors are evidence and
-do not keep an otherwise healthy namespace in the recovery loop. Use
+the previous 20 minutes. Pod health and recent errors are shown in timestamped,
+wrapped tables; error groups include their most recent log time when available.
+The error scan runs once; recent errors are evidence and do not keep an otherwise
+healthy namespace in the recovery loop. Use
 `--status-interval` and `--status-timeout` to adjust polling and deadline. In an
 interactive terminal it can open consoles for unhealthy pods;
 when `git` is available, it can also inspect configured workload repositories.
