@@ -8,6 +8,7 @@ type Options struct {
 	Namespace       string
 	Context         string
 	Status          bool
+	StatusLookback  time.Duration
 	StatusInterval  time.Duration
 	StatusTimeout   time.Duration
 	Selector        string

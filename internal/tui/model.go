@@ -22,6 +22,7 @@ import (
 )
 
 type Config struct {
+	ExplainReplicas func(context.Context, string) (core.ReplicaExplanation, error)
 	Version         string
 	SearchRecords   func(context.Context, string) ([]core.LogRecord, error)
 	Trace           func(context.Context, string) ([]core.LogRecord, error)
@@ -66,6 +67,7 @@ type resourceDetailMsg struct {
 type sharedFilterTick time.Time
 
 type model struct {
+	replicas        replicaViewState
 	ctx             context.Context
 	cancel          context.CancelFunc
 	config          Config
@@ -208,6 +210,8 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
+	case replicaMsg:
+		return m.updateReplicaResult(msg)
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		inputWidth := msg.Width - 52
@@ -365,6 +369,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+		if cmd := m.ensureReplicaLookup(time.Now()); cmd != nil {
+			commands = append(commands, cmd)
+		}
 		commands = append(commands, sharedTick())
 		return m, tea.Batch(commands...)
 	case tea.KeyMsg:
@@ -374,6 +381,10 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		if key == "esc" {
+			if m.replicas.open {
+				m.replicas.open = false
+				return m, nil
+			}
 			if m.detail != "" {
 				m.detail = ""
 			} else if m.traceOpen {
@@ -390,6 +401,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.resourceOpen = false
 			}
 			return m, nil
+		}
+		if m.replicas.open {
+			return m.updateReplicaKey(key)
 		}
 		if m.traceOpen {
 			return m.updateTraceKey(key)
@@ -459,6 +473,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.issueLineOffset = 0
 			m.notice = ""
 			return m, nil
+		case "f7":
+			cmd := m.openReplicaExplanation()
+			return m, cmd
 		case "f6":
 			return m, m.openSelectedTrace()
 		case "f4":
@@ -542,6 +559,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	if m.width <= 0 || m.height <= 0 {
 		return "starting tailg..."
+	}
+	if m.replicas.open {
+		return m.renderReplicaExplanation()
 	}
 	if m.traceOpen && m.detail == "" {
 		return m.renderTrace()
@@ -708,6 +728,7 @@ func (m model) renderFooter() string {
 		renderKey("F4", "streams", m.config.Formatter.Color),
 		m.renderHeartbeatKey(),
 		renderKey("F6", "trace", m.config.Formatter.Color),
+		renderKey("F7", "replicas", m.config.Formatter.Color),
 		renderKey("Enter", "inspect", m.config.Formatter.Color),
 		renderKey("Ctrl+Q", "quit", m.config.Formatter.Color),
 	}

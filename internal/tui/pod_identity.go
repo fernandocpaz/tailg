@@ -56,6 +56,9 @@ func (m model) renderLogSource() string {
 	}
 
 	text := fmt.Sprintf("Pod: %s  Container: %s", pod, container)
+	if summary := m.renderReplicaSummary(); summary != "" {
+		text += "\n" + summary
+	}
 	return ansi.Wrap(text, max(1, m.width), " ")
 }
 

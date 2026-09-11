@@ -3,6 +3,7 @@ package kube
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -13,6 +14,7 @@ import (
 )
 
 type StatusOptions struct {
+	Lookback     time.Duration
 	Interval     time.Duration
 	Timeout      time.Duration
 	Output       io.Writer
@@ -236,7 +238,86 @@ func UnhealthyWorkloadNames(payload map[string]any) []string {
 	return uniqueStrings(result)
 }
 
+type recentErrorGroup struct {
+	issue core.Issue
+	count int
+}
+
+// RecentErrorReport scans the current application containers. Collection
+// failures are returned with a useful partial report.
+func (r Runner) RecentErrorReport(ctx context.Context, pods map[string]any, lookback time.Duration) (string, error) {
+	if lookback <= 0 {
+		lookback = core.DefaultStatusLookback
+	}
+	items := inventoryFromPods(sliceValue(pods["items"]))
+	groups := map[string]*recentErrorGroup{}
+	var scanErrors []error
+	succeeded := 0
+	for _, item := range items {
+		if ctx.Err() != nil {
+			scanErrors = append(scanErrors, ctx.Err())
+			break
+		}
+		events, err := r.Snapshot(ctx, item, LogOptions{Since: statusLookbackArgument(lookback), Tail: -1})
+		if err != nil {
+			scanErrors = append(scanErrors, fmt.Errorf("%s/%s: %w", item.Pod, item.Container, err))
+			continue
+		}
+		succeeded++
+		for _, event := range events {
+			issue, ok := core.ClassifyIssue(event)
+			if !ok || issue.Severity != core.IssueError {
+				continue
+			}
+			group := groups[issue.Key]
+			if group == nil {
+				group = &recentErrorGroup{issue: issue}
+				groups[issue.Key] = group
+			}
+			group.count++
+		}
+	}
+	failed := len(items) - succeeded
+	report := FormatRecentErrorReport(groups, lookback, len(items), failed)
+	if len(scanErrors) > 0 {
+		return report, errors.Join(scanErrors...)
+	}
+	return report, nil
+}
+
+func statusLookbackArgument(lookback time.Duration) string {
+	minutes := max(int64(1), int64(lookback/time.Minute))
+	return fmt.Sprintf("%dm", minutes)
+}
+
+func FormatRecentErrorReport(groups map[string]*recentErrorGroup, lookback time.Duration, streams, failed int) string {
+	minutes := max(int64(1), int64(lookback/time.Minute))
+	if len(groups) == 0 {
+		return fmt.Sprintf("NO RECENT ERRORS | lookback=%dm | streams=%d | failed=%d\n", minutes, streams, failed)
+	}
+	ordered := make([]*recentErrorGroup, 0, len(groups))
+	total := 0
+	for _, group := range groups {
+		ordered = append(ordered, group)
+		total += group.count
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].count != ordered[j].count {
+			return ordered[i].count > ordered[j].count
+		}
+		return ordered[i].issue.Key < ordered[j].issue.Key
+	})
+	lines := []string{fmt.Sprintf("RECENT ERRORS | lookback=%dm | groups=%d | events=%d | streams=%d | failed=%d", minutes, len(ordered), total, streams, failed)}
+	for _, group := range ordered {
+		lines = append(lines, fmt.Sprintf("  %d× %s | %s | %s", group.count, group.issue.Kind, group.issue.Service, group.issue.Summary))
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
 func (r Runner) RunStatus(ctx context.Context, namespace string, options StatusOptions) int {
+	if options.Lookback <= 0 {
+		options.Lookback = core.DefaultStatusLookback
+	}
 	if options.Interval <= 0 {
 		options.Interval = core.DefaultStatusInterval
 	}
@@ -251,6 +332,7 @@ func (r Runner) RunStatus(ctx context.Context, namespace string, options StatusO
 	started := time.Now()
 	offeredPods := map[string]bool{}
 	offeredWorkloads := map[string]bool{}
+	errorsScanned := false
 	for {
 		payload, err := statusRunner.JSON(ctx, "get", "pods")
 		if err != nil {
@@ -259,6 +341,18 @@ func (r Runner) RunStatus(ctx context.Context, namespace string, options StatusO
 		}
 		report, count := NamespaceStatusReport(payload, namespace)
 		fmt.Fprint(options.Output, report)
+		if !errorsScanned {
+			errorReport, scanErr := statusRunner.RecentErrorReport(ctx, payload, options.Lookback)
+			fmt.Fprint(options.Output, errorReport)
+			if scanErr != nil {
+				fmt.Fprintln(options.Output, "RECENT ERRORS INCOMPLETE |", scanErr)
+			}
+			errorsScanned = true
+		}
+		if ctx.Err() != nil {
+			fmt.Fprintln(options.Output, "STOPPED | status scan canceled")
+			return 130
+		}
 		if count == 0 {
 			if time.Since(started) > time.Second {
 				fmt.Fprintf(options.Output, "RECOVERED | namespace=%s is healthy after %s\n", namespace, core.FormatDuration(time.Since(started), true))

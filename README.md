@@ -50,6 +50,7 @@ tailg 'example-*' default --tile-windows
 tailg 'web-api,job-worker' default --split-panes
 tailg --namespace default
 tailg --status --namespace default
+tailg --status 20 --namespace default
 tailg example-app default --dump
 tailg deployment/example-app default --deployment-dump
 tailg troubleshoot example-app default
@@ -113,6 +114,7 @@ the view is paused or the service is quiet.
 | `F4` | Inspect per-container log freshness, replay counts and buffer usage |
 | `F5` | Open heartbeat diagnostics |
 | `F6` | Follow the selected request's trace across the selected workloads |
+| `F7` | Explain the selected pod's replica count and controller |
 | `Up` / `Down` | Move the selected log line |
 | `PageUp` / `PageDown` | Move by one screen |
 | `Home` / `End` | Jump to the start or resume live tailing |
@@ -170,6 +172,13 @@ your include/exclude filters, the selected time window, Kubernetes retention,
 and the configured buffer limit; it cannot reconstruct spans that were not
 logged. `F4` includes the running build version for troubleshooting.
 
+For a single-pod view, the source bar also summarizes why replicas exist. Press
+`F7` for the observed controller chain, desired/current/ready counts, rollout
+surge evidence, and any matching HorizontalPodAutoscaler range and conditions.
+In multi-pod views, first select a log so `tailg` knows which pod to explain.
+Replica explanations report what Kubernetes currently exposes; they do not
+guess the operator's intent, and restricted RBAC is shown as incomplete data.
+
 Use `--no-live-filter` for plain streaming output.
 
 ## Windows Terminal layouts
@@ -182,9 +191,13 @@ heartbeat settings.
 
 ## Status and diagnostics
 
-`tailg --status` scans the current namespace and waits for unhealthy pods to
-recover. Use `--status-interval` and `--status-timeout` to adjust its polling and
-deadline. In an interactive terminal it can open consoles for unhealthy pods;
+`tailg --status` scans pod health, reports grouped errors from the previous two
+hours, and waits for unhealthy pods to recover. Pass a positive whole number of
+minutes as the optional positional value—for example, `tailg --status 20` scans
+the previous 20 minutes. The error scan runs once; recent errors are evidence and
+do not keep an otherwise healthy namespace in the recovery loop. Use
+`--status-interval` and `--status-timeout` to adjust polling and deadline. In an
+interactive terminal it can open consoles for unhealthy pods;
 when `git` is available, it can also inspect configured workload repositories.
 
 For a fast human-oriented investigation, run:

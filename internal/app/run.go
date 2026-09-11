@@ -81,7 +81,7 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 				return 1
 			}
 		}
-		statusOptions := kube.StatusOptions{Interval: options.StatusInterval, Timeout: options.StatusTimeout, Output: stdout}
+		statusOptions := kube.StatusOptions{Lookback: options.StatusLookback, Interval: options.StatusInterval, Timeout: options.StatusTimeout, Output: stdout}
 		if interactive(stdin) {
 			statusOptions.Input = stdin
 			if runtime.GOOS == "windows" {
@@ -294,7 +294,7 @@ pickAgain:
 				return nil, inventoryErr
 			}
 			return runner.CompleteTrace(traceCtx, current, options.Since, formatter, traceID, options.BufferLines)
-		}, MappedResources: runner.MappedResources, ResourceDetail: runner.ResourceDetail})
+		}, ExplainReplicas: runner.ExplainReplicas, MappedResources: runner.MappedResources, ResourceDetail: runner.ResourceDetail})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
