@@ -234,11 +234,20 @@ func recordDetails(record core.LogRecord) string {
 }
 
 func renderRecordRow(record core.LogRecord, query string, selected bool, width int, showPod, color bool) string {
-	if core.IsSlowRequest(record.Fields) && width >= 30 {
-		row := renderLogRow(record.Text, query, selected, width-6, showPod, color)
-		return truncate(row+renderWithColor(warnStyle, " SLOW", color), width)
+	columns := parseLogColumns(record.Text, showPod)
+	if record.Event.Pod != "" {
+		columns.pod = record.Event.Pod
 	}
-	return renderLogRow(record.Text, query, selected, width, showPod, color)
+	slow := core.IsSlowRequest(record.Fields) && width >= 30
+	rowWidth := width
+	if slow {
+		rowWidth -= 6
+	}
+	row := renderLogColumns(columns, record.Text, query, selected, rowWidth, showPod, color)
+	if slow {
+		row += renderWithColor(warnStyle, " SLOW", color)
+	}
+	return truncate(row, width)
 }
 
 type traceOccurrence struct {

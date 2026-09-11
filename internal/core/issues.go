@@ -25,10 +25,13 @@ const (
 )
 
 type Issue struct {
-	Key         string
-	Severity    IssueSeverity
-	Kind        string
-	Summary     string
+	Key      string
+	Severity IssueSeverity
+	Kind     string
+	Summary  string
+	// FullSummary contains the complete cleaned issue text. Summary remains a
+	// compact form for stable reports and narrow displays.
+	FullSummary string
 	SearchTerm  string
 	Service     string
 	Pods        []string
@@ -70,7 +73,7 @@ func ClassifyIssue(event LogEvent) (Issue, bool) {
 		key := service + "\x00SLOW REQUEST\x00" + method + "\x00" + endpointFingerprint(endpoint)
 		summary := fmt.Sprintf("slow %s %s (>250ms)", method, endpoint)
 		return Issue{
-			Key: key, Severity: severity, Kind: "SLOW REQUEST", Summary: summary,
+			Key: key, Severity: severity, Kind: "SLOW REQUEST", Summary: summary, FullSummary: summary,
 			SearchTerm: slowSearchTerm(method, endpoint),
 			Service:    service, MaxDuration: fields.Duration, TraceID: fields.TraceID, Endpoint: endpoint,
 		}, true
@@ -80,7 +83,7 @@ func ClassifyIssue(event LogEvent) (Issue, bool) {
 	}
 	key := service + "\x00" + detected.kind + "\x00" + issueFingerprint(detected.summary)
 	return Issue{
-		Key: key, Severity: detected.severity, Kind: detected.kind, Summary: detected.summary,
+		Key: key, Severity: detected.severity, Kind: detected.kind, Summary: detected.summary, FullSummary: detected.fullSummary,
 		SearchTerm: detected.search, Service: service, MaxDuration: fields.Duration,
 		TraceID: fields.TraceID, Endpoint: normalizeEndpoint(fields.Path),
 	}, true
@@ -175,10 +178,11 @@ type IssueRadar struct {
 }
 
 type detectedIssue struct {
-	severity IssueSeverity
-	kind     string
-	summary  string
-	search   string
+	severity    IssueSeverity
+	kind        string
+	summary     string
+	fullSummary string
+	search      string
 }
 
 var (
@@ -260,6 +264,7 @@ func (r *IssueRadar) Observe(event LogEvent) bool {
 				Severity:    classified.Severity,
 				Kind:        classified.Kind,
 				Summary:     classified.Summary,
+				FullSummary: classified.FullSummary,
 				SearchTerm:  classified.SearchTerm,
 				Service:     classified.Service,
 				FirstSeen:   observed,
@@ -287,6 +292,7 @@ func (r *IssueRadar) Observe(event LogEvent) bool {
 		record.issue.Endpoint = classified.Endpoint
 		if classified.Kind == "SLOW REQUEST" {
 			record.issue.Summary = classified.Summary
+			record.issue.FullSummary = classified.FullSummary
 			record.issue.SearchTerm = classified.SearchTerm
 		}
 	}
@@ -427,7 +433,8 @@ func detectIssueFields(event LogEvent, fields LogFields) (detectedIssue, bool) {
 		if event.Err != nil {
 			summary = strings.TrimSpace(event.Err.Error())
 		}
-		return detectedIssue{severity: IssueError, kind: "STREAM", summary: truncateIssueSummary(summary), search: issueSearchTerm(summary, "STREAM")}, true
+		fullSummary := cleanIssueSummary(summary)
+		return detectedIssue{severity: IssueError, kind: "STREAM", summary: truncateIssueSummary(fullSummary), fullSummary: fullSummary, search: issueSearchTerm(fullSummary, "STREAM")}, true
 	}
 	message := strings.TrimSpace(StripANSI(event.Message))
 	if message == "" || IsHeartbeat(message) {
@@ -491,7 +498,7 @@ func detectIssueFields(event LogEvent, fields LogFields) (detectedIssue, bool) {
 	if kind == "HTTP 5XX" && fields.StatusCode >= 500 && !issueHTTP5xxPattern.MatchString(signal) {
 		search = fmt.Sprintf("status:%d", fields.StatusCode)
 	}
-	return detectedIssue{severity: severity, kind: kind, summary: truncateIssueSummary(summary), search: search}, true
+	return detectedIssue{severity: severity, kind: kind, summary: truncateIssueSummary(summary), fullSummary: summary, search: search}, true
 }
 
 func cleanIssueSummary(message string) string {

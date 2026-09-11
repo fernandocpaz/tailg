@@ -89,6 +89,9 @@ untracked or undated lines are preserved even if they might be repeats. Kubernet
 log rotation can still remove history before it is recovered.
 
 The header shows the service, namespace, pod count, and live connection state.
+Below it, a source bar shows the full pod and container for the selected log,
+wrapping long names. Before logs arrive, a single-pod view shows its pod name.
+In multi-pod views, row identifiers include the workload name and replica suffix.
 Log rows align timestamps, levels, and pod identifiers when space permits;
 matching text is highlighted and complete-history search progress appears next
 to the filter mode.
@@ -124,7 +127,9 @@ only after you explicitly open the selected Secret.
 The Issue Radar continuously groups error levels, HTTP 5xx responses, panics,
 exceptions, timeouts, connection failures, retries, and stream interruptions.
 It shows active issue and event counts without hiding the live logs. Select an
-issue and press `Enter` to load its complete-history context. HTTP requests
+issue and press `Enter` to load its complete-history context. Issue text and
+service names wrap without truncation. Use `Up`/`Down` to select an issue and
+`PageUp`/`PageDown` to read an issue longer than the screen. HTTP requests
 taking **more than 250 ms**, including successful responses, get a `SLOW` flag
 and an endpoint group with counts, maximum duration, and a representative trace.
 Obvious numeric, UUID, and long hexadecimal path IDs are grouped together.

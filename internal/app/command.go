@@ -97,8 +97,8 @@ func NewCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) 
 	flags.Lookup("deployment-dump").NoOptDefVal = "."
 	flags.StringVar(&deployDumpAlias, "deploy-dump", "", "alias for --deployment-dump")
 	flags.Lookup("deploy-dump").NoOptDefVal = "."
-	flags.BoolVar(&showPod, "show-pod", false, "always display the pod replica suffix")
-	flags.BoolVar(&noShowPod, "no-show-pod", false, "hide the pod replica suffix")
+	flags.BoolVar(&showPod, "show-pod", false, "always display pod identifiers in log rows")
+	flags.BoolVar(&noShowPod, "no-show-pod", false, "hide pod identifiers in log rows")
 	flags.BoolVar(&options.SplitPanes, "split-panes", false, "open one Windows Terminal pane per pod")
 	flags.BoolVar(&options.TileWindows, "tile-windows", false, "open and automatically tile one Windows Terminal window per pod")
 	flags.BoolVar(&options.LiveFilter, "live-filter", true, "show the full-screen live filter UI")

@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/fernandocpaz/tailg/internal/core"
 )
@@ -99,6 +100,7 @@ type model struct {
 	issues          *core.IssueRadar
 	issueOpen       bool
 	issueIndex      int
+	issueLineOffset int
 	freshness       map[string]streamFreshness
 	freshnessOpen   bool
 	freshnessIndex  int
@@ -454,6 +456,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case "f3":
 			m.issueOpen = true
 			m.issueIndex = 0
+			m.issueLineOffset = 0
 			m.notice = ""
 			return m, nil
 		case "f6":
@@ -583,7 +586,7 @@ func (m model) View() string {
 	for len(visible) < height {
 		visible = append(visible, "")
 	}
-	return strings.Join([]string{m.renderHeader(), renderRule(m.width, m.config.Formatter.Color), strings.Join(visible, "\n"), renderRule(m.width, m.config.Formatter.Color), m.renderFilterBar(), m.renderFooter()}, "\n")
+	return strings.Join([]string{m.renderHeader(), m.renderLogSource(), renderRule(m.width, m.config.Formatter.Color), strings.Join(visible, "\n"), renderRule(m.width, m.config.Formatter.Color), m.renderFilterBar(), m.renderFooter()}, "\n")
 }
 
 func (m model) panel(title, body, footer string) string {
@@ -598,7 +601,9 @@ func (m model) panel(title, body, footer string) string {
 	header := renderWithColor(headerStyle, "tailg", m.config.Formatter.Color) + "  " + title
 	return strings.Join([]string{truncate(header, m.width), renderRule(m.width, m.config.Formatter.Color), strings.Join(lines, "\n"), truncate(renderWithColor(dimStyle, footer, m.config.Formatter.Color), m.width)}, "\n")
 }
-func (m model) logHeight() int { return max(1, m.height-6) }
+func (m model) logHeight() int {
+	return max(1, m.height-6-len(strings.Split(m.renderLogSource(), "\n")))
+}
 
 func (m model) renderHeader() string {
 	services := strings.Join(core.ServiceNames(m.items), ",")
@@ -750,28 +755,48 @@ func (m model) renderIssueRadar() string {
 	}
 	header = joinSides(header, renderWithColor(dimStyle, status, m.config.Formatter.Color), m.width)
 
-	height := max(1, m.height-3)
+	footer := m.issueRadarFooter()
+	height := m.issueRadarHeight()
 	selected := min(max(0, m.issueIndex), max(0, len(issues)-1))
-	start := 0
-	if selected >= height {
-		start = selected - height + 1
+	var rows []string
+	selectedStart, selectedEnd := 0, 0
+	now := time.Now()
+	for index, issue := range issues {
+		if index == selected {
+			selectedStart = len(rows)
+		}
+		rows = append(rows, strings.Split(renderIssueRow(issue, index == selected, m.width, m.config.Formatter.Color, now), "\n")...)
+		if index == selected {
+			selectedEnd = len(rows)
+		}
 	}
-	end := min(len(issues), start+height)
-	lines := make([]string, 0, height)
-	for index := start; index < end; index++ {
-		lines = append(lines, renderIssueRow(issues[index], index == selected, m.width, m.config.Formatter.Color, time.Now()))
+	start := max(0, selectedEnd-height)
+	if selectedEnd-selectedStart > height {
+		start = selectedStart + min(max(0, m.issueLineOffset), selectedEnd-selectedStart-height)
 	}
-	if len(lines) == 0 {
-		lines = append(lines, renderWithColor(okStyle, "✓ No errors or warnings detected in the active window", m.config.Formatter.Color))
+	end := min(len(rows), start+height)
+	lines := append([]string(nil), rows[start:end]...)
+	if len(rows) == 0 {
+		lines = strings.Split(ansi.Wrap(renderWithColor(okStyle, "✓ No errors or warnings detected in the active window", m.config.Formatter.Color), max(1, m.width), ""), "\n")
+		lines = lines[:min(len(lines), height)]
 	}
 	for len(lines) < height {
 		lines = append(lines, "")
 	}
-	footer := "Up/Down select  Enter loads context  F6 trace  B mark baseline  C clear  F3/Esc closes"
+	return strings.Join([]string{header, renderRule(m.width, m.config.Formatter.Color), strings.Join(lines, "\n"), footer}, "\n")
+}
+
+func (m model) issueRadarFooter() string {
+	footer := "Up/Down select | PgUp/PgDn scroll issue | Enter loads context | F6 trace | B baseline | C clear | F3/Esc closes"
 	if m.notice != "" {
 		footer = m.notice + " | F3/Esc closes"
 	}
-	return strings.Join([]string{header, renderRule(m.width, m.config.Formatter.Color), strings.Join(lines, "\n"), truncate(renderWithColor(dimStyle, footer, m.config.Formatter.Color), m.width)}, "\n")
+	lines := strings.Split(ansi.Wrap(renderWithColor(dimStyle, footer, m.config.Formatter.Color), max(1, m.width), ""), "\n")
+	return strings.Join(lines[:min(len(lines), max(1, m.height-3))], "\n")
+}
+
+func (m model) issueRadarHeight() int {
+	return max(1, m.height-2-len(strings.Split(m.issueRadarFooter(), "\n")))
 }
 
 func renderIssueRow(issue core.Issue, selected bool, width int, color bool, now time.Time) string {
@@ -786,31 +811,43 @@ func renderIssueRow(issue core.Issue, selected bool, width int, color bool, now 
 	if issue.Severity == core.IssueError {
 		severityStyle = alertStyle
 	}
-	prefix := gutter + renderCell(string(issue.Severity), 5, severityStyle, color)
 	badge := "KNOWN"
 	if issue.New {
 		badge = "NEW"
 	}
-	prefix += renderCell(badge, 6, warnStyle, color)
-	prefix += renderCell(fmt.Sprintf("%d×", issue.Count), 7, keyStyle, color)
-	if width >= 78 {
-		source := issue.Service
-		if len(issue.Pods) > 1 {
-			source += fmt.Sprintf(" (%d pods)", len(issue.Pods))
-		}
-		prefix += renderCell(source, 22, dimStyle, color)
+	source := issue.Service
+	if len(issue.Pods) > 1 {
+		source += fmt.Sprintf(" (%d pods)", len(issue.Pods))
 	}
-	suffix := issueAge(now.Sub(issue.LastSeen))
-	if issue.MaxDuration > 0 && width >= 100 {
-		suffix = fmt.Sprintf("max %s · %s", issue.MaxDuration, suffix)
-	}
+	age := issueAge(now.Sub(issue.LastSeen))
 	if issue.Increasing {
-		suffix = renderWithColor(alertStyle, "↑", color) + " " + suffix
+		age = "↑ " + age
 	}
-	messageWidth := max(1, width-lipgloss.Width(prefix)-lipgloss.Width(suffix)-2)
-	message := truncatePlain(issue.Summary, messageWidth)
-	spaces := max(1, width-lipgloss.Width(prefix)-lipgloss.Width(message)-lipgloss.Width(suffix))
-	return truncate(prefix+message+strings.Repeat(" ", spaces)+renderWithColor(dimStyle, suffix, color), width)
+	metadata := []string{
+		renderWithColor(severityStyle, string(issue.Severity), color),
+		renderWithColor(warnStyle, badge, color),
+		renderWithColor(keyStyle, fmt.Sprintf("%d×", issue.Count), color),
+		renderWithColor(dimStyle, source, color),
+	}
+	if issue.MaxDuration > 0 {
+		metadata = append(metadata, "max "+issue.MaxDuration.String())
+	}
+	metadata = append(metadata, renderWithColor(dimStyle, age, color))
+	summary := issue.FullSummary
+	if summary == "" {
+		summary = issue.Summary
+	}
+	// Wrap the complete text, including long service names and unbroken IDs.
+	// Every continuation carries the selection marker when the issue is selected.
+	content := strings.Join(metadata, " · ") + "\n" + summary
+	if width <= 2 {
+		return ansi.Wrap(content, max(1, width), "")
+	}
+	lines := strings.Split(ansi.Wrap(content, width-2, ""), "\n")
+	for index := range lines {
+		lines[index] = gutter + lines[index]
+	}
+	return strings.Join(lines, "\n")
 }
 
 func issueAge(age time.Duration) string {
@@ -830,6 +867,9 @@ func issueAge(age time.Duration) string {
 }
 
 func (m model) updateIssueKey(key string) (tea.Model, tea.Cmd) {
+	if key == "up" || key == "p" || key == "k" || key == "down" || key == "n" || key == "j" || key == "c" {
+		m.issueLineOffset = 0
+	}
 	issues := m.activeIssues()
 	if len(issues) == 0 {
 		m.issueIndex = 0
@@ -843,6 +883,19 @@ func (m model) updateIssueKey(key string) (tea.Model, tea.Cmd) {
 		m.issueIndex = max(0, m.issueIndex-1)
 	case "down", "n", "j":
 		m.issueIndex = min(max(0, len(issues)-1), m.issueIndex+1)
+	case "pgup", "pgdown":
+		if len(issues) > 0 {
+			height := m.issueRadarHeight()
+			rowHeight := len(strings.Split(renderIssueRow(issues[m.issueIndex], true, m.width, m.config.Formatter.Color, time.Now()), "\n"))
+			limit := max(0, rowHeight-height)
+			m.issueLineOffset = min(max(0, m.issueLineOffset), limit)
+			step := max(1, height-1)
+			if key == "pgup" {
+				m.issueLineOffset = max(0, m.issueLineOffset-step)
+			} else {
+				m.issueLineOffset = min(limit, m.issueLineOffset+step)
+			}
+		}
 	case "b":
 		if m.issues != nil {
 			m.issues.SetBaseline(time.Now())
@@ -968,6 +1021,10 @@ func normalizeLevel(level string) string {
 
 func renderLogRow(value, query string, selected bool, width int, showPod, color bool) string {
 	columns := parseLogColumns(value, showPod)
+	return renderLogColumns(columns, value, query, selected, width, showPod, color)
+}
+
+func renderLogColumns(columns logColumns, value, query string, selected bool, width int, showPod, color bool) string {
 	gutter := "  "
 	if selected {
 		gutter = "> "
@@ -980,8 +1037,9 @@ func renderLogRow(value, query string, selected bool, width int, showPod, color 
 		prefix += renderCell(columns.time, 13, dimStyle, color && !selected)
 		prefix += renderCell(columns.level, 5, levelRenderStyle(columns.level), color && !selected)
 	}
-	if showPod && width >= 96 {
-		prefix += renderCell(columns.pod, 18, dimStyle, color && !selected)
+	if showPod && width >= 48 {
+		columnWidth := min(48, max(12, width/3))
+		prefix += renderCell(compactPodLabel(columns.pod, columnWidth-1), columnWidth, headerStyle, color && !selected)
 	}
 	messageWidth := max(1, width-lipgloss.Width(prefix))
 	message := truncatePlain(columns.message, messageWidth)
