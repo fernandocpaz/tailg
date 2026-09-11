@@ -3,6 +3,7 @@ package kube
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -130,57 +131,136 @@ func (r Runner) Snapshot(ctx context.Context, item core.InventoryItem, options L
 	return events, scanner.Err()
 }
 
+// CompleteHistory is retained for callers that only render text. Structured
+// collection is done by CompleteRecords so a history result can preserve the
+// original event and parsed fields all the way to the UI.
 func (r Runner) CompleteHistory(ctx context.Context, items []core.InventoryItem, since string, formatter core.Formatter, query string, maxLines int) ([]string, error) {
-	type row struct {
-		at       time.Time
-		sequence int
-		text     string
+	records, err := r.CompleteRecords(ctx, items, since, formatter, query, maxLines)
+	if err != nil {
+		return nil, err
 	}
-	var rows []row
-	sequence := 0
+	lines := make([]string, len(records))
+	for index, record := range records {
+		lines[index] = record.Text
+	}
+	return lines, nil
+}
+
+// CompleteRecords searches complete Kubernetes history for a structured
+// query. Every selected stream is collected before the query window is
+// applied, so a capped result cannot prevent a later pod from being searched.
+func (r Runner) CompleteRecords(ctx context.Context, items []core.InventoryItem, since string, formatter core.Formatter, query string, maxLines int) ([]core.LogRecord, error) {
+	if _, err := core.CompileLogQuery(query); err != nil {
+		return nil, err
+	}
+	records, streamErrs, success := r.collectRecords(ctx, items, since, formatter)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	if success == 0 && len(streamErrs) > 0 {
+		return nil, streamErrs[0]
+	}
+	return core.SearchRecordsFromFirstMatch(records, query, core.SearchContextLines, maxLines)
+}
+
+// CompleteTrace returns all formatted rows carrying traceID, ordered by their
+// Kubernetes timestamps across the selected pods. A positive maxLines bounds
+// the chronologically ordered result; a negative value leaves it unbounded.
+// Collection errors are returned alongside partial records so the caller can
+// display useful results while making an incomplete trace explicit.
+func (r Runner) CompleteTrace(ctx context.Context, items []core.InventoryItem, since string, formatter core.Formatter, traceID string, maxLines int) ([]core.LogRecord, error) {
+	rawTraceID := traceID
+	traceID = normalizeTraceID(traceID)
+	if traceID == "" {
+		return nil, fmt.Errorf("invalid trace ID %q: expected 32 hexadecimal characters", rawTraceID)
+	}
+	records, streamErrs, success := r.collectRecords(ctx, items, since, formatter)
+	if ctx.Err() != nil && len(streamErrs) == 0 {
+		streamErrs = []error{ctx.Err()}
+	}
+	filtered := records[:0]
+	for _, record := range records {
+		if record.Fields.TraceID == traceID {
+			filtered = append(filtered, record)
+		}
+	}
+	var truncationErr error
+	if maxLines >= 0 && len(filtered) > maxLines {
+		truncationErr = fmt.Errorf("trace history truncated: showing %d of %d matching records (maxLines %d)", maxLines, len(filtered), maxLines)
+		filtered = filtered[:maxLines]
+	}
+	if len(streamErrs) == 0 {
+		return filtered, truncationErr
+	}
+	joined := errors.Join(streamErrs...)
+	if success == 0 {
+		return nil, fmt.Errorf("trace history collection failed: %w", joined)
+	}
+	if truncationErr != nil {
+		joined = errors.Join(joined, truncationErr)
+	}
+	return filtered, fmt.Errorf("trace history incomplete: %d of %d streams failed: %w", len(items)-success, len(items), joined)
+}
+
+// collectRecords deliberately has no output cap. It is shared by normal
+// history search and trace lookup, both of which must inspect every selected
+// stream before limiting results.
+func (r Runner) collectRecords(ctx context.Context, items []core.InventoryItem, since string, formatter core.Formatter) ([]core.LogRecord, []error, int) {
+	var records []core.LogRecord
+	var streamErrs []error
 	success := 0
-	var firstErr error
+	var nextID uint64 = 1
 	for _, item := range items {
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			streamErrs = append(streamErrs, ctx.Err())
+			break
 		}
 		events, err := r.Snapshot(ctx, item, LogOptions{Since: since, Tail: -1})
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil, ctx.Err()
+				streamErrs = append(streamErrs, ctx.Err())
+				break
 			}
-			if firstErr == nil {
-				firstErr = err
-			}
+			streamErrs = append(streamErrs, fmt.Errorf("%s/%s: %w", item.Pod, item.Container, err))
 			continue
 		}
 		success++
 		for _, event := range events {
-			for _, line := range formatter.Format(item.Pod, item.Container, event.Message, true) {
-				rows = append(rows, row{event.ObservedAt, sequence, line})
-				sequence++
+			for _, record := range core.RecordsForEvent(formatter, event, true) {
+				record.ID = nextID
+				nextID++
+				records = append(records, record)
 			}
 		}
 	}
-	if success == 0 && firstErr != nil {
-		return nil, firstErr
+	sort.SliceStable(records, func(i, j int) bool {
+		left, right := records[i].Event.ObservedAt, records[j].Event.ObservedAt
+		if left.IsZero() != right.IsZero() {
+			return !left.IsZero()
+		}
+		if !left.Equal(right) {
+			return left.Before(right)
+		}
+		return records[i].ID < records[j].ID
+	})
+	return records, streamErrs, success
+}
+
+func normalizeTraceID(value string) string {
+	text := strings.TrimSpace(value)
+	if len(text) != 32 || !isHexTraceID(text) || strings.Trim(text, "0") == "" {
+		return ""
 	}
-	if len(items) > 1 {
-		sort.SliceStable(rows, func(i, j int) bool {
-			if rows[i].at.IsZero() != rows[j].at.IsZero() {
-				return !rows[i].at.IsZero()
-			}
-			if rows[i].at.Equal(rows[j].at) {
-				return rows[i].sequence < rows[j].sequence
-			}
-			return rows[i].at.Before(rows[j].at)
-		})
+	return strings.ToLower(text)
+}
+
+func isHexTraceID(value string) bool {
+	for _, char := range value {
+		if !(char >= '0' && char <= '9') && !(char >= 'a' && char <= 'f') && !(char >= 'A' && char <= 'F') {
+			return false
+		}
 	}
-	lines := make([]string, len(rows))
-	for i, row := range rows {
-		lines[i] = row.text
-	}
-	return core.SearchLinesFromFirstMatch(lines, query, core.SearchContextLines, maxLines), nil
+	return true
 }
 
 func SplitTimestamp(line string) (string, time.Time) {

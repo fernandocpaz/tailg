@@ -26,6 +26,15 @@ go install github.com/fernandocpaz/tailg/cmd/tailg@latest
 Or download the binary for your platform from GitHub Releases and put it on
 your `PATH`.
 
+Check the installed version and source commit with `tailg version` or
+`tailg --version`. Release binaries also report their build time. To install
+the current main branch before a new release is tagged:
+
+```sh
+go install github.com/fernandocpaz/tailg/cmd/tailg@main
+tailg version
+```
+
 ## Usage
 
 ```sh
@@ -100,10 +109,11 @@ the view is paused or the service is quiet.
 | `F3` | Open the Issue Radar for grouped errors and warnings |
 | `F4` | Inspect per-container log freshness, replay counts and buffer usage |
 | `F5` | Open heartbeat diagnostics |
+| `F6` | Follow the selected request's trace across the selected workloads |
 | `Up` / `Down` | Move the selected log line |
 | `PageUp` / `PageDown` | Move by one screen |
 | `Home` / `End` | Jump to the start or resume live tailing |
-| `Enter` | Open the selected line; press again to copy |
+| `Enter` | Inspect the original log and metadata; press again to copy |
 | `Esc` | Close the current detail panel |
 | `Ctrl+C` / `Ctrl+Q` | Exit |
 
@@ -114,8 +124,46 @@ only after you explicitly open the selected Secret.
 The Issue Radar continuously groups error levels, HTTP 5xx responses, panics,
 exceptions, timeouts, connection failures, retries, and stream interruptions.
 It shows active issue and event counts without hiding the live logs. Select an
-issue and press `Enter` to load its complete-history context; press `C` in the
-radar to clear the current baseline.
+issue and press `Enter` to load its complete-history context. HTTP requests
+taking **more than 250 ms**, including successful responses, get a `SLOW` flag
+and an endpoint group with counts, maximum duration, and a representative trace.
+Obvious numeric, UUID, and long hexadecimal path IDs are grouped together.
+
+The radar marks groups `NEW` when their first source timestamp is after the
+session baseline; historical or undated records are `KNOWN`. Press `B` in the
+radar to mark the currently retained groups known and start a new baseline;
+press `C` to clear the groups. Baselines are local to the session and bounded
+by the retained issue groups.
+
+### Structured filters and request timelines
+
+Type field filters directly in the live filter box. They also apply to the
+complete-history search and synchronize across panes:
+
+```text
+level:error service:api
+duration:>250ms method:GET path:/orders
+status:>=500
+trace:11d7729cbf34122f3af8d3c73a47213d
+pod:worker timeout
+```
+
+All predicates must match. `level`, `method`, and `trace` use exact matches;
+`service`, `pod`, and `path` use case-insensitive substrings. `status` and
+`duration` support `=`, `!=`, `>`, `>=`, `<`, and `<=`. Durations accept units
+such as `250ms` or `2s`; a number without units means milliseconds. Remaining
+text is a case-insensitive substring search. Invalid field values show an error.
+Fields are extracted from readable HTTP/Serilog messages and JSON properties,
+including properties hidden from compact log rows.
+
+Select a log or an Issue Radar group and press `F6` to collect logs with the
+same trace ID, ordered by Kubernetes timestamp. In split panes, lookup keeps
+the original selected workload scope. Press `Enter` for the original log,
+`R` to reload, and `Esc` to close. Missing streams and timeouts are reported as
+incomplete results. This is a log timeline: it depends on propagated trace IDs,
+your include/exclude filters, the selected time window, Kubernetes retention,
+and the configured buffer limit; it cannot reconstruct spans that were not
+logged. `F4` includes the running build version for troubleshooting.
 
 Use `--no-live-filter` for plain streaming output.
 

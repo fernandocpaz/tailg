@@ -13,8 +13,6 @@ import (
 	"github.com/fernandocpaz/tailg/internal/core"
 )
 
-var Version = "dev"
-
 func NewCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	options := Options{Tail: core.DefaultTailLines, BufferLines: core.DefaultBufferLines, RefreshInterval: 2_000_000_000, HeartbeatWindow: core.DefaultHeartbeatWindow, StatusInterval: core.DefaultStatusInterval, StatusTimeout: core.DefaultStatusTimeout, Container: ".*", LiveFilter: true}
 	var showPod, noShowPod, noLiveFilter bool
@@ -24,7 +22,7 @@ func NewCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) 
 		Use: "tailg [target] [namespace]", Short: "Human-friendly Kubernetes log tailer built in Go", SilenceUsage: true, SilenceErrors: true, Args: cobra.MaximumNArgs(2),
 		Long:    "tailg follows Kubernetes logs across pods, provides synchronized live filtering, heartbeat diagnostics, resource inspection, status recovery monitoring, and Windows Terminal layouts.",
 		Example: strings.Join([]string{"tailg example-app default", "tailg 'example-*' default --tile-windows", "tailg example-app default --since 4d", "tailg --status --namespace default"}, "\n"),
-		Version: Version,
+		Version: BuildDescription(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 && !options.Status && options.Namespace == "" {
 				return cmd.Help()
@@ -105,6 +103,10 @@ func NewCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) 
 	flags.BoolVar(&options.TileWindows, "tile-windows", false, "open and automatically tile one Windows Terminal window per pod")
 	flags.BoolVar(&options.LiveFilter, "live-filter", true, "show the full-screen live filter UI")
 	flags.BoolVar(&noLiveFilter, "no-live-filter", false, "stream logs directly without the full-screen UI")
+	flags.StringArrayVar(&options.TracePods, "trace-pod", nil, "internal request trace pod scope")
+	flags.StringArrayVar(&options.TraceSelectors, "trace-selector", nil, "internal request trace workload scope")
+	_ = flags.MarkHidden("trace-pod")
+	_ = flags.MarkHidden("trace-selector")
 	flags.StringVar(&options.FilterFile, "filter-file", "", "internal shared filter file")
 	_ = flags.MarkHidden("filter-file")
 	flags.BoolVar(&options.NoColor, "no-color", false, "disable ANSI colors")
@@ -112,6 +114,14 @@ func NewCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) 
 	command.AddCommand(newAgentCommand(ctx, stdin, stdout, stderr, agent.ModeDiagnose))
 	command.AddCommand(newIssueCommand(ctx, stdin, stdout, stderr))
 	command.AddCommand(newMCPCommand(ctx, stdin, stdout, stderr))
+	command.AddCommand(&cobra.Command{
+		Use:   "version",
+		Short: "Print the tailg version and build information",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), BuildDescription())
+		},
+	})
 	command.SetIn(stdin)
 	command.SetOut(stdout)
 	command.SetErr(stderr)

@@ -143,7 +143,10 @@ func (m model) renderFreshness(now time.Time) string {
 		fmt.Sprintf("%d streams | queued %d | live buffer %d/%d lines", len(items), len(m.events), used, limit),
 		"recv = time since receipt; log = age of last line; quiet does not mean unhealthy",
 	}
-	height := max(1, m.height-6)
+	if m.config.Version != "" {
+		lines = append(lines, "Build: "+m.config.Version)
+	}
+	height := max(1, m.height-4-len(lines))
 	start := min(m.freshnessIndex, max(0, len(items)-1))
 	for _, item := range items[start:min(len(items), start+height)] {
 		state := m.freshness[item.Key()]

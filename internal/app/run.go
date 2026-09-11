@@ -40,6 +40,9 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 	if options.Container == "" {
 		options.Container = ".*"
 	}
+	// Child panes inherit an explicitly supplied scope. A picker selection,
+	// however, must derive a fresh scope on every iteration.
+	traceScopeInherited := len(options.TracePods) > 0 || len(options.TraceSelectors) > 0
 	containerPattern, err := regexp.Compile(options.Container)
 	if err != nil {
 		fmt.Fprintln(stderr, "Invalid regex:", err)
@@ -179,6 +182,25 @@ pickAgain:
 		fmt.Fprintln(stderr, "No matching pods/containers found.")
 		return 1
 	}
+	// A child pane displays one pod, but trace lookup must retain the scope
+	// selected by its parent. Prefer an explicitly propagated scope, then keep
+	// selectors for rollout-backed targets so a later lookup sees new pods.
+	tracePods, traceSelectors := deriveTraceScope(options, selectedPods, selectedSelectors, selector, resolvedTarget, items, traceScopeInherited)
+	options.TracePods = uniqueStrings(tracePods)
+	options.TraceSelectors = uniqueStrings(traceSelectors)
+	traceInventoryProvider := func(traceCtx context.Context) ([]core.InventoryItem, error) {
+		var scoped []core.InventoryItem
+		var scopeErr error
+		if len(options.TracePods) > 0 || len(options.TraceSelectors) > 0 {
+			scoped, scopeErr = selectedInventory(traceCtx, runner, options.TracePods, options.TraceSelectors)
+		} else {
+			scoped, scopeErr = inventoryProvider(traceCtx)
+		}
+		if scopeErr != nil {
+			return nil, scopeErr
+		}
+		return filterInventory(scoped, containerPattern), nil
+	}
 	if wantsBundle {
 		directory := options.DumpDirectory
 		deployment := options.DeploymentDump
@@ -252,11 +274,11 @@ pickAgain:
 		return followPlain(ctx, runner, items, inventoryProvider, options, formatter, stdout, stderr)
 	}
 	title := logTitle(items, effectiveNamespace, options.Context, resolvedTarget)
-	err = tui.Run(ctx, tui.Config{Title: title, Namespace: effectiveNamespace, KubeContext: options.Context, Target: resolvedTarget, Items: items, Formatter: formatter, HeartbeatWindow: options.HeartbeatWindow, RefreshInterval: options.RefreshInterval, BufferLines: options.BufferLines, FilterFile: options.FilterFile,
+	err = tui.Run(ctx, tui.Config{Title: title, Namespace: effectiveNamespace, KubeContext: options.Context, Target: resolvedTarget, Items: items, Formatter: formatter, HeartbeatWindow: options.HeartbeatWindow, RefreshInterval: options.RefreshInterval, BufferLines: options.BufferLines, FilterFile: options.FilterFile, Version: BuildDescription(),
 		Stream: func(streamCtx context.Context, item core.InventoryItem, cursor *core.LogCursor, events chan<- core.LogEvent) error {
 			return runner.Stream(streamCtx, item, kube.LogOptions{Since: options.Since, Tail: options.Tail, Follow: true, Cursor: cursor}, events)
 		}, Inventory: inventoryProvider,
-		Search: func(searchCtx context.Context, query string) ([]string, error) {
+		SearchRecords: func(searchCtx context.Context, query string) ([]core.LogRecord, error) {
 			current, inventoryErr := inventoryProvider(searchCtx)
 			if inventoryErr != nil {
 				return nil, inventoryErr
@@ -265,7 +287,13 @@ pickAgain:
 			if searchLimit < 0 || searchLimit > options.BufferLines {
 				searchLimit = options.BufferLines
 			}
-			return runner.CompleteHistory(searchCtx, current, options.Since, formatter, query, searchLimit)
+			return runner.CompleteRecords(searchCtx, current, options.Since, formatter, query, searchLimit)
+		}, Trace: func(traceCtx context.Context, traceID string) ([]core.LogRecord, error) {
+			current, inventoryErr := traceInventoryProvider(traceCtx)
+			if inventoryErr != nil {
+				return nil, inventoryErr
+			}
+			return runner.CompleteTrace(traceCtx, current, options.Since, formatter, traceID, options.BufferLines)
 		}, MappedResources: runner.MappedResources, ResourceDetail: runner.ResourceDetail})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -297,6 +325,38 @@ func selectedInventory(ctx context.Context, runner kube.Runner, pods, selectors 
 	}
 	return result, nil
 }
+
+func uniqueStrings(values []string) []string {
+	seen := map[string]bool{}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" && !seen[value] {
+			seen[value] = true
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
+func deriveTraceScope(options Options, selectedPods, selectedSelectors []string, selector, resolvedTarget string, items []core.InventoryItem, inherited bool) ([]string, []string) {
+	if inherited {
+		return append([]string(nil), options.TracePods...), append([]string(nil), options.TraceSelectors...)
+	}
+	switch {
+	case len(selectedPods) > 0 || len(selectedSelectors) > 0:
+		return append([]string(nil), selectedPods...), append([]string(nil), selectedSelectors...)
+	case strings.HasPrefix(resolvedTarget, "pod/") && resolvedTarget != "pod/*":
+		return []string{strings.TrimPrefix(resolvedTarget, "pod/")}, nil
+	case selector != "":
+		return nil, []string{selector}
+	default:
+		// Namespace mode has no selector to persist. Its initial inventory is
+		// the best available scope and is intentionally carried into children.
+		return core.UniquePods(items), nil
+	}
+}
+
 func filterInventory(items []core.InventoryItem, pattern *regexp.Regexp) []core.InventoryItem {
 	var result []core.InventoryItem
 	for _, item := range items {
@@ -449,6 +509,12 @@ func childArgs(options Options, namespace string) func(string) []string {
 		}
 		if options.FilterFile != "" {
 			args = append(args, "--filter-file", options.FilterFile)
+		}
+		for _, value := range options.TracePods {
+			args = append(args, "--trace-pod", value)
+		}
+		for _, value := range options.TraceSelectors {
+			args = append(args, "--trace-selector", value)
 		}
 		if options.NoColor {
 			args = append(args, "--no-color")

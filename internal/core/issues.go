@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"sort"
 	"strings"
@@ -10,8 +11,10 @@ import (
 )
 
 const (
-	IssueActiveWindow = 5 * time.Minute
-	defaultIssueLimit = 200
+	IssueActiveWindow           = 5 * time.Minute
+	SlowRequestThreshold        = 250 * time.Millisecond
+	DefaultSlowRequestThreshold = SlowRequestThreshold
+	defaultIssueLimit           = 200
 )
 
 type IssueSeverity string
@@ -22,18 +25,22 @@ const (
 )
 
 type Issue struct {
-	Key        string
-	Severity   IssueSeverity
-	Kind       string
-	Summary    string
-	SearchTerm string
-	Service    string
-	Pods       []string
-	Count      int
-	TotalCount int
-	FirstSeen  time.Time
-	LastSeen   time.Time
-	Increasing bool
+	Key         string
+	Severity    IssueSeverity
+	Kind        string
+	Summary     string
+	SearchTerm  string
+	Service     string
+	Pods        []string
+	Count       int
+	TotalCount  int
+	FirstSeen   time.Time
+	LastSeen    time.Time
+	Increasing  bool
+	New         bool
+	MaxDuration time.Duration
+	TraceID     string
+	Endpoint    string
 }
 
 type IssueStats struct {
@@ -41,21 +48,113 @@ type IssueStats struct {
 	Events   int
 	Errors   int
 	Warnings int
+	New      int
 }
 
 // ClassifyIssue returns the normalized issue represented by a log event. The
 // returned key is stable for events that IssueRadar would group together.
 func ClassifyIssue(event LogEvent) (Issue, bool) {
-	detected, ok := detectIssue(event)
+	if event.Started || event.Replayed {
+		return Issue{}, false
+	}
+	fields := ParseLogFields(event)
+	detected, ok := detectIssueFields(event, fields)
+	service := issueService(event, fields)
+	if IsSlowRequest(fields) {
+		method := normalizeHTTPMethod(fields.Method)
+		endpoint := normalizeEndpoint(fields.Path)
+		severity := IssueWarning
+		if ok && detected.severity == IssueError {
+			severity = IssueError
+		}
+		key := service + "\x00SLOW REQUEST\x00" + method + "\x00" + endpointFingerprint(endpoint)
+		summary := fmt.Sprintf("slow %s %s (>250ms)", method, endpoint)
+		return Issue{
+			Key: key, Severity: severity, Kind: "SLOW REQUEST", Summary: summary,
+			SearchTerm: slowSearchTerm(method, endpoint),
+			Service:    service, MaxDuration: fields.Duration, TraceID: fields.TraceID, Endpoint: endpoint,
+		}, true
+	}
 	if !ok {
 		return Issue{}, false
 	}
-	service := strings.TrimSpace(event.Container)
+	key := service + "\x00" + detected.kind + "\x00" + issueFingerprint(detected.summary)
+	return Issue{
+		Key: key, Severity: detected.severity, Kind: detected.kind, Summary: detected.summary,
+		SearchTerm: detected.search, Service: service, MaxDuration: fields.Duration,
+		TraceID: fields.TraceID, Endpoint: normalizeEndpoint(fields.Path),
+	}, true
+}
+
+func slowSearchTerm(method, endpoint string) string {
+	path := endpoint
+	if strings.ContainsAny(path, " \t\"") {
+		path = `"` + strings.ReplaceAll(path, `"`, `\"`) + `"`
+	}
+	return fmt.Sprintf("duration:>250ms method:%s path:%s", method, path)
+}
+
+// IsSlowRequest reports whether parsed fields identify an HTTP request whose
+// duration strictly exceeds the default slow-request threshold.
+func IsSlowRequest(fields LogFields) bool {
+	return fields.HasDuration && fields.Duration > DefaultSlowRequestThreshold &&
+		normalizeHTTPMethod(fields.Method) != "" && normalizeEndpoint(fields.Path) != ""
+}
+
+func issueService(event LogEvent, fields LogFields) string {
+	service := strings.TrimSpace(fields.Service)
+	if service == "" {
+		service = strings.TrimSpace(event.Container)
+	}
 	if service == "" {
 		service = "logs"
 	}
-	key := service + "\x00" + detected.kind + "\x00" + issueFingerprint(detected.summary)
-	return Issue{Key: key, Severity: detected.severity, Kind: detected.kind, Summary: detected.summary, SearchTerm: detected.search, Service: service}, true
+	return service
+}
+
+func normalizeHTTPMethod(method string) string {
+	return strings.ToUpper(strings.TrimSpace(method))
+}
+
+// normalizeEndpoint keeps a usable route sample while removing query values.
+// endpointFingerprint additionally replaces obvious path IDs for grouping.
+func normalizeEndpoint(path string) string {
+	path = strings.TrimSpace(path)
+	if index := strings.IndexAny(path, "?#"); index >= 0 {
+		path = path[:index]
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if index := strings.Index(path, "://"); index >= 0 {
+		path = path[index+3:]
+		if slash := strings.IndexByte(path, '/'); slash >= 0 {
+			path = path[slash:]
+		} else {
+			path = "/"
+		}
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return path
+}
+
+var (
+	issuePathUUID = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	issuePathHex  = regexp.MustCompile(`(?i)^[0-9a-f]{16,}$`)
+	issuePathNum  = regexp.MustCompile(`^[0-9]+$`)
+)
+
+func endpointFingerprint(endpoint string) string {
+	parts := strings.Split(endpoint, "/")
+	for index, part := range parts {
+		if issuePathNum.MatchString(part) || issuePathUUID.MatchString(part) || issuePathHex.MatchString(part) {
+			parts[index] = "{id}"
+		}
+	}
+	return strings.Join(parts, "/")
 }
 
 type issueRecord struct {
@@ -72,6 +171,7 @@ type IssueRadar struct {
 	mu        sync.RWMutex
 	maxGroups int
 	groups    map[string]*issueRecord
+	baseline  time.Time
 }
 
 type detectedIssue struct {
@@ -104,11 +204,33 @@ func NewIssueRadar(maxGroups int) *IssueRadar {
 	if maxGroups <= 0 {
 		maxGroups = defaultIssueLimit
 	}
-	return &IssueRadar{maxGroups: maxGroups, groups: map[string]*issueRecord{}}
+	return &IssueRadar{maxGroups: maxGroups, groups: map[string]*issueRecord{}, baseline: time.Now().UTC()}
+}
+
+// SetBaseline marks all currently known issue groups as recurring. A group is
+// NEW only when its first observed event has a non-zero ObservedAt timestamp
+// strictly after this baseline. This deliberately uses source event time, so
+// historical records loaded after the session starts remain recurring.
+func (r *IssueRadar) SetBaseline(now time.Time) {
+	if r == nil {
+		return
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.baseline = now.UTC()
+	for _, record := range r.groups {
+		record.issue.New = false
+	}
 }
 
 func (r *IssueRadar) Observe(event LogEvent) bool {
 	if r == nil {
+		return false
+	}
+	if event.Started || event.Replayed {
 		return false
 	}
 	classified, ok := ClassifyIssue(event)
@@ -120,6 +242,7 @@ func (r *IssueRadar) Observe(event LogEvent) bool {
 		observed = time.Now()
 	}
 	key := classified.Key
+	hasObservedAt := !event.ObservedAt.IsZero()
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -133,17 +256,45 @@ func (r *IssueRadar) Observe(event LogEvent) bool {
 		}
 		record = &issueRecord{
 			issue: Issue{
-				Key:        key,
-				Severity:   classified.Severity,
-				Kind:       classified.Kind,
-				Summary:    classified.Summary,
-				SearchTerm: classified.SearchTerm,
-				Service:    classified.Service,
-				FirstSeen:  observed,
+				Key:         key,
+				Severity:    classified.Severity,
+				Kind:        classified.Kind,
+				Summary:     classified.Summary,
+				SearchTerm:  classified.SearchTerm,
+				Service:     classified.Service,
+				FirstSeen:   observed,
+				New:         hasObservedAt && !r.baseline.IsZero() && event.ObservedAt.After(r.baseline),
+				MaxDuration: classified.MaxDuration,
+				TraceID:     classified.TraceID,
+				Endpoint:    classified.Endpoint,
 			},
 			buckets: map[int64]*issueBucket{},
 		}
 		r.groups[key] = record
+	}
+	if classified.Severity == IssueError {
+		record.issue.Severity = IssueError
+	}
+	// Out-of-order historical delivery can reveal that a group existed before
+	// the session baseline. In that case it is recurring even if a newer event
+	// created the group first.
+	if record.issue.New && hasObservedAt && !r.baseline.IsZero() && !event.ObservedAt.After(r.baseline) {
+		record.issue.New = false
+	}
+	if classified.MaxDuration > record.issue.MaxDuration {
+		record.issue.MaxDuration = classified.MaxDuration
+		record.issue.TraceID = classified.TraceID
+		record.issue.Endpoint = classified.Endpoint
+		if classified.Kind == "SLOW REQUEST" {
+			record.issue.Summary = classified.Summary
+			record.issue.SearchTerm = classified.SearchTerm
+		}
+	}
+	if record.issue.TraceID == "" && classified.TraceID != "" && classified.MaxDuration >= record.issue.MaxDuration {
+		record.issue.TraceID = classified.TraceID
+	}
+	if record.issue.Endpoint == "" && classified.Endpoint != "" {
+		record.issue.Endpoint = classified.Endpoint
 	}
 	record.issue.TotalCount++
 	if observed.Before(record.issue.FirstSeen) {
@@ -229,6 +380,9 @@ func (r *IssueRadar) Stats(now time.Time, window time.Duration) IssueStats {
 		} else {
 			stats.Warnings++
 		}
+		if issue.New {
+			stats.New++
+		}
 	}
 	return stats
 }
@@ -264,6 +418,10 @@ func (r *IssueRadar) pruneBucketsLocked(record *issueRecord) {
 }
 
 func detectIssue(event LogEvent) (detectedIssue, bool) {
+	return detectIssueFields(event, ParseLogFields(event))
+}
+
+func detectIssueFields(event LogEvent, fields LogFields) (detectedIssue, bool) {
 	if event.Closed {
 		summary := "log stream ended"
 		if event.Err != nil {
@@ -276,11 +434,10 @@ func detectIssue(event LogEvent) (detectedIssue, bool) {
 		return detectedIssue{}, false
 	}
 
-	level := ""
+	level := fields.Level
 	summary := message
 	var object map[string]any
 	if strings.HasPrefix(message, "{") && json.Unmarshal([]byte(message), &object) == nil && object != nil {
-		level = firstString(object, "level", "lvl", "@l")
 		if rendered := firstString(object, "msg", "message", "RenderedMessage", "@m"); rendered != "" {
 			summary = rendered
 		}
@@ -310,7 +467,7 @@ func detectIssue(event LogEvent) (detectedIssue, bool) {
 	case "WRN":
 		severity, kind = IssueWarning, "WARNING"
 	}
-	if issueHTTP5xxPattern.MatchString(signal) {
+	if (fields.StatusCode >= 500 && fields.StatusCode <= 599) || issueHTTP5xxPattern.MatchString(signal) {
 		severity, kind = IssueError, "HTTP 5XX"
 	} else if issuePanic.MatchString(signal) {
 		severity, kind = IssueError, "PANIC"
@@ -330,7 +487,11 @@ func detectIssue(event LogEvent) (detectedIssue, bool) {
 	if severity == "" {
 		return detectedIssue{}, false
 	}
-	return detectedIssue{severity: severity, kind: kind, summary: truncateIssueSummary(summary), search: issueSearchTerm(summary, kind)}, true
+	search := issueSearchTerm(summary, kind)
+	if kind == "HTTP 5XX" && fields.StatusCode >= 500 && !issueHTTP5xxPattern.MatchString(signal) {
+		search = fmt.Sprintf("status:%d", fields.StatusCode)
+	}
+	return detectedIssue{severity: severity, kind: kind, summary: truncateIssueSummary(summary), search: search}, true
 }
 
 func cleanIssueSummary(message string) string {
