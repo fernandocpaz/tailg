@@ -137,10 +137,11 @@ normalized to its immutable digest when the runtime provides one. Use
 `--namespace` or `--context` to select another namespace or cluster.
 
 Repeat `--context` to compare environments. The comparison groups replica pods
-by workload and container, then compares the running image IDs—not tags. It
-therefore detects different builds even when both environments use `latest`.
-Only differing IDs, mixed rollout IDs, unavailable IDs, or containers missing
-from a context are printed:
+by workload and container. Numbered or named tags are compared and displayed
+directly for readability. When a container uses `latest` (including an omitted
+tag), its running Image ID is compared instead, so different builds are still
+detected. Only differing versions, mixed rollout versions, unavailable Image
+IDs, or containers missing from a context are printed:
 
 ```sh
 tailg --versions --context tkgs-qa --context tkgs-dev

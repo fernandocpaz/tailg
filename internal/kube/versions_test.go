@@ -117,7 +117,7 @@ func TestImageVersionDifferencesReportUsesIDsWhenTagsAreLatest(t *testing.T) {
 	}
 	report := ImageVersionDifferencesReport([]ImageVersionSnapshot{qa, dev})
 	for _, expected := range []string{
-		"IMAGE ID DIFFERENCES | tkgs-qa=apollo | tkgs-dev=apollo | mismatches=2",
+		"IMAGE VERSION DIFFERENCES | tkgs-qa=apollo | tkgs-dev=apollo | mismatches=2",
 		"WORKLOAD", "tkgs-qa", "tkgs-dev", "encounter", "sha256:aaa", "sha256:bbb, sha256:eee", "audit", "missing",
 	} {
 		if !strings.Contains(report, expected) {
@@ -129,13 +129,37 @@ func TestImageVersionDifferencesReportUsesIDsWhenTagsAreLatest(t *testing.T) {
 	}
 }
 
-func TestImageVersionDifferencesReportConfirmsIDMatch(t *testing.T) {
+func TestImageVersionDifferencesReportUsesTagsUnlessLatest(t *testing.T) {
 	snapshots := []ImageVersionSnapshot{
-		{Context: "qa", Namespace: "api", Versions: []ImageVersion{{Workload: "patient", Type: "app", Container: "api", Tag: "10", ImageID: "sha256:same"}}},
-		{Context: "dev", Namespace: "api", Versions: []ImageVersion{{Workload: "patient", Type: "app", Container: "api", Tag: "latest", ImageID: "sha256:same"}}},
+		{
+			Context: "qa", Namespace: "api",
+			Versions: []ImageVersion{
+				{Workload: "patient", Type: "app", Container: "api", Tag: "210", ImageID: "sha256:qa-patient"},
+				{Workload: "encounter", Type: "app", Container: "api", Tag: "latest", ImageID: "sha256:same"},
+			},
+		},
+		{
+			Context: "dev", Namespace: "api",
+			Versions: []ImageVersion{
+				{Workload: "patient", Type: "app", Container: "api", Tag: "210", ImageID: "sha256:dev-patient"},
+				{Workload: "encounter", Type: "app", Container: "api", Tag: "latest", ImageID: "sha256:same"},
+			},
+		},
 	}
 	report := ImageVersionDifferencesReport(snapshots)
-	if !strings.Contains(report, "mismatches=0") || !strings.Contains(report, "All compared workload container image IDs match.") {
+	if !strings.Contains(report, "mismatches=0") || !strings.Contains(report, "All compared workload container image versions match.") {
 		t.Fatalf("unexpected matching report: %s", report)
+	}
+}
+
+func TestComparisonImageValueIsCaseInsensitiveForLatest(t *testing.T) {
+	for _, tag := range []string{"latest", "LATEST", "Latest"} {
+		version := ImageVersion{Tag: tag, ImageID: "sha256:running"}
+		if got := comparisonImageValue(version); got != "sha256:running" {
+			t.Errorf("tag %q comparison=%q", tag, got)
+		}
+	}
+	if got := comparisonImageValue(ImageVersion{Tag: "10452", ImageID: "sha256:running"}); got != "10452" {
+		t.Errorf("numbered tag comparison=%q", got)
 	}
 }
