@@ -16,11 +16,16 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/fernandocpaz/tailg/internal/core"
 )
 
 type Config struct {
+	ExplainReplicas func(context.Context, string) (core.ReplicaExplanation, error)
+	Version         string
+	SearchRecords   func(context.Context, string) ([]core.LogRecord, error)
+	Trace           func(context.Context, string) ([]core.LogRecord, error)
 	Title           string
 	Namespace       string
 	KubeContext     string
@@ -44,6 +49,8 @@ type inventoryMsg struct {
 	err   error
 }
 type searchMsg struct {
+	records    []core.LogRecord
+	structured bool
 	generation int
 	query      string
 	lines      []string
@@ -60,43 +67,53 @@ type resourceDetailMsg struct {
 type sharedFilterTick time.Time
 
 type model struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	config         Config
-	inventory      <-chan inventoryMsg
-	events         <-chan core.LogEvent
-	state          *core.FilterState
-	heartbeat      *core.HeartbeatAnalyzer
-	input          textinput.Model
-	items          []core.InventoryItem
-	width          int
-	height         int
-	selected       int
-	scroll         int
-	followsLive    bool
-	generation     int
-	notice         string
-	detail         string
-	heartbeatOpen  bool
-	resourceOpen   bool
-	resourceDetail string
-	resources      []core.MappedResource
-	resourceIndex  int
-	lastSharedText string
-	lastSharedMode bool
-	lastTextRev    sharedRevision
-	lastModeRev    sharedRevision
-	searches       *searchController
-	searching      bool
-	searchMatches  int
-	searchLines    int
-	reconnecting   map[string]struct{}
-	issues         *core.IssueRadar
-	issueOpen      bool
-	issueIndex     int
-	freshness      map[string]streamFreshness
-	freshnessOpen  bool
-	freshnessIndex int
+	replicas        replicaViewState
+	ctx             context.Context
+	cancel          context.CancelFunc
+	config          Config
+	inventory       <-chan inventoryMsg
+	events          <-chan core.LogEvent
+	state           *core.FilterState
+	heartbeat       *core.HeartbeatAnalyzer
+	input           textinput.Model
+	items           []core.InventoryItem
+	width           int
+	height          int
+	selected        int
+	scroll          int
+	followsLive     bool
+	generation      int
+	notice          string
+	detail          string
+	heartbeatOpen   bool
+	resourceOpen    bool
+	resourceDetail  string
+	resources       []core.MappedResource
+	resourceIndex   int
+	lastSharedText  string
+	lastSharedMode  bool
+	lastTextRev     sharedRevision
+	lastModeRev     sharedRevision
+	searches        *searchController
+	searching       bool
+	searchMatches   int
+	searchLines     int
+	reconnecting    map[string]struct{}
+	issues          *core.IssueRadar
+	issueOpen       bool
+	issueIndex      int
+	issueLineOffset int
+	freshness       map[string]streamFreshness
+	freshnessOpen   bool
+	freshnessIndex  int
+	traceOpen       bool
+	traceID         string
+	traceState      *core.FilterState
+	traceIndex      int
+	traceLoading    bool
+	traceGeneration int
+	traceSearches   *searchController
+	traceNotice     string
 }
 
 type searchController struct {
@@ -175,7 +192,7 @@ func Run(parent context.Context, config Config) error {
 		lastSharedText: shared.text, lastSharedMode: shared.mode,
 		lastTextRev: shared.textRevision, lastModeRev: shared.modeRevision,
 		searches:  &searchController{},
-		searching: strings.TrimSpace(shared.text) != "" && config.Search != nil,
+		searching: strings.TrimSpace(shared.text) != "" && (config.Search != nil || config.SearchRecords != nil),
 		issues:    core.NewIssueRadar(200),
 	}
 	program := tea.NewProgram(m, tea.WithAltScreen())
@@ -185,7 +202,7 @@ func Run(parent context.Context, config Config) error {
 
 func (m model) Init() tea.Cmd {
 	commands := []tea.Cmd{waitForEvent(m.events), waitForInventory(m.inventory), sharedTick()}
-	if m.config.Search != nil && strings.TrimSpace(m.input.Value()) != "" {
+	if m.hasSearch() && strings.TrimSpace(m.input.Value()) != "" {
 		commands = append(commands, m.searchCommand(m.generation, m.input.Value()))
 	}
 	return tea.Batch(commands...)
@@ -193,6 +210,8 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
+	case replicaMsg:
+		return m.updateReplicaResult(msg)
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		inputWidth := msg.Width - 52
@@ -235,15 +254,22 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, waitForEvent(m.events)
 			}
 			m.heartbeat.Add(event.Pod, event.Container, event.Message, event.ObservedAt)
-			lines := m.config.Formatter.Format(event.Pod, event.Container, event.Message, true)
-			if len(lines) > 0 {
+			records := core.RecordsForEvent(m.config.Formatter, event, true)
+			if len(records) > 0 {
 				m.issues.Observe(event)
 			}
 			previousCount := 0
 			if !m.followsLive {
 				previousCount = len(m.state.Lines())
 			}
-			added := m.state.Append(lines...)
+			added := m.state.AppendRecords(records...)
+			if m.traceOpen && m.traceState != nil {
+				for _, record := range records {
+					if record.Fields.TraceID == m.traceID {
+						m.traceState.AppendRecords(record)
+					}
+				}
+			}
 			if m.followsLive && added > 0 {
 				m.selected = len(m.state.Lines()) - 1
 				m.scroll = 0
@@ -272,23 +298,24 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = "Full history search failed: " + msg.err.Error()
 			return m, nil
 		}
-		if m.state.SetSearchResults(msg.query, msg.lines) {
+		accepted := false
+		if msg.structured {
+			accepted = m.state.SetSearchRecords(msg.query, msg.records)
+		} else {
+			accepted = m.state.SetSearchResults(msg.query, msg.lines)
+		}
+		if accepted {
 			m.searching = false
 			m.followsLive = false
 			m.selected = m.state.MatchIndex()
 			m.scrollToSelection()
-			matches := 0
-			needle := strings.ToLower(strings.TrimSpace(msg.query))
-			for _, line := range msg.lines {
-				if strings.Contains(strings.ToLower(core.StripANSI(line)), needle) {
-					matches++
-				}
-			}
-			m.searchMatches = matches
-			m.searchLines = len(msg.lines)
+			m.searchMatches = m.state.MatchCount()
+			m.searchLines = len(m.state.Records())
 			m.notice = ""
 		}
 		return m, nil
+	case traceMsg:
+		return m.updateTraceResult(msg)
 	case resourceListMsg:
 		if msg.err != nil {
 			m.notice = msg.err.Error()
@@ -319,7 +346,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.state.SetFilter(shared.text)
 				m.generation++
 				m.cancelSearch()
-				m.searching = strings.TrimSpace(shared.text) != "" && m.config.Search != nil
+				m.searching = strings.TrimSpace(shared.text) != "" && m.hasSearch()
 				m.searchMatches = 0
 				m.searchLines = 0
 				m.selected = len(m.state.Lines()) - 1
@@ -342,6 +369,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+		if cmd := m.ensureReplicaLookup(time.Now()); cmd != nil {
+			commands = append(commands, cmd)
+		}
 		commands = append(commands, sharedTick())
 		return m, tea.Batch(commands...)
 	case tea.KeyMsg:
@@ -351,8 +381,14 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		if key == "esc" {
+			if m.replicas.open {
+				m.replicas.open = false
+				return m, nil
+			}
 			if m.detail != "" {
 				m.detail = ""
+			} else if m.traceOpen {
+				m.closeTrace()
 			} else if m.issueOpen {
 				m.issueOpen = false
 			} else if m.freshnessOpen {
@@ -365,6 +401,12 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.resourceOpen = false
 			}
 			return m, nil
+		}
+		if m.replicas.open {
+			return m.updateReplicaKey(key)
+		}
+		if m.traceOpen {
+			return m.updateTraceKey(key)
 		}
 		if m.freshnessOpen {
 			return m.updateFreshnessKey(key)
@@ -382,6 +424,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateResourceKey(key)
 		}
 		if m.detail != "" {
+			if key == "f6" {
+				return m, m.openSelectedTrace()
+			}
 			if key == "enter" {
 				m.notice = copyText(m.detail)
 				m.detail = ""
@@ -425,8 +470,14 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case "f3":
 			m.issueOpen = true
 			m.issueIndex = 0
+			m.issueLineOffset = 0
 			m.notice = ""
 			return m, nil
+		case "f7":
+			cmd := m.openReplicaExplanation()
+			return m, cmd
+		case "f6":
+			return m, m.openSelectedTrace()
 		case "f4":
 			m.freshnessOpen = true
 			m.freshnessIndex = 0
@@ -469,6 +520,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.notice = "No selected log line"
 			} else {
 				m.detail = selected
+				if record, ok := m.state.SelectedRecord(m.selected); ok {
+					m.detail = recordDetails(record)
+				}
 			}
 			return m, nil
 		}
@@ -480,7 +534,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.state.SetFilter(after)
 			m.generation++
 			m.cancelSearch()
-			m.searching = strings.TrimSpace(after) != "" && m.config.Search != nil
+			m.searching = strings.TrimSpace(after) != "" && m.hasSearch()
 			m.searchMatches = 0
 			m.searchLines = 0
 			m.selected = len(m.state.Lines()) - 1
@@ -505,6 +559,12 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	if m.width <= 0 || m.height <= 0 {
 		return "starting tailg..."
+	}
+	if m.replicas.open {
+		return m.renderReplicaExplanation()
+	}
+	if m.traceOpen && m.detail == "" {
+		return m.renderTrace()
 	}
 	if m.freshnessOpen {
 		return m.renderFreshness(time.Now())
@@ -533,20 +593,15 @@ func (m model) View() string {
 		return m.panel("Mapped pod resources", strings.Join(lines, "\n"), "Up/Down select | Enter opens | F2/Esc closes")
 	}
 	if m.detail != "" {
-		return m.panel("Selected log line", m.detail, "Enter copies | Esc closes")
+		return m.panel("Selected log line", m.detail, "Enter copies | F6 request timeline | Esc closes")
 	}
-	lines := m.state.Lines()
+	records := m.state.Records()
 	height := m.logHeight()
-	start := max(0, len(lines)-height-m.scroll)
-	end := min(len(lines), start+height)
-	visible := make([]string, 0, height)
-	for index := start; index < end; index++ {
-		visible = append(visible, renderLogRow(lines[index], m.input.Value(), index == m.selected, m.width, m.config.Formatter.ShowPod, m.config.Formatter.Color))
-	}
+	visible := renderLogTimelineRows(records, m.state.Highlight(), m.selected, height, m.width, m.config.Formatter.ShowPod, m.config.Formatter.Color, m.followsLive, time.Now())
 	for len(visible) < height {
 		visible = append(visible, "")
 	}
-	return strings.Join([]string{m.renderHeader(), renderRule(m.width, m.config.Formatter.Color), strings.Join(visible, "\n"), renderRule(m.width, m.config.Formatter.Color), m.renderFilterBar(), m.renderFooter()}, "\n")
+	return strings.Join([]string{m.renderHeader(), m.renderLogSource(), renderRule(m.width, m.config.Formatter.Color), strings.Join(visible, "\n"), renderRule(m.width, m.config.Formatter.Color), m.renderFilterBar(), m.renderFooter()}, "\n")
 }
 
 func (m model) panel(title, body, footer string) string {
@@ -561,7 +616,9 @@ func (m model) panel(title, body, footer string) string {
 	header := renderWithColor(headerStyle, "tailg", m.config.Formatter.Color) + "  " + title
 	return strings.Join([]string{truncate(header, m.width), renderRule(m.width, m.config.Formatter.Color), strings.Join(lines, "\n"), truncate(renderWithColor(dimStyle, footer, m.config.Formatter.Color), m.width)}, "\n")
 }
-func (m model) logHeight() int { return max(1, m.height-6) }
+func (m model) logHeight() int {
+	return max(1, m.height-6-len(strings.Split(m.renderLogSource(), "\n")))
+}
 
 func (m model) renderHeader() string {
 	services := strings.Join(core.ServiceNames(m.items), ",")
@@ -637,6 +694,9 @@ func (m model) renderFilterBar() string {
 }
 
 func (m model) searchStatus() string {
+	if err := m.state.FilterError(); err != nil {
+		return "Invalid filter: " + err.Error()
+	}
 	if strings.TrimSpace(m.input.Value()) == "" {
 		return ""
 	}
@@ -647,6 +707,9 @@ func (m model) searchStatus() string {
 }
 
 func (m model) renderFooter() string {
+	if err := m.state.FilterError(); err != nil {
+		return truncate(renderWithColor(warnStyle, "Invalid filter: "+err.Error(), m.config.Formatter.Color), m.width)
+	}
 	if m.notice != "" {
 		return truncate(renderWithColor(alertStyle, m.notice, m.config.Formatter.Color), m.width)
 	}
@@ -659,6 +722,8 @@ func (m model) renderFooter() string {
 		m.renderIssueKey(),
 		renderKey("F4", "streams", m.config.Formatter.Color),
 		m.renderHeartbeatKey(),
+		renderKey("F6", "trace", m.config.Formatter.Color),
+		renderKey("F7", "replicas", m.config.Formatter.Color),
 		renderKey("Enter", "inspect", m.config.Formatter.Color),
 		renderKey("Ctrl+Q", "quit", m.config.Formatter.Color),
 	}
@@ -702,29 +767,52 @@ func (m model) renderIssueRadar() string {
 	header := renderWithColor(headerStyle, "tailg", m.config.Formatter.Color) + "  Issue radar"
 	status := "No active issues"
 	if stats.Groups > 0 {
-		status = fmt.Sprintf("%d active • %d events", stats.Groups, stats.Events)
+		status = fmt.Sprintf("%d active • %d events • %d new", stats.Groups, stats.Events, stats.New)
 	}
 	header = joinSides(header, renderWithColor(dimStyle, status, m.config.Formatter.Color), m.width)
 
-	height := max(1, m.height-3)
+	footer := m.issueRadarFooter()
+	height := m.issueRadarHeight()
 	selected := min(max(0, m.issueIndex), max(0, len(issues)-1))
-	start := 0
-	if selected >= height {
-		start = selected - height + 1
+	var rows []string
+	selectedStart, selectedEnd := 0, 0
+	now := time.Now()
+	for index, issue := range issues {
+		if index == selected {
+			selectedStart = len(rows)
+		}
+		rows = append(rows, strings.Split(renderIssueRow(issue, index == selected, m.width, m.config.Formatter.Color, now), "\n")...)
+		if index == selected {
+			selectedEnd = len(rows)
+		}
 	}
-	end := min(len(issues), start+height)
-	lines := make([]string, 0, height)
-	for index := start; index < end; index++ {
-		lines = append(lines, renderIssueRow(issues[index], index == selected, m.width, m.config.Formatter.Color, time.Now()))
+	start := max(0, selectedEnd-height)
+	if selectedEnd-selectedStart > height {
+		start = selectedStart + min(max(0, m.issueLineOffset), selectedEnd-selectedStart-height)
 	}
-	if len(lines) == 0 {
-		lines = append(lines, renderWithColor(okStyle, "✓ No errors or warnings detected in the active window", m.config.Formatter.Color))
+	end := min(len(rows), start+height)
+	lines := append([]string(nil), rows[start:end]...)
+	if len(rows) == 0 {
+		lines = strings.Split(ansi.Wrap(renderWithColor(okStyle, "✓ No errors or warnings detected in the active window", m.config.Formatter.Color), max(1, m.width), ""), "\n")
+		lines = lines[:min(len(lines), height)]
 	}
 	for len(lines) < height {
 		lines = append(lines, "")
 	}
-	footer := "Up/Down or N/P select  Enter loads context  C clears baseline  F3/Esc closes"
-	return strings.Join([]string{header, renderRule(m.width, m.config.Formatter.Color), strings.Join(lines, "\n"), truncate(renderWithColor(dimStyle, footer, m.config.Formatter.Color), m.width)}, "\n")
+	return strings.Join([]string{header, renderRule(m.width, m.config.Formatter.Color), strings.Join(lines, "\n"), footer}, "\n")
+}
+
+func (m model) issueRadarFooter() string {
+	footer := "Up/Down select | PgUp/PgDn scroll issue | Enter loads context | F6 trace | B baseline | C clear | F3/Esc closes"
+	if m.notice != "" {
+		footer = m.notice + " | F3/Esc closes"
+	}
+	lines := strings.Split(ansi.Wrap(renderWithColor(dimStyle, footer, m.config.Formatter.Color), max(1, m.width), ""), "\n")
+	return strings.Join(lines[:min(len(lines), max(1, m.height-3))], "\n")
+}
+
+func (m model) issueRadarHeight() int {
+	return max(1, m.height-2-len(strings.Split(m.issueRadarFooter(), "\n")))
 }
 
 func renderIssueRow(issue core.Issue, selected bool, width int, color bool, now time.Time) string {
@@ -739,23 +827,43 @@ func renderIssueRow(issue core.Issue, selected bool, width int, color bool, now 
 	if issue.Severity == core.IssueError {
 		severityStyle = alertStyle
 	}
-	prefix := gutter + renderCell(string(issue.Severity), 5, severityStyle, color)
-	prefix += renderCell(fmt.Sprintf("%d×", issue.Count), 7, keyStyle, color)
-	if width >= 78 {
-		source := issue.Service
-		if len(issue.Pods) > 1 {
-			source += fmt.Sprintf(" (%d pods)", len(issue.Pods))
-		}
-		prefix += renderCell(source, 22, dimStyle, color)
+	badge := "KNOWN"
+	if issue.New {
+		badge = "NEW"
 	}
-	suffix := issueAge(now.Sub(issue.LastSeen))
+	source := issue.Service
+	if len(issue.Pods) > 1 {
+		source += fmt.Sprintf(" (%d pods)", len(issue.Pods))
+	}
+	age := issueAge(now.Sub(issue.LastSeen))
 	if issue.Increasing {
-		suffix = renderWithColor(alertStyle, "↑", color) + " " + suffix
+		age = "↑ " + age
 	}
-	messageWidth := max(1, width-lipgloss.Width(prefix)-lipgloss.Width(suffix)-2)
-	message := truncatePlain(issue.Summary, messageWidth)
-	spaces := max(1, width-lipgloss.Width(prefix)-lipgloss.Width(message)-lipgloss.Width(suffix))
-	return truncate(prefix+message+strings.Repeat(" ", spaces)+renderWithColor(dimStyle, suffix, color), width)
+	metadata := []string{
+		renderWithColor(severityStyle, string(issue.Severity), color),
+		renderWithColor(warnStyle, badge, color),
+		renderWithColor(keyStyle, fmt.Sprintf("%d×", issue.Count), color),
+		renderWithColor(dimStyle, source, color),
+	}
+	if issue.MaxDuration > 0 {
+		metadata = append(metadata, "max "+issue.MaxDuration.String())
+	}
+	metadata = append(metadata, renderWithColor(dimStyle, age, color))
+	summary := issue.FullSummary
+	if summary == "" {
+		summary = issue.Summary
+	}
+	// Wrap the complete text, including long service names and unbroken IDs.
+	// Every continuation carries the selection marker when the issue is selected.
+	content := strings.Join(metadata, " · ") + "\n" + summary
+	if width <= 2 {
+		return ansi.Wrap(content, max(1, width), "")
+	}
+	lines := strings.Split(ansi.Wrap(content, width-2, ""), "\n")
+	for index := range lines {
+		lines[index] = gutter + lines[index]
+	}
+	return strings.Join(lines, "\n")
 }
 
 func issueAge(age time.Duration) string {
@@ -775,6 +883,9 @@ func issueAge(age time.Duration) string {
 }
 
 func (m model) updateIssueKey(key string) (tea.Model, tea.Cmd) {
+	if key == "up" || key == "p" || key == "k" || key == "down" || key == "n" || key == "j" || key == "c" {
+		m.issueLineOffset = 0
+	}
 	issues := m.activeIssues()
 	if len(issues) == 0 {
 		m.issueIndex = 0
@@ -788,6 +899,28 @@ func (m model) updateIssueKey(key string) (tea.Model, tea.Cmd) {
 		m.issueIndex = max(0, m.issueIndex-1)
 	case "down", "n", "j":
 		m.issueIndex = min(max(0, len(issues)-1), m.issueIndex+1)
+	case "pgup", "pgdown":
+		if len(issues) > 0 {
+			height := m.issueRadarHeight()
+			rowHeight := len(strings.Split(renderIssueRow(issues[m.issueIndex], true, m.width, m.config.Formatter.Color, time.Now()), "\n"))
+			limit := max(0, rowHeight-height)
+			m.issueLineOffset = min(max(0, m.issueLineOffset), limit)
+			step := max(1, height-1)
+			if key == "pgup" {
+				m.issueLineOffset = max(0, m.issueLineOffset-step)
+			} else {
+				m.issueLineOffset = min(limit, m.issueLineOffset+step)
+			}
+		}
+	case "b":
+		if m.issues != nil {
+			m.issues.SetBaseline(time.Now())
+		}
+	case "f6":
+		if len(issues) > 0 && issues[m.issueIndex].TraceID != "" {
+			return m, m.openTrace(issues[m.issueIndex].TraceID)
+		}
+		m.notice = "Selected issue has no trace ID in retained logs"
 	case "c":
 		if m.issues != nil {
 			m.issues.Clear()
@@ -815,7 +948,7 @@ func (m *model) applyIssueFilter(filter string) tea.Cmd {
 	m.state.SetMatchesOnly(false)
 	m.generation++
 	m.cancelSearch()
-	m.searching = filter != "" && m.config.Search != nil
+	m.searching = filter != "" && m.hasSearch()
 	m.searchMatches = 0
 	m.searchLines = 0
 	m.selected = m.state.MatchIndex()
@@ -904,6 +1037,10 @@ func normalizeLevel(level string) string {
 
 func renderLogRow(value, query string, selected bool, width int, showPod, color bool) string {
 	columns := parseLogColumns(value, showPod)
+	return renderLogColumns(columns, value, query, selected, width, showPod, color)
+}
+
+func renderLogColumns(columns logColumns, value, query string, selected bool, width int, showPod, color bool) string {
 	gutter := "  "
 	if selected {
 		gutter = "> "
@@ -916,8 +1053,9 @@ func renderLogRow(value, query string, selected bool, width int, showPod, color 
 		prefix += renderCell(columns.time, 13, dimStyle, color && !selected)
 		prefix += renderCell(columns.level, 5, levelRenderStyle(columns.level), color && !selected)
 	}
-	if showPod && width >= 96 {
-		prefix += renderCell(columns.pod, 18, dimStyle, color && !selected)
+	if showPod && width >= 48 {
+		columnWidth := min(48, max(12, width/3))
+		prefix += renderCell(compactPodLabel(columns.pod, columnWidth-1), columnWidth, headerStyle, color && !selected)
 	}
 	messageWidth := max(1, width-lipgloss.Width(prefix))
 	message := truncatePlain(columns.message, messageWidth)
@@ -1125,7 +1263,11 @@ func (m *model) cancelSearch() {
 	}
 }
 func (m *model) searchCommand(generation int, query string) tea.Cmd {
-	if m.config.Search == nil {
+	if !m.hasSearch() {
+		return nil
+	}
+	if _, err := core.CompileLogQuery(query); err != nil {
+		m.searching = false
 		return nil
 	}
 	if m.searches == nil {
@@ -1139,6 +1281,13 @@ func (m *model) searchCommand(generation int, query string) tea.Cmd {
 		case <-searchCtx.Done():
 			return nil
 		case <-timer.C:
+		}
+		if m.config.SearchRecords != nil {
+			records, err := m.config.SearchRecords(searchCtx, query)
+			if searchCtx.Err() != nil {
+				return nil
+			}
+			return searchMsg{generation: generation, query: query, records: records, structured: true, err: err}
 		}
 		lines, err := m.config.Search(searchCtx, query)
 		if searchCtx.Err() != nil {

@@ -151,12 +151,21 @@ func (c Collector) Collect(ctx context.Context, items []core.InventoryItem, opti
 			Summary: Redact(issue.Summary), SearchTerm: Redact(issue.SearchTerm), Service: issue.Service,
 			Pods: issue.Pods, Count: issue.Count, TotalCount: issue.TotalCount,
 			FirstSeen: timestamp(issue.FirstSeen), LastSeen: timestamp(issue.LastSeen), Increasing: issue.Increasing,
+			New: issue.New, MaxDurationMs: durationMilliseconds(issue.MaxDuration),
+			TraceID: Redact(issue.TraceID), Endpoint: Redact(issue.Endpoint),
 			Context: contextFor(events, issue.Key, options.Limits.ContextLines),
 		})
 	}
 	refreshSummary(&report)
 	report.Recommendations = recommendations(report)
 	return report, nil
+}
+
+func durationMilliseconds(value time.Duration) float64 {
+	if value <= 0 {
+		return 0
+	}
+	return float64(value) / float64(time.Millisecond)
 }
 
 func refreshSummary(report *Report) {

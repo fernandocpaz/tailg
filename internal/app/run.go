@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	xterm "github.com/charmbracelet/x/term"
 	"github.com/fernandocpaz/tailg/internal/bundle"
 	"github.com/fernandocpaz/tailg/internal/core"
 	"github.com/fernandocpaz/tailg/internal/kube"
@@ -40,6 +42,9 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 	if options.Container == "" {
 		options.Container = ".*"
 	}
+	// Child panes inherit an explicitly supplied scope. A picker selection,
+	// however, must derive a fresh scope on every iteration.
+	traceScopeInherited := len(options.TracePods) > 0 || len(options.TraceSelectors) > 0
 	containerPattern, err := regexp.Compile(options.Container)
 	if err != nil {
 		fmt.Fprintln(stderr, "Invalid regex:", err)
@@ -78,7 +83,11 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 				return 1
 			}
 		}
-		statusOptions := kube.StatusOptions{Interval: options.StatusInterval, Timeout: options.StatusTimeout, Output: stdout}
+		decorated, statusWidth := terminalPresentation(stdout)
+		statusOptions := kube.StatusOptions{
+			Lookback: options.StatusLookback, Interval: options.StatusInterval, Timeout: options.StatusTimeout, Output: stdout,
+			Decorated: decorated, Color: decorated && !options.NoColor, Width: statusWidth,
+		}
 		if interactive(stdin) {
 			statusOptions.Input = stdin
 			if runtime.GOOS == "windows" {
@@ -179,6 +188,25 @@ pickAgain:
 		fmt.Fprintln(stderr, "No matching pods/containers found.")
 		return 1
 	}
+	// A child pane displays one pod, but trace lookup must retain the scope
+	// selected by its parent. Prefer an explicitly propagated scope, then keep
+	// selectors for rollout-backed targets so a later lookup sees new pods.
+	tracePods, traceSelectors := deriveTraceScope(options, selectedPods, selectedSelectors, selector, resolvedTarget, items, traceScopeInherited)
+	options.TracePods = uniqueStrings(tracePods)
+	options.TraceSelectors = uniqueStrings(traceSelectors)
+	traceInventoryProvider := func(traceCtx context.Context) ([]core.InventoryItem, error) {
+		var scoped []core.InventoryItem
+		var scopeErr error
+		if len(options.TracePods) > 0 || len(options.TraceSelectors) > 0 {
+			scoped, scopeErr = selectedInventory(traceCtx, runner, options.TracePods, options.TraceSelectors)
+		} else {
+			scoped, scopeErr = inventoryProvider(traceCtx)
+		}
+		if scopeErr != nil {
+			return nil, scopeErr
+		}
+		return filterInventory(scoped, containerPattern), nil
+	}
 	if wantsBundle {
 		directory := options.DumpDirectory
 		deployment := options.DeploymentDump
@@ -252,11 +280,11 @@ pickAgain:
 		return followPlain(ctx, runner, items, inventoryProvider, options, formatter, stdout, stderr)
 	}
 	title := logTitle(items, effectiveNamespace, options.Context, resolvedTarget)
-	err = tui.Run(ctx, tui.Config{Title: title, Namespace: effectiveNamespace, KubeContext: options.Context, Target: resolvedTarget, Items: items, Formatter: formatter, HeartbeatWindow: options.HeartbeatWindow, RefreshInterval: options.RefreshInterval, BufferLines: options.BufferLines, FilterFile: options.FilterFile,
+	err = tui.Run(ctx, tui.Config{Title: title, Namespace: effectiveNamespace, KubeContext: options.Context, Target: resolvedTarget, Items: items, Formatter: formatter, HeartbeatWindow: options.HeartbeatWindow, RefreshInterval: options.RefreshInterval, BufferLines: options.BufferLines, FilterFile: options.FilterFile, Version: BuildDescription(),
 		Stream: func(streamCtx context.Context, item core.InventoryItem, cursor *core.LogCursor, events chan<- core.LogEvent) error {
 			return runner.Stream(streamCtx, item, kube.LogOptions{Since: options.Since, Tail: options.Tail, Follow: true, Cursor: cursor}, events)
 		}, Inventory: inventoryProvider,
-		Search: func(searchCtx context.Context, query string) ([]string, error) {
+		SearchRecords: func(searchCtx context.Context, query string) ([]core.LogRecord, error) {
 			current, inventoryErr := inventoryProvider(searchCtx)
 			if inventoryErr != nil {
 				return nil, inventoryErr
@@ -265,8 +293,15 @@ pickAgain:
 			if searchLimit < 0 || searchLimit > options.BufferLines {
 				searchLimit = options.BufferLines
 			}
-			return runner.CompleteHistory(searchCtx, current, options.Since, formatter, query, searchLimit)
-		}, MappedResources: runner.MappedResources, ResourceDetail: runner.ResourceDetail})
+			return runner.CompleteRecords(searchCtx, current, options.Since, formatter, query, searchLimit)
+		}, Trace: func(traceCtx context.Context, traceID string) ([]core.LogRecord, error) {
+			current, inventoryErr := traceInventoryProvider(traceCtx)
+			if len(current) == 0 && inventoryErr != nil {
+				return nil, inventoryErr
+			}
+			records, traceErr := runner.CompleteTrace(traceCtx, current, options.Since, formatter, traceID, options.BufferLines)
+			return records, errors.Join(inventoryErr, traceErr)
+		}, ExplainReplicas: runner.ExplainReplicas, MappedResources: runner.MappedResources, ResourceDetail: runner.ResourceDetail})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -279,14 +314,8 @@ pickAgain:
 }
 
 func selectedInventory(ctx context.Context, runner kube.Runner, pods, selectors []string) ([]core.InventoryItem, error) {
-	podItems, err := runner.InventoryForPods(ctx, pods)
-	if err != nil {
-		return nil, err
-	}
-	selectorItems, err := runner.InventoryForSelectors(ctx, selectors)
-	if err != nil {
-		return nil, err
-	}
+	podItems, podErr := runner.InventoryForPods(ctx, pods)
+	selectorItems, selectorErr := runner.InventoryForSelectors(ctx, selectors)
 	seen := map[string]bool{}
 	var result []core.InventoryItem
 	for _, item := range append(podItems, selectorItems...) {
@@ -295,8 +324,40 @@ func selectedInventory(ctx context.Context, runner kube.Runner, pods, selectors 
 			result = append(result, item)
 		}
 	}
-	return result, nil
+	return result, errors.Join(podErr, selectorErr)
 }
+
+func uniqueStrings(values []string) []string {
+	seen := map[string]bool{}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" && !seen[value] {
+			seen[value] = true
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
+func deriveTraceScope(options Options, selectedPods, selectedSelectors []string, selector, resolvedTarget string, items []core.InventoryItem, inherited bool) ([]string, []string) {
+	if inherited {
+		return append([]string(nil), options.TracePods...), append([]string(nil), options.TraceSelectors...)
+	}
+	switch {
+	case len(selectedPods) > 0 || len(selectedSelectors) > 0:
+		return append([]string(nil), selectedPods...), append([]string(nil), selectedSelectors...)
+	case strings.HasPrefix(resolvedTarget, "pod/") && resolvedTarget != "pod/*":
+		return []string{strings.TrimPrefix(resolvedTarget, "pod/")}, nil
+	case selector != "":
+		return nil, []string{selector}
+	default:
+		// Namespace mode has no selector to persist. Its initial inventory is
+		// the best available scope and is intentionally carried into children.
+		return core.UniquePods(items), nil
+	}
+}
+
 func filterInventory(items []core.InventoryItem, pattern *regexp.Regexp) []core.InventoryItem {
 	var result []core.InventoryItem
 	for _, item := range items {
@@ -450,6 +511,12 @@ func childArgs(options Options, namespace string) func(string) []string {
 		if options.FilterFile != "" {
 			args = append(args, "--filter-file", options.FilterFile)
 		}
+		for _, value := range options.TracePods {
+			args = append(args, "--trace-pod", value)
+		}
+		for _, value := range options.TraceSelectors {
+			args = append(args, "--trace-selector", value)
+		}
 		if options.NoColor {
 			args = append(args, "--no-color")
 		}
@@ -463,6 +530,18 @@ func interactive(input io.Reader) bool {
 	}
 	info, err := file.Stat()
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+func terminalPresentation(output io.Writer) (bool, int) {
+	file, ok := output.(*os.File)
+	if !ok || !xterm.IsTerminal(file.Fd()) {
+		return false, 0
+	}
+	width, _, err := xterm.GetSize(file.Fd())
+	if err != nil || width <= 0 {
+		width = 118
+	}
+	return true, width
 }
 
 func valueOr(value, fallback string) string {
