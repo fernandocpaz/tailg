@@ -8,6 +8,7 @@ type Options struct {
 	Namespace          string
 	Context            string
 	Status             bool
+	Versions           bool
 	StatusInterval     time.Duration
 	StatusTimeout      time.Duration
 	Selector           string

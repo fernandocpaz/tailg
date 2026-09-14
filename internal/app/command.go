@@ -23,10 +23,10 @@ func NewCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) 
 	command := &cobra.Command{
 		Use: "tailg [target] [namespace]", Short: "Human-friendly Kubernetes log tailer built in Go", SilenceUsage: true, SilenceErrors: true, Args: cobra.MaximumNArgs(2),
 		Long:    "tailg follows Kubernetes logs across pods, provides synchronized live filtering, heartbeat diagnostics, resource inspection, status recovery monitoring, and Windows Terminal layouts.",
-		Example: strings.Join([]string{"tailg example-app default", "tailg 'example-*' default --tile-windows", "tailg example-app default --since 4d", "tailg --status --namespace default"}, "\n"),
+		Example: strings.Join([]string{"tailg example-app default", "tailg 'example-*' default --tile-windows", "tailg example-app default --since 4d", "tailg --status --namespace default", "tailg --versions"}, "\n"),
 		Version: Version,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 && !options.Status && options.Namespace == "" {
+			if len(args) == 0 && !options.Status && !options.Versions && options.Namespace == "" {
 				return cmd.Help()
 			}
 			if len(args) > 0 {
@@ -79,6 +79,7 @@ func NewCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) 
 	flags.StringVarP(&options.Namespace, "namespace", "n", "", "Kubernetes namespace; without a target, open every pod in Windows Terminal")
 	flags.StringVar(&options.Context, "context", "", "kubectl context name")
 	flags.BoolVar(&options.Status, "status", false, "scan the current or specified namespace and wait for unhealthy pods to recover")
+	flags.BoolVar(&options.Versions, "versions", false, "list image tags for every pod container in the current or specified namespace")
 	flags.DurationVar(&options.StatusInterval, "status-interval", core.DefaultStatusInterval, "delay between status scans")
 	flags.DurationVar(&options.StatusTimeout, "status-timeout", core.DefaultStatusTimeout, "maximum status recovery wait")
 	flags.StringVar(&options.Selector, "selector", "", "label selector override")
