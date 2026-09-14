@@ -65,6 +65,26 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 		return 1
 	}
 	runner := kube.NewRunner(options.Namespace, options.Context)
+	if options.Versions {
+		if options.Status {
+			fmt.Fprintln(stderr, "use either --versions or --status, not both")
+			return 2
+		}
+		if options.Target != "" {
+			fmt.Fprintln(stderr, "--versions scans a namespace and cannot be combined with a target")
+			return 2
+		}
+		namespace := options.Namespace
+		if namespace == "" {
+			_, namespace, err = runner.CurrentContext(ctx)
+			if err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
+			}
+		}
+		runner.Namespace = namespace
+		return runner.RunVersions(ctx, namespace, stdout)
+	}
 	if options.Status {
 		if options.Target != "" {
 			fmt.Fprintln(stderr, "--status scans a namespace and cannot be combined with a target")

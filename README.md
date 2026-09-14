@@ -41,6 +41,7 @@ tailg 'example-*' default --tile-windows
 tailg 'web-api,job-worker' default --split-panes
 tailg --namespace default
 tailg --status --namespace default
+tailg --versions
 tailg example-app default --dump
 tailg deployment/example-app default --deployment-dump
 tailg troubleshoot example-app default
@@ -126,6 +127,13 @@ On Windows, `tailg --namespace default` opens one tab per pod. Add
 `--split-panes` on a multi-pod target to create one pane per pod. Child sessions
 preserve context, container selection, time window, filters, formatting, and
 heartbeat settings.
+
+## Image versions
+
+`tailg --versions` prints the configured image tag for every regular, init, and
+ephemeral container in every pod in the current namespace. Use `--namespace` or
+`--context` to select another namespace or cluster. Digest-pinned images show
+their digest instead of an inferred tag.
 
 ## Status and diagnostics
 
