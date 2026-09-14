@@ -42,6 +42,7 @@ tailg 'web-api,job-worker' default --split-panes
 tailg --namespace default
 tailg --status --namespace default
 tailg --versions
+tailg --versions --context tkgs-qa --context tkgs-dev
 tailg example-app default --dump
 tailg deployment/example-app default --deployment-dump
 tailg troubleshoot example-app default
@@ -134,6 +135,14 @@ heartbeat settings.
 ephemeral container in every pod in the current namespace. Use `--namespace` or
 `--context` to select another namespace or cluster. Digest-pinned images show
 their digest instead of an inferred tag.
+
+Repeat `--context` to compare environments. The comparison groups replica pods
+by workload and container, then prints only differing tags, mixed rollout tags,
+or containers missing from a context:
+
+```sh
+tailg --versions --context tkgs-qa --context tkgs-dev
+```
 
 ## Status and diagnostics
 
