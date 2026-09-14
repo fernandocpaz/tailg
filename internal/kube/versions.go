@@ -14,6 +14,7 @@ type ImageVersion struct {
 	Type      string
 	Container string
 	Tag       string
+	ImageID   string
 	Image     string
 }
 
@@ -36,9 +37,10 @@ func PodImageVersions(payload map[string]any) []ImageVersion {
 		podName := stringValue(mapValue(pod["metadata"])["name"])
 		workload, _ := appIdentity(pod)
 		spec := mapValue(pod["spec"])
-		result = appendImageVersions(result, podName, workload, "init", spec["initContainers"])
-		result = appendImageVersions(result, podName, workload, "app", spec["containers"])
-		result = appendImageVersions(result, podName, workload, "ephemeral", spec["ephemeralContainers"])
+		status := mapValue(pod["status"])
+		result = appendImageVersions(result, podName, workload, "init", spec["initContainers"], containerImageIDs(status["initContainerStatuses"]))
+		result = appendImageVersions(result, podName, workload, "app", spec["containers"], containerImageIDs(status["containerStatuses"]))
+		result = appendImageVersions(result, podName, workload, "ephemeral", spec["ephemeralContainers"], containerImageIDs(status["ephemeralContainerStatuses"]))
 	}
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].Pod != result[j].Pod {
@@ -52,20 +54,45 @@ func PodImageVersions(payload map[string]any) []ImageVersion {
 	return result
 }
 
-func appendImageVersions(result []ImageVersion, podName, workload, containerType string, containers any) []ImageVersion {
+func appendImageVersions(result []ImageVersion, podName, workload, containerType string, containers any, imageIDs map[string]string) []ImageVersion {
 	for _, rawContainer := range sliceValue(containers) {
 		container := mapValue(rawContainer)
+		name := stringValue(container["name"])
 		image := stringValue(container["image"])
 		result = append(result, ImageVersion{
 			Pod:       valueOrUnknown(podName),
 			Workload:  valueOrUnknown(workload),
 			Type:      containerType,
-			Container: valueOrUnknown(stringValue(container["name"])),
+			Container: valueOrUnknown(name),
 			Tag:       imageTag(image),
+			ImageID:   valueOrUnavailable(imageIDs[name]),
 			Image:     valueOrUnknown(image),
 		})
 	}
 	return result
+}
+
+func containerImageIDs(statuses any) map[string]string {
+	result := map[string]string{}
+	for _, rawStatus := range sliceValue(statuses) {
+		status := mapValue(rawStatus)
+		name := stringValue(status["name"])
+		if name != "" {
+			result[name] = normalizeImageID(stringValue(status["imageID"]))
+		}
+	}
+	return result
+}
+
+func normalizeImageID(imageID string) string {
+	imageID = strings.TrimSpace(imageID)
+	if at := strings.LastIndex(imageID, "@"); at >= 0 && at+1 < len(imageID) {
+		return imageID[at+1:]
+	}
+	if scheme := strings.Index(imageID, "://"); scheme >= 0 {
+		imageID = imageID[scheme+3:]
+	}
+	return imageID
 }
 
 func imageTypeOrder(containerType string) int {
@@ -104,35 +131,35 @@ func ImageVersionsReport(payload map[string]any, namespace string) string {
 
 	rows := make([][]string, 0, len(versions))
 	for _, version := range versions {
-		rows = append(rows, []string{version.Pod, version.Type, version.Container, version.Tag, version.Image})
+		rows = append(rows, []string{version.Pod, version.Type, version.Container, version.Tag, version.ImageID, version.Image})
 	}
 	report.WriteString("\n")
-	writeImageGrid(&report, []string{"POD", "TYPE", "CONTAINER", "TAG / DIGEST", "IMAGE"}, rows)
+	writeImageGrid(&report, []string{"POD", "TYPE", "CONTAINER", "TAG", "IMAGE ID", "IMAGE"}, rows)
 	return report.String()
 }
 
 func ImageVersionDifferencesReport(snapshots []ImageVersionSnapshot) string {
 	contexts := make([]string, 0, len(snapshots))
-	versionsByKey := map[imageComparisonKey]map[string]map[string]bool{}
+	imageIDsByKey := map[imageComparisonKey]map[string]map[string]bool{}
 	for _, snapshot := range snapshots {
 		contexts = append(contexts, snapshot.Context)
 		for _, version := range snapshot.Versions {
 			key := imageComparisonKey{Workload: version.Workload, Type: version.Type, Container: version.Container}
-			if versionsByKey[key] == nil {
-				versionsByKey[key] = map[string]map[string]bool{}
+			if imageIDsByKey[key] == nil {
+				imageIDsByKey[key] = map[string]map[string]bool{}
 			}
-			if versionsByKey[key][snapshot.Context] == nil {
-				versionsByKey[key][snapshot.Context] = map[string]bool{}
+			if imageIDsByKey[key][snapshot.Context] == nil {
+				imageIDsByKey[key][snapshot.Context] = map[string]bool{}
 			}
-			versionsByKey[key][snapshot.Context][version.Tag] = true
+			imageIDsByKey[key][snapshot.Context][version.ImageID] = true
 		}
 	}
 
-	keys := make([]imageComparisonKey, 0, len(versionsByKey))
-	for key := range versionsByKey {
+	keys := make([]imageComparisonKey, 0, len(imageIDsByKey))
+	for key := range imageIDsByKey {
 		values := make([]string, len(contexts))
 		for i, contextName := range contexts {
-			values[i] = joinedImageTags(versionsByKey[key][contextName])
+			values[i] = joinedImageIDs(imageIDsByKey[key][contextName])
 		}
 		if differingValues(values) {
 			keys = append(keys, key)
@@ -149,13 +176,13 @@ func ImageVersionDifferencesReport(snapshots []ImageVersionSnapshot) string {
 	})
 
 	var report strings.Builder
-	report.WriteString("IMAGE DIFFERENCES")
+	report.WriteString("IMAGE ID DIFFERENCES")
 	for _, snapshot := range snapshots {
 		fmt.Fprintf(&report, " | %s=%s", snapshot.Context, valueOrUnknown(snapshot.Namespace))
 	}
 	fmt.Fprintf(&report, " | mismatches=%d\n", len(keys))
 	if len(keys) == 0 {
-		report.WriteString("\nAll compared workload container image versions match.\n")
+		report.WriteString("\nAll compared workload container image IDs match.\n")
 		return report.String()
 	}
 
@@ -164,7 +191,7 @@ func ImageVersionDifferencesReport(snapshots []ImageVersionSnapshot) string {
 	for _, key := range keys {
 		row := []string{key.Workload, key.Type, key.Container}
 		for _, contextName := range contexts {
-			row = append(row, joinedImageTags(versionsByKey[key][contextName]))
+			row = append(row, joinedImageIDs(imageIDsByKey[key][contextName]))
 		}
 		rows = append(rows, row)
 	}
@@ -173,13 +200,13 @@ func ImageVersionDifferencesReport(snapshots []ImageVersionSnapshot) string {
 	return report.String()
 }
 
-func joinedImageTags(tags map[string]bool) string {
-	if len(tags) == 0 {
+func joinedImageIDs(imageIDs map[string]bool) string {
+	if len(imageIDs) == 0 {
 		return "missing"
 	}
-	values := make([]string, 0, len(tags))
-	for tag := range tags {
-		values = append(values, tag)
+	values := make([]string, 0, len(imageIDs))
+	for imageID := range imageIDs {
+		values = append(values, imageID)
 	}
 	sort.Strings(values)
 	return strings.Join(values, ", ")
@@ -283,6 +310,13 @@ func RunVersionComparison(ctx context.Context, contexts []string, namespace stri
 func valueOrUnknown(value string) string {
 	if value == "" {
 		return "unknown"
+	}
+	return value
+}
+
+func valueOrUnavailable(value string) string {
+	if value == "" {
+		return "unavailable"
 	}
 	return value
 }

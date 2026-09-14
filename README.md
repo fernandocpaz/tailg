@@ -131,14 +131,16 @@ heartbeat settings.
 
 ## Image versions
 
-`tailg --versions` prints the configured image tag for every regular, init, and
-ephemeral container in every pod in the current namespace. Use `--namespace` or
-`--context` to select another namespace or cluster. Digest-pinned images show
-their digest instead of an inferred tag.
+`tailg --versions` prints the configured tag and the running image ID for every
+regular, init, and ephemeral container in the current namespace. The image ID is
+normalized to its immutable digest when the runtime provides one. Use
+`--namespace` or `--context` to select another namespace or cluster.
 
 Repeat `--context` to compare environments. The comparison groups replica pods
-by workload and container, then prints only differing tags, mixed rollout tags,
-or containers missing from a context:
+by workload and container, then compares the running image IDs—not tags. It
+therefore detects different builds even when both environments use `latest`.
+Only differing IDs, mixed rollout IDs, unavailable IDs, or containers missing
+from a context are printed:
 
 ```sh
 tailg --versions --context tkgs-qa --context tkgs-dev
