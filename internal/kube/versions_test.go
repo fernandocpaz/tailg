@@ -86,7 +86,7 @@ func TestImageVersionsReportIsReadableAndHandlesEmptyNamespace(t *testing.T) {
 		},
 	}}
 	report := ImageVersionsReport(payload, "jobs")
-	for _, expected := range []string{"IMAGE VERSIONS | namespace=jobs | pods=1 | containers=1", "| POD", "| TYPE", "| IMAGE ID", "worker-2", "worker", "latest", "sha256:worker7", "example/worker:latest"} {
+	for _, expected := range []string{"IMAGE VERSIONS | namespace=jobs | pods=1 | containers=1", "| POD", "| CONTAINER", "| IMAGE ID", "worker-2", "worker", "latest", "sha256:worker7", "example/worker:latest"} {
 		if !strings.Contains(report, expected) {
 			t.Fatalf("missing %q in report:\n%s", expected, report)
 		}
@@ -170,7 +170,7 @@ func TestAnyLatestForcesImageIDComparisonAcrossContexts(t *testing.T) {
 		},
 	}
 	report := ImageVersionDifferencesReport(snapshots)
-	for _, expected := range []string{"mismatches=1", "different-build", "COMPARE BY", "IMAGE ID", "sha256:old", "sha256:new"} {
+	for _, expected := range []string{"mismatches=1", "different-build", "COMPARE", "IMAGE ID", "sha256:old", "sha256:new"} {
 		if !strings.Contains(report, expected) {
 			t.Fatalf("missing %q in report:\n%s", expected, report)
 		}

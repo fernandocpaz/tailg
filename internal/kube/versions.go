@@ -131,10 +131,10 @@ func ImageVersionsReport(payload map[string]any, namespace string) string {
 
 	rows := make([][]string, 0, len(versions))
 	for _, version := range versions {
-		rows = append(rows, []string{version.Pod, version.Type, version.Container, version.Tag, version.ImageID, version.Image})
+		rows = append(rows, []string{version.Pod, version.Container, version.Tag, version.ImageID, version.Image})
 	}
 	report.WriteString("\n")
-	writeImageGrid(&report, []string{"POD", "TYPE", "CONTAINER", "TAG", "IMAGE ID", "IMAGE"}, rows)
+	writeImageGrid(&report, []string{"POD", "CONTAINER", "TAG", "IMAGE ID", "IMAGE"}, rows)
 	return report.String()
 }
 
@@ -184,7 +184,7 @@ func ImageVersionDifferencesReport(snapshots []ImageVersionSnapshot) string {
 		return report.String()
 	}
 
-	headings := append([]string{"WORKLOAD", "TYPE", "CONTAINER", "COMPARE BY"}, contexts...)
+	headings := append([]string{"WORKLOAD", "CONTAINER", "COMPARE"}, contexts...)
 	rows := make([][]string, 0, len(keys))
 	for _, key := range keys {
 		useImageID := comparisonUsesImageID(versionsByKey[key])
@@ -192,7 +192,7 @@ func ImageVersionDifferencesReport(snapshots []ImageVersionSnapshot) string {
 		if useImageID {
 			basis = "IMAGE ID"
 		}
-		row := []string{key.Workload, key.Type, key.Container, basis}
+		row := []string{key.Workload, key.Container, basis}
 		for _, contextName := range contexts {
 			row = append(row, joinedComparisonValues(versionsByKey[key][contextName], useImageID))
 		}

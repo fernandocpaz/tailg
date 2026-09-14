@@ -141,7 +141,7 @@ by workload and container. If none of the matching pods uses `latest`, tags
 are compared and displayed directly. If any matching pod in any context uses
 `latest` (including an omitted tag), all pods in that row are compared by
 running Image ID. This keeps normal rows readable while correctly comparing a
-numbered tag against `latest`. The grid includes a `COMPARE BY` column and
+numbered tag against `latest`. The grid includes a `COMPARE` column and
 prints only differing versions, mixed rollout versions, unavailable Image IDs,
 or containers missing from a context:
 
