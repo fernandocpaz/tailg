@@ -19,11 +19,12 @@ func NewCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) 
 	options := Options{Tail: core.DefaultTailLines, BufferLines: core.DefaultBufferLines, RefreshInterval: 2_000_000_000, HeartbeatWindow: core.DefaultHeartbeatWindow, StatusInterval: core.DefaultStatusInterval, StatusTimeout: core.DefaultStatusTimeout, Container: ".*", LiveFilter: true}
 	var showPod, noShowPod, noLiveFilter bool
 	var deployDumpAlias string
+	var contexts []string
 	var refreshSeconds int
 	command := &cobra.Command{
 		Use: "tailg [target] [namespace]", Short: "Human-friendly Kubernetes log tailer built in Go", SilenceUsage: true, SilenceErrors: true, Args: cobra.MaximumNArgs(2),
 		Long:    "tailg follows Kubernetes logs across pods, provides synchronized live filtering, heartbeat diagnostics, resource inspection, status recovery monitoring, and Windows Terminal layouts.",
-		Example: strings.Join([]string{"tailg example-app default", "tailg 'example-*' default --tile-windows", "tailg example-app default --since 4d", "tailg --status --namespace default", "tailg --versions"}, "\n"),
+		Example: strings.Join([]string{"tailg example-app default", "tailg 'example-*' default --tile-windows", "tailg example-app default --since 4d", "tailg --status --namespace default", "tailg --versions", "tailg --versions --context tkgs-qa --context tkgs-dev"}, "\n"),
 		Version: Version,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 && !options.Status && !options.Versions && options.Namespace == "" {
@@ -34,6 +35,13 @@ func NewCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) 
 			}
 			if len(args) > 1 {
 				options.LegacyNamespace = args[1]
+			}
+			if len(contexts) > 1 && !options.Versions {
+				return fmt.Errorf("--context may be repeated only with --versions")
+			}
+			options.VersionContexts = append([]string(nil), contexts...)
+			if len(contexts) == 1 {
+				options.Context = contexts[0]
 			}
 			options.TailSet = cmd.Flags().Changed("tail")
 			options.RefreshInterval = time.Duration(refreshSeconds) * time.Second
@@ -77,7 +85,7 @@ func NewCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) 
 	}
 	flags := command.Flags()
 	flags.StringVarP(&options.Namespace, "namespace", "n", "", "Kubernetes namespace; without a target, open every pod in Windows Terminal")
-	flags.StringVar(&options.Context, "context", "", "kubectl context name")
+	flags.StringArrayVar(&contexts, "context", nil, "kubectl context name; repeat with --versions to compare environments")
 	flags.BoolVar(&options.Status, "status", false, "scan the current or specified namespace and wait for unhealthy pods to recover")
 	flags.BoolVar(&options.Versions, "versions", false, "list image tags for every pod container in the current or specified namespace")
 	flags.DurationVar(&options.StatusInterval, "status-interval", core.DefaultStatusInterval, "delay between status scans")

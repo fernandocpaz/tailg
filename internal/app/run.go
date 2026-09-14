@@ -74,6 +74,9 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 			fmt.Fprintln(stderr, "--versions scans a namespace and cannot be combined with a target")
 			return 2
 		}
+		if len(options.VersionContexts) > 1 {
+			return kube.RunVersionComparison(ctx, options.VersionContexts, options.Namespace, stdout)
+		}
 		namespace := options.Namespace
 		if namespace == "" {
 			_, namespace, err = runner.CurrentContext(ctx)

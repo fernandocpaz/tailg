@@ -7,6 +7,7 @@ type Options struct {
 	LegacyNamespace    string
 	Namespace          string
 	Context            string
+	VersionContexts     []string
 	Status             bool
 	Versions           bool
 	StatusInterval     time.Duration
