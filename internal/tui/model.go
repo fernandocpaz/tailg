@@ -597,12 +597,7 @@ func (m model) View() string {
 	}
 	records := m.state.Records()
 	height := m.logHeight()
-	start := max(0, len(records)-height-m.scroll)
-	end := min(len(records), start+height)
-	visible := make([]string, 0, height)
-	for index := start; index < end; index++ {
-		visible = append(visible, renderRecordRow(records[index], m.state.Highlight(), index == m.selected, m.width, m.config.Formatter.ShowPod, m.config.Formatter.Color))
-	}
+	visible := renderLogTimelineRows(records, m.state.Highlight(), m.selected, height, m.width, m.config.Formatter.ShowPod, m.config.Formatter.Color, m.followsLive, time.Now())
 	for len(visible) < height {
 		visible = append(visible, "")
 	}
