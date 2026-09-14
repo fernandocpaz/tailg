@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestPodImageVersionsIncludesEveryContainerTypeAndExtractsTags(t *testing.T) {
+func TestPodImageVersionsIncludesEveryContainerTypeAndRunningImageIDs(t *testing.T) {
 	payload := map[string]any{"items": []any{
 		map[string]any{
 			"metadata": map[string]any{
@@ -16,9 +16,18 @@ func TestPodImageVersionsIncludesEveryContainerTypeAndExtractsTags(t *testing.T)
 				"initContainers": []any{map[string]any{"name": "migrate", "image": "registry:5000/tools/migrate:42"}},
 				"containers": []any{
 					map[string]any{"name": "sidecar", "image": "otel/collector"},
-					map[string]any{"name": "api", "image": "registry.example.com/team/api:20260914"},
+					map[string]any{"name": "api", "image": "registry.example.com/team/api:latest"},
 				},
-				"ephemeralContainers": []any{map[string]any{"name": "debug", "image": "busybox@sha256:abcdef"}},
+				"ephemeralContainers": []any{map[string]any{"name": "debug", "image": "busybox:latest"}},
+			},
+			"status": map[string]any{
+				"initContainerStatuses": []any{
+					map[string]any{"name": "migrate", "imageID": "docker-pullable://registry:5000/tools/migrate@sha256:init123"},
+				},
+				"containerStatuses": []any{
+					map[string]any{"name": "api", "imageID": "containerd://sha256:api456"},
+					map[string]any{"name": "sidecar", "imageID": "docker.io/otel/collector@sha256:side789"},
+				},
 			},
 		},
 	}}
@@ -26,22 +35,41 @@ func TestPodImageVersionsIncludesEveryContainerTypeAndExtractsTags(t *testing.T)
 	if len(versions) != 4 {
 		t.Fatalf("versions=%#v", versions)
 	}
-	got := map[string]string{}
+	got := map[string]ImageVersion{}
 	for _, version := range versions {
-		got[version.Type+"/"+version.Container] = version.Tag
+		got[version.Type+"/"+version.Container] = version
 		if version.Workload != "api" {
 			t.Errorf("workload=%q, want api", version.Workload)
 		}
 	}
 	for key, expected := range map[string]string{
-		"init/migrate": "42", "app/api": "20260914", "app/sidecar": "latest", "ephemeral/debug": "sha256:abcdef",
+		"init/migrate": "sha256:init123",
+		"app/api": "sha256:api456",
+		"app/sidecar": "sha256:side789",
+		"ephemeral/debug": "unavailable",
 	} {
-		if got[key] != expected {
-			t.Errorf("%s tag=%q, want %q", key, got[key], expected)
+		if got[key].ImageID != expected {
+			t.Errorf("%s image ID=%q, want %q", key, got[key].ImageID, expected)
 		}
+	}
+	if got["app/api"].Tag != "latest" {
+		t.Fatalf("configured tag=%q, want latest", got["app/api"].Tag)
 	}
 	if versions[0].Type != "init" || versions[1].Container != "api" || versions[2].Container != "sidecar" || versions[3].Type != "ephemeral" {
 		t.Fatalf("unexpected stable ordering: %#v", versions)
+	}
+}
+
+func TestNormalizeImageIDHandlesCommonRuntimeFormats(t *testing.T) {
+	for input, expected := range map[string]string{
+		"docker-pullable://registry.example.com/team/api@sha256:abc": "sha256:abc",
+		"docker://sha256:def": "sha256:def",
+		"containerd://sha256:ghi": "sha256:ghi",
+		"sha256:jkl": "sha256:jkl",
+	} {
+		if got := normalizeImageID(input); got != expected {
+			t.Errorf("normalizeImageID(%q)=%q, want %q", input, got, expected)
+		}
 	}
 }
 
@@ -50,12 +78,15 @@ func TestImageVersionsReportIsReadableAndHandlesEmptyNamespace(t *testing.T) {
 		map[string]any{
 			"metadata": map[string]any{"name": "worker-2"},
 			"spec": map[string]any{"containers": []any{
-				map[string]any{"name": "worker", "image": "example/worker:v7"},
+				map[string]any{"name": "worker", "image": "example/worker:latest"},
+			}},
+			"status": map[string]any{"containerStatuses": []any{
+				map[string]any{"name": "worker", "imageID": "example/worker@sha256:worker7"},
 			}},
 		},
 	}}
 	report := ImageVersionsReport(payload, "jobs")
-	for _, expected := range []string{"IMAGE VERSIONS | namespace=jobs | pods=1 | containers=1", "| POD", "| TYPE", "TAG / DIGEST", "worker-2", "worker", "v7", "example/worker:v7"} {
+	for _, expected := range []string{"IMAGE VERSIONS | namespace=jobs | pods=1 | containers=1", "| POD", "| TYPE", "| IMAGE ID", "worker-2", "worker", "latest", "sha256:worker7", "example/worker:latest"} {
 		if !strings.Contains(report, expected) {
 			t.Fatalf("missing %q in report:\n%s", expected, report)
 		}
@@ -67,44 +98,44 @@ func TestImageVersionsReportIsReadableAndHandlesEmptyNamespace(t *testing.T) {
 	}
 }
 
-func TestImageVersionDifferencesReportShowsOnlyMismatchesAndMixedRollouts(t *testing.T) {
+func TestImageVersionDifferencesReportUsesIDsWhenTagsAreLatest(t *testing.T) {
 	qa := ImageVersionSnapshot{
 		Context: "tkgs-qa", Namespace: "apollo",
 		Versions: []ImageVersion{
-			{Workload: "encounter", Type: "app", Container: "api", Tag: "104"},
-			{Workload: "patient", Type: "app", Container: "api", Tag: "210"},
-			{Workload: "audit", Type: "app", Container: "worker", Tag: "8"},
+			{Workload: "encounter", Type: "app", Container: "api", Tag: "latest", ImageID: "sha256:aaa"},
+			{Workload: "patient", Type: "app", Container: "api", Tag: "latest", ImageID: "sha256:ccc"},
+			{Workload: "audit", Type: "app", Container: "worker", Tag: "latest", ImageID: "sha256:ddd"},
 		},
 	}
 	dev := ImageVersionSnapshot{
 		Context: "tkgs-dev", Namespace: "apollo",
 		Versions: []ImageVersion{
-			{Workload: "encounter", Type: "app", Container: "api", Tag: "105"},
-			{Workload: "encounter", Type: "app", Container: "api", Tag: "106"},
-			{Workload: "patient", Type: "app", Container: "api", Tag: "210"},
+			{Workload: "encounter", Type: "app", Container: "api", Tag: "latest", ImageID: "sha256:bbb"},
+			{Workload: "encounter", Type: "app", Container: "api", Tag: "latest", ImageID: "sha256:eee"},
+			{Workload: "patient", Type: "app", Container: "api", Tag: "latest", ImageID: "sha256:ccc"},
 		},
 	}
 	report := ImageVersionDifferencesReport([]ImageVersionSnapshot{qa, dev})
 	for _, expected := range []string{
-		"IMAGE DIFFERENCES | tkgs-qa=apollo | tkgs-dev=apollo | mismatches=2",
-		"WORKLOAD", "tkgs-qa", "tkgs-dev", "encounter", "104", "105, 106", "audit", "missing",
+		"IMAGE ID DIFFERENCES | tkgs-qa=apollo | tkgs-dev=apollo | mismatches=2",
+		"WORKLOAD", "tkgs-qa", "tkgs-dev", "encounter", "sha256:aaa", "sha256:bbb, sha256:eee", "audit", "missing",
 	} {
 		if !strings.Contains(report, expected) {
 			t.Fatalf("missing %q in report:\n%s", expected, report)
 		}
 	}
 	if strings.Contains(report, "patient") {
-		t.Fatalf("matching workload should be omitted:\n%s", report)
+		t.Fatalf("matching image ID should be omitted:\n%s", report)
 	}
 }
 
-func TestImageVersionDifferencesReportConfirmsMatch(t *testing.T) {
+func TestImageVersionDifferencesReportConfirmsIDMatch(t *testing.T) {
 	snapshots := []ImageVersionSnapshot{
-		{Context: "qa", Namespace: "api", Versions: []ImageVersion{{Workload: "patient", Type: "app", Container: "api", Tag: "10"}}},
-		{Context: "dev", Namespace: "api", Versions: []ImageVersion{{Workload: "patient", Type: "app", Container: "api", Tag: "10"}}},
+		{Context: "qa", Namespace: "api", Versions: []ImageVersion{{Workload: "patient", Type: "app", Container: "api", Tag: "10", ImageID: "sha256:same"}}},
+		{Context: "dev", Namespace: "api", Versions: []ImageVersion{{Workload: "patient", Type: "app", Container: "api", Tag: "latest", ImageID: "sha256:same"}}},
 	}
 	report := ImageVersionDifferencesReport(snapshots)
-	if !strings.Contains(report, "mismatches=0") || !strings.Contains(report, "All compared workload container image versions match.") {
+	if !strings.Contains(report, "mismatches=0") || !strings.Contains(report, "All compared workload container image IDs match.") {
 		t.Fatalf("unexpected matching report: %s", report)
 	}
 }
