@@ -14,10 +14,12 @@ import (
 )
 
 type LogOptions struct {
-	Since  string
-	Tail   int
-	Follow bool
-	Cursor *core.LogCursor
+	Since            string
+	Tail             int
+	Follow           bool
+	Cursor           *core.LogCursor
+	Visible          func(string) bool
+	InitialScanLimit int
 }
 
 func (r Runner) Stream(ctx context.Context, item core.InventoryItem, options LogOptions, output chan<- core.LogEvent) (streamErr error) {
@@ -27,6 +29,21 @@ func (r Runner) Stream(ctx context.Context, item core.InventoryItem, options Log
 		}
 	}()
 	replay := options.Cursor.Resume()
+	sendLogEvent(ctx, output, core.LogEvent{Pod: item.Pod, Container: item.Container, Started: true})
+	if options.Cursor != nil && replay.Since.IsZero() && options.Follow && options.Tail > 0 && options.Visible != nil {
+		initial, err := r.visibleBackfill(ctx, item, options)
+		if err != nil {
+			return err
+		}
+		for _, event := range initial {
+			event.ReceivedAt = time.Now()
+			if !sendLogEvent(ctx, output, event) {
+				return ctx.Err()
+			}
+			options.Cursor.Observe(event)
+		}
+		replay = options.Cursor.Resume()
+	}
 	args := streamArgs(item, options, replay.Since)
 	cmd := r.Command(ctx, args...)
 	stdout, err := cmd.StdoutPipe()
@@ -45,8 +62,6 @@ func (r Runner) Stream(ctx context.Context, item core.InventoryItem, options Log
 		stderrBytes, _ := io.ReadAll(stderr)
 		stderrDone <- stderrBytes
 	}()
-	sendLogEvent(ctx, output, core.LogEvent{Pod: item.Pod, Container: item.Container, Started: true})
-
 	scanner := bufio.NewScanner(stdout)
 	buffer := make([]byte, 64*1024)
 	scanner.Buffer(buffer, 4*1024*1024)
@@ -78,6 +93,60 @@ func (r Runner) Stream(ctx context.Context, item core.InventoryItem, options Log
 		return fmt.Errorf("kubectl logs %s/%s: %s", item.Pod, item.Container, message)
 	}
 	return nil
+}
+
+func (r Runner) visibleBackfill(ctx context.Context, item core.InventoryItem, options LogOptions) ([]core.LogEvent, error) {
+	target := options.Tail
+	limit := options.InitialScanLimit
+	if limit < target {
+		limit = target
+	}
+	tail := target
+	var events []core.LogEvent
+	for {
+		var err error
+		events, err = r.Snapshot(ctx, item, LogOptions{Since: options.Since, Tail: tail})
+		if err != nil {
+			return nil, err
+		}
+		visible := 0
+		for _, event := range events {
+			if options.Visible(event.Message) {
+				visible++
+			}
+		}
+		if visible >= target || len(events) < tail || tail >= limit {
+			break
+		}
+		next := tail * 2
+		if next > limit || next <= tail {
+			next = limit
+		}
+		tail = next
+	}
+	return trimVisibleBackfill(events, target, options.Visible), nil
+}
+
+func trimVisibleBackfill(events []core.LogEvent, target int, visible func(string) bool) []core.LogEvent {
+	if len(events) == 0 || target <= 0 || visible == nil {
+		return events
+	}
+	start := len(events)
+	remaining := target
+	for index := len(events) - 1; index >= 0; index-- {
+		if visible(events[index].Message) {
+			remaining--
+			start = index
+			if remaining == 0 {
+				break
+			}
+		}
+	}
+	if start == len(events) {
+		// Preserve the newest timestamp so the follow stream can resume without a gap.
+		return events[len(events)-1:]
+	}
+	return events[start:]
 }
 
 func streamArgs(item core.InventoryItem, options LogOptions, sinceTime time.Time) []string {

@@ -23,7 +23,6 @@ type Options struct {
 	HeartbeatWindow    time.Duration
 	Include            []string
 	Exclude            []string
-	HideProbes         bool
 	NoDefaultExclude   bool
 	NoFollow           bool
 	DumpRequested      bool
