@@ -287,7 +287,13 @@ pickAgain:
 	title := logTitle(items, effectiveNamespace, effectiveContext, resolvedTarget)
 	err = tui.Run(ctx, tui.Config{Title: title, Namespace: effectiveNamespace, KubeContext: effectiveContext, Target: resolvedTarget, Items: items, Formatter: formatter, HeartbeatWindow: options.HeartbeatWindow, RefreshInterval: options.RefreshInterval, BufferLines: options.BufferLines, FilterFile: options.FilterFile,
 		Stream: func(streamCtx context.Context, item core.InventoryItem, cursor *core.LogCursor, events chan<- core.LogEvent) error {
-			return runner.Stream(streamCtx, item, kube.LogOptions{Since: options.Since, Tail: options.Tail, Follow: true, Cursor: cursor}, events)
+			visible := func(message string) bool {
+				return len(formatter.Format(item.Pod, item.Container, message, true)) > 0
+			}
+			return runner.Stream(streamCtx, item, kube.LogOptions{
+				Since: options.Since, Tail: options.Tail, Follow: true, Cursor: cursor,
+				Visible: visible, InitialScanLimit: options.BufferLines,
+			}, events)
 		}, Inventory: inventoryProvider,
 		Search: func(searchCtx context.Context, query string) ([]string, error) {
 			current, inventoryErr := inventoryProvider(searchCtx)
