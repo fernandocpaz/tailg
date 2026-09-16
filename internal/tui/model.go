@@ -185,6 +185,9 @@ func Run(parent context.Context, config Config) error {
 
 func (m model) Init() tea.Cmd {
 	commands := []tea.Cmd{waitForEvent(m.events), waitForInventory(m.inventory), sharedTick()}
+	if strings.TrimSpace(m.config.Title) != "" {
+		commands = append(commands, tea.SetWindowTitle(m.config.Title))
+	}
 	if m.config.Search != nil && strings.TrimSpace(m.input.Value()) != "" {
 		commands = append(commands, m.searchCommand(m.generation, m.input.Value()))
 	}
@@ -577,15 +580,17 @@ func (m model) renderHeader() string {
 	if podCount == 1 {
 		podLabel = "1 pod"
 	}
-	left := strings.Join([]string{
-		renderWithColor(headerStyle, "tailg", m.config.Formatter.Color),
+	headerParts := []string{renderWithColor(headerStyle, "tailg", m.config.Formatter.Color)}
+	if m.config.KubeContext != "" {
+		// Keep context near the front so it remains visible when split panes are narrow.
+		headerParts = append(headerParts, renderWithColor(dimStyle, "context "+m.config.KubeContext, m.config.Formatter.Color))
+	}
+	headerParts = append(headerParts,
 		truncate(services, 32),
 		renderWithColor(dimStyle, namespace, m.config.Formatter.Color),
 		renderWithColor(dimStyle, podLabel, m.config.Formatter.Color),
-	}, "  ")
-	if m.width >= 110 && m.config.KubeContext != "" {
-		left += "  " + renderWithColor(dimStyle, "context "+m.config.KubeContext, m.config.Formatter.Color)
-	}
+	)
+	left := strings.Join(headerParts, "  ")
 
 	state := "● LIVE"
 	stateStyle := okStyle
