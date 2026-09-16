@@ -30,7 +30,7 @@ func (r Runner) Stream(ctx context.Context, item core.InventoryItem, options Log
 	}()
 	replay := options.Cursor.Resume()
 	sendLogEvent(ctx, output, core.LogEvent{Pod: item.Pod, Container: item.Container, Started: true})
-	if replay.Since.IsZero() && options.Follow && options.Tail > 0 && options.Visible != nil {
+	if options.Cursor != nil && replay.Since.IsZero() && options.Follow && options.Tail > 0 && options.Visible != nil {
 		initial, err := r.visibleBackfill(ctx, item, options)
 		if err != nil {
 			return err
