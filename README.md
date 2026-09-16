@@ -35,7 +35,6 @@ tailg example-app default --since 4d
 tailg example-app default --no-follow
 tailg example-app default --include 'request_id=12345'
 tailg example-app default --exclude 'debug|trace'
-tailg example-app default --hide-probes
 tailg example-app default --buffer-lines 100000
 tailg '*' default
 tailg 'example-*' default --tile-windows
@@ -60,12 +59,10 @@ new logs. Supplying `--since` without an explicit `--tail` reads every retained
 line in that window. Day values are converted for `kubectl`, so `--since 4d`
 becomes `--since 96h`.
 
-All log lines, including health, readiness, and liveness probe traffic, are
-shown by default so troubleshooting does not silently discard evidence. Pass
-`--hide-probes` to suppress traffic matching `health|ready|live`. Repeat
-`--exclude` to hide additional patterns, or use `--include` to retain only
-selected lines. Structured JSON properties appended to readable text are hidden
-unless `--detail` is set.
+Probe traffic matching `health|ready|live` is hidden by default. Repeat
+`--exclude` to hide additional patterns, use `--include` to retain only selected
+lines, or pass `--no-default-exclude` to show probe lines. Structured JSON
+properties appended to readable text are hidden unless `--detail` is set.
 
 ## Live view
 
