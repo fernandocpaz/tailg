@@ -120,6 +120,16 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 		return runner.RunStatus(ctx, namespace, statusOptions)
 	}
 
+	effectiveContext := options.Context
+	if effectiveContext == "" {
+		var contextErr error
+		effectiveContext, _, contextErr = runner.CurrentContext(ctx)
+		if contextErr != nil {
+			fmt.Fprintln(stderr, contextErr)
+			return 1
+		}
+	}
+
 	namespaceMode := options.Target == "" && options.Namespace != ""
 	if options.Target == "" && !namespaceMode {
 		fmt.Fprintln(stderr, "a target is required; use '*' for the app picker or --namespace to open every pod")
@@ -274,8 +284,8 @@ pickAgain:
 	if !options.LiveFilter {
 		return followPlain(ctx, runner, items, inventoryProvider, options, formatter, stdout, stderr)
 	}
-	title := logTitle(items, effectiveNamespace, options.Context, resolvedTarget)
-	err = tui.Run(ctx, tui.Config{Title: title, Namespace: effectiveNamespace, KubeContext: options.Context, Target: resolvedTarget, Items: items, Formatter: formatter, HeartbeatWindow: options.HeartbeatWindow, RefreshInterval: options.RefreshInterval, BufferLines: options.BufferLines, FilterFile: options.FilterFile,
+	title := logTitle(items, effectiveNamespace, effectiveContext, resolvedTarget)
+	err = tui.Run(ctx, tui.Config{Title: title, Namespace: effectiveNamespace, KubeContext: effectiveContext, Target: resolvedTarget, Items: items, Formatter: formatter, HeartbeatWindow: options.HeartbeatWindow, RefreshInterval: options.RefreshInterval, BufferLines: options.BufferLines, FilterFile: options.FilterFile,
 		Stream: func(streamCtx context.Context, item core.InventoryItem, cursor *core.LogCursor, events chan<- core.LogEvent) error {
 			return runner.Stream(streamCtx, item, kube.LogOptions{Since: options.Since, Tail: options.Tail, Follow: true, Cursor: cursor}, events)
 		}, Inventory: inventoryProvider,

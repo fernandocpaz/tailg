@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
@@ -326,6 +327,47 @@ func TestViewRendersOperationsConsoleLayout(t *testing.T) {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("view missing %q:\n%s", expected, view)
 		}
+	}
+}
+
+func TestNarrowLogWindowHeaderShowsContext(t *testing.T) {
+	m := model{
+		config: Config{
+			KubeContext: "tkgs-qa",
+			Namespace:   "apollo",
+			Formatter:   core.Formatter{Color: false},
+		},
+		items:       []core.InventoryItem{{Pod: "checkout-7d9", Container: "checkout-api"}},
+		width:       48,
+		followsLive: true,
+	}
+
+	header := m.renderHeader()
+	for _, expected := range []string{"tailg", "context tkgs-qa"} {
+		if !strings.Contains(header, expected) {
+			t.Fatalf("narrow header missing %q: %q", expected, header)
+		}
+	}
+	if width := lipgloss.Width(header); width > m.width {
+		t.Fatalf("header width = %d, want <= %d: %q", width, m.width, header)
+	}
+}
+
+func TestInitIncludesWindowTitleCommand(t *testing.T) {
+	m := model{
+		config:    Config{Title: "tailg | context=tkgs-qa"},
+		events:    make(chan core.LogEvent),
+		inventory: make(chan inventoryMsg),
+		state:     core.NewFilterState(10),
+		input:     textinput.New(),
+	}
+	command := m.Init()
+	batch, ok := command().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("Init command returned %T, want tea.BatchMsg", command())
+	}
+	if len(batch) != 4 {
+		t.Fatalf("Init batch has %d commands, want 4 including the window title", len(batch))
 	}
 }
 
