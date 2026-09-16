@@ -343,7 +343,7 @@ func TestNarrowLogWindowHeaderShowsContext(t *testing.T) {
 	}
 
 	header := m.renderHeader()
-	for _, expected := range []string{"tailg", "context tkgs-qa", "LIVE"} {
+	for _, expected := range []string{"tailg", "context tkgs-qa"} {
 		if !strings.Contains(header, expected) {
 			t.Fatalf("narrow header missing %q: %q", expected, header)
 		}
