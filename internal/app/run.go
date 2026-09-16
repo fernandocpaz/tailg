@@ -45,7 +45,10 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 		fmt.Fprintln(stderr, "Invalid regex:", err)
 		return 1
 	}
-	excludes := logExcludePatterns(options)
+	excludes := append([]string(nil), options.Exclude...)
+	if !options.NoDefaultExclude {
+		excludes = append(core.DefaultExcludePatterns, excludes...)
+	}
 	includePatterns, err := core.CompilePatterns(options.Include)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -461,9 +464,6 @@ func childArgs(options Options, namespace string) func(string) []string {
 		for _, value := range options.Include {
 			args = append(args, "--include", value)
 		}
-		if options.HideProbes {
-			args = append(args, "--hide-probes")
-		}
 		if options.NoDefaultExclude {
 			args = append(args, "--no-default-exclude")
 		}
@@ -489,14 +489,6 @@ func childArgs(options Options, namespace string) func(string) []string {
 		return args
 	}
 }
-func logExcludePatterns(options Options) []string {
-	excludes := append([]string(nil), options.Exclude...)
-	if options.HideProbes && !options.NoDefaultExclude {
-		excludes = append(append([]string(nil), core.DefaultExcludePatterns...), excludes...)
-	}
-	return excludes
-}
-
 func interactive(input io.Reader) bool {
 	file, ok := input.(*os.File)
 	if !ok {
