@@ -54,10 +54,13 @@ Targets may be Kubernetes resources, app names, case-insensitive wildcard app
 patterns, or comma-separated app names. Use `*` to select an app interactively.
 The namespace can be supplied positionally or with `--namespace`.
 
-Without `--since`, the last 500 lines per container are loaded before following
-new logs. Supplying `--since` without an explicit `--tail` reads every retained
-line in that window. Day values are converted for `kubectl`, so `--since 4d`
-becomes `--since 96h`.
+Without `--since`, tailg loads up to 500 visible lines per container before
+following new logs. When include/exclude rules remove most of the raw Kubernetes
+tail, tailg progressively scans older lines until it fills that visible history,
+reaches the start of retained logs, or reaches the `--buffer-lines` scan limit.
+Supplying `--since` without an explicit `--tail` reads every retained line in
+that window. Day values are converted for `kubectl`, so `--since 4d` becomes
+`--since 96h`.
 
 Probe traffic matching `health|ready|live` is hidden by default. Repeat
 `--exclude` to hide additional patterns, use `--include` to retain only selected
