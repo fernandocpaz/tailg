@@ -50,19 +50,23 @@ type IssueContext struct {
 }
 
 type Issue struct {
-	ID         string       `json:"id"`
-	Severity   string       `json:"severity"`
-	Kind       string       `json:"kind"`
-	Summary    string       `json:"summary"`
-	SearchTerm string       `json:"searchTerm"`
-	Service    string       `json:"service"`
-	Pods       []string     `json:"pods"`
-	Count      int          `json:"count"`
-	TotalCount int          `json:"totalCount"`
-	FirstSeen  string       `json:"firstSeen"`
-	LastSeen   string       `json:"lastSeen"`
-	Increasing bool         `json:"increasing"`
-	Context    IssueContext `json:"context"`
+	ID            string       `json:"id"`
+	Severity      string       `json:"severity"`
+	Kind          string       `json:"kind"`
+	Summary       string       `json:"summary"`
+	SearchTerm    string       `json:"searchTerm"`
+	Service       string       `json:"service"`
+	Pods          []string     `json:"pods"`
+	Count         int          `json:"count"`
+	TotalCount    int          `json:"totalCount"`
+	FirstSeen     string       `json:"firstSeen"`
+	LastSeen      string       `json:"lastSeen"`
+	Increasing    bool         `json:"increasing"`
+	New           bool         `json:"new"`
+	MaxDurationMs float64      `json:"maxDurationMs,omitempty"`
+	TraceID       string       `json:"traceId,omitempty"`
+	Endpoint      string       `json:"endpoint,omitempty"`
+	Context       IssueContext `json:"context"`
 }
 
 type Container struct {

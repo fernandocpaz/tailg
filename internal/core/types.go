@@ -8,6 +8,7 @@ const (
 	DefaultHeartbeatWindow = 15 * time.Minute
 	DefaultStatusInterval  = 5 * time.Second
 	DefaultStatusTimeout   = 10 * time.Minute
+	DefaultStatusLookback  = 2 * time.Hour
 	SearchContextLines     = 5
 )
 
