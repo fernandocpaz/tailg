@@ -3,16 +3,21 @@ package app
 import "time"
 
 type Options struct {
-	Target             string
-	LegacyNamespace    string
-	Namespace          string
-	Context            string
-	VersionContexts     []string
-	Status             bool
-	Versions           bool
-	StatusInterval     time.Duration
-	StatusTimeout      time.Duration
-	Selector           string
+	Target          string
+	LegacyNamespace string
+	Namespace       string
+	Context         string
+	VersionContexts []string
+	Status          bool
+	Versions        bool
+	StatusLookback  time.Duration
+	StatusInterval  time.Duration
+	StatusTimeout   time.Duration
+	Selector        string
+	// TracePods and TraceSelectors preserve the application scope that a
+	// split-pane child must use when loading cross-pod trace history.
+	TracePods          []string
+	TraceSelectors     []string
 	Container          string
 	Detail             bool
 	Tail               int

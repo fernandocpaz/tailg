@@ -26,6 +26,15 @@ go install github.com/fernandocpaz/tailg/cmd/tailg@latest
 Or download the binary for your platform from GitHub Releases and put it on
 your `PATH`.
 
+Check the installed version and source commit with `tailg version` or
+`tailg --version`. Release binaries also report their build time. To install
+the current main branch before a new release is tagged:
+
+```sh
+go install github.com/fernandocpaz/tailg/cmd/tailg@main
+tailg version
+```
+
 ## Usage
 
 ```sh
@@ -41,6 +50,7 @@ tailg 'example-*' default --tile-windows
 tailg 'web-api,job-worker' default --split-panes
 tailg --namespace default
 tailg --status --namespace default
+tailg --status 20 --namespace default
 tailg --versions
 tailg --versions --context tkgs-qa --context tkgs-dev
 tailg example-app default --dump
@@ -85,9 +95,17 @@ untracked or undated lines are preserved even if they might be repeats. Kubernet
 log rotation can still remove history before it is recovered.
 
 The header shows the service, namespace, pod count, and live connection state.
+Below it, a source bar shows the full pod and container for the selected log,
+wrapping long names. Before logs arrive, a single-pod view shows its pod name.
+In multi-pod views, row identifiers include the workload name and replica suffix.
 Log rows align timestamps, levels, and pod identifiers when space permits;
 matching text is highlighted and complete-history search progress appears next
 to the filter mode.
+
+The log timeline inserts non-selectable local-calendar separators such as
+`Today · 2026-09-18`, `1 day ago · 2026-09-17`, and
+`2 days ago · 2026-09-16`. The active date remains visible when the viewport
+starts inside a group, while live and paused views preserve their anchors.
 
 The header also shows receipt age (`recv`) and the age of the last received log
 (`log`) for a single stream. An old log received just now still shows its original
@@ -105,10 +123,12 @@ the view is paused or the service is quiet.
 | `F3` | Open the Issue Radar for grouped errors and warnings |
 | `F4` | Inspect per-container log freshness, replay counts and buffer usage |
 | `F5` | Open heartbeat diagnostics |
+| `F6` | Follow the selected request's trace across the selected workloads |
+| `F7` | Explain the selected pod's replica count and controller |
 | `Up` / `Down` | Move the selected log line |
 | `PageUp` / `PageDown` | Move by one screen |
 | `Home` / `End` | Jump to the start or resume live tailing |
-| `Enter` | Open the selected line; press again to copy |
+| `Enter` | Inspect the original log and metadata; press again to copy |
 | `Esc` | Close the current detail panel |
 | `Ctrl+C` / `Ctrl+Q` | Exit |
 
@@ -119,8 +139,55 @@ only after you explicitly open the selected Secret.
 The Issue Radar continuously groups error levels, HTTP 5xx responses, panics,
 exceptions, timeouts, connection failures, retries, and stream interruptions.
 It shows active issue and event counts without hiding the live logs. Select an
-issue and press `Enter` to load its complete-history context; press `C` in the
-radar to clear the current baseline.
+issue and press `Enter` to load its complete-history context. Issue text and
+service names wrap without truncation. Use `Up`/`Down` to select an issue and
+`PageUp`/`PageDown` to read an issue longer than the screen. HTTP requests
+taking **more than 250 ms**, including successful responses, get a `SLOW` flag
+and an endpoint group with counts, maximum duration, and a representative trace.
+Obvious numeric, UUID, and long hexadecimal path IDs are grouped together.
+
+The radar marks groups `NEW` when their first source timestamp is after the
+session baseline; historical or undated records are `KNOWN`. Press `B` in the
+radar to mark the currently retained groups known and start a new baseline;
+press `C` to clear the groups. Baselines are local to the session and bounded
+by the retained issue groups.
+
+### Structured filters and request timelines
+
+Type field filters directly in the live filter box. They also apply to the
+complete-history search and synchronize across panes:
+
+```text
+level:error service:api
+duration:>250ms method:GET path:/orders
+status:>=500
+trace:11d7729cbf34122f3af8d3c73a47213d
+pod:worker timeout
+```
+
+All predicates must match. `level`, `method`, and `trace` use exact matches;
+`service`, `pod`, and `path` use case-insensitive substrings. `status` and
+`duration` support `=`, `!=`, `>`, `>=`, `<`, and `<=`. Durations accept units
+such as `250ms` or `2s`; a number without units means milliseconds. Remaining
+text is a case-insensitive substring search. Invalid field values show an error.
+Fields are extracted from readable HTTP/Serilog messages and JSON properties,
+including properties hidden from compact log rows.
+
+Select a log or an Issue Radar group and press `F6` to collect logs with the
+same trace ID, ordered by Kubernetes timestamp. In split panes, lookup keeps
+the original selected workload scope. Press `Enter` for the original log,
+`R` to reload, and `Esc` to close. Missing streams and timeouts are reported as
+incomplete results. This is a log timeline: it depends on propagated trace IDs,
+your include/exclude filters, the selected time window, Kubernetes retention,
+and the configured buffer limit; it cannot reconstruct spans that were not
+logged. `F4` includes the running build version for troubleshooting.
+
+For a single-pod view, the source bar also summarizes why replicas exist. Press
+`F7` for the observed controller chain, desired/current/ready counts, rollout
+surge evidence, and any matching HorizontalPodAutoscaler range and conditions.
+In multi-pod views, first select a log so `tailg` knows which pod to explain.
+Replica explanations report what Kubernetes currently exposes; they do not
+guess the operator's intent, and restricted RBAC is shown as incomplete data.
 
 Use `--no-live-filter` for plain streaming output.
 
@@ -154,9 +221,19 @@ tailg --versions --context tkgs-qa --context tkgs-dev
 
 ## Status and diagnostics
 
-`tailg --status` scans the current namespace and waits for unhealthy pods to
-recover. Use `--status-interval` and `--status-timeout` to adjust its polling and
-deadline. In an interactive terminal it can open consoles for unhealthy pods;
+`tailg --status` scans pod health, reports grouped errors from the previous two
+hours, and waits for unhealthy pods to recover. Pass a positive whole number of
+minutes as the optional positional value—for example, `tailg --status 20` scans
+the previous 20 minutes. Pod health and recent errors are shown in timestamped,
+wrapped tables; error groups include their exact and relative last-seen time,
+pod/container sources, and complete classified message when available.
+Interactive terminals use adaptive severity colors and rounded borders, with a
+stacked layout on narrow screens. Redirected output remains plain ASCII, and
+`--no-color` keeps the interactive layout without ANSI colors.
+The error scan runs once; recent errors are evidence and do not keep an otherwise
+healthy namespace in the recovery loop. Use
+`--status-interval` and `--status-timeout` to adjust polling and deadline. In an
+interactive terminal it can open consoles for unhealthy pods;
 when `git` is available, it can also inspect configured workload repositories.
 
 For a fast human-oriented investigation, run:
