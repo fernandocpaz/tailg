@@ -35,7 +35,7 @@ func (m *model) openTrace(id string) tea.Cmd {
 	m.traceOpen = true
 	m.traceID = id
 	m.traceIndex = 0
-	m.detail = ""
+	m.closeDetail()
 	m.issueOpen = false
 	m.traceNotice = ""
 	limit := m.config.BufferLines
@@ -189,8 +189,10 @@ func (m model) updateTraceKey(key string) (tea.Model, tea.Cmd) {
 		if key == "enter" {
 			m.notice = copyText(m.detail)
 		} else if key == "f6" {
-			m.detail = ""
+			m.closeDetail()
 			m.closeTrace()
+		} else {
+			m.updateDetailScroll(key)
 		}
 		return m, nil
 	}
@@ -210,7 +212,7 @@ func (m model) updateTraceKey(key string) (tea.Model, tea.Cmd) {
 		return m, m.loadTrace()
 	case "enter":
 		if len(rows) > 0 {
-			m.detail = recordDetails(rows[max(0, min(m.traceIndex, len(rows)-1))])
+			m.openDetail(recordDetails(rows[max(0, min(m.traceIndex, len(rows)-1))]))
 		}
 	}
 	m.traceIndex = max(0, min(m.traceIndex, len(rows)-1))

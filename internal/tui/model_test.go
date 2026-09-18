@@ -378,6 +378,39 @@ func TestRenderLogRowStaysWithinTerminalWidth(t *testing.T) {
 	}
 }
 
+func TestSelectedLogDetailWrapsAndPagesLongError(t *testing.T) {
+	m := workflowModel()
+	m.width, m.height = 72, 10
+	message := "[13:47:22 ERR] SSRS render failed: " + strings.Repeat("outer exception context ", 35) +
+		"Query execution failed for dataset 'GetEndEncounter'."
+	event := core.LogEvent{Pod: "reports-abcde", Container: "reports", Message: message, ObservedAt: time.Now()}
+	updated, _ := m.Update(logMsg(event))
+	m = updated.(model)
+	m.selected = len(m.state.Records()) - 1
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+
+	view := m.View()
+	if !strings.Contains(view, "Original log:") {
+		t.Fatalf("detail did not show the original log:\n%s", view)
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if lipgloss.Width(line) > m.width {
+			t.Fatalf("detail line width = %d, want <= %d: %q", lipgloss.Width(line), m.width, line)
+		}
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	m = updated.(model)
+	view = m.View()
+	if !strings.Contains(view, "GetEndEncounter") {
+		t.Fatalf("end of wrapped error is not reachable:\n%s", view)
+	}
+	if m.detailOffset == 0 {
+		t.Fatal("End did not page through the wrapped detail")
+	}
+}
+
 func TestRenderErrorLevelColorProfiles(t *testing.T) {
 	previousProfile := lipgloss.ColorProfile()
 	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })

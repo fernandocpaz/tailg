@@ -128,13 +128,17 @@ the view is paused or the service is quiet.
 | `Up` / `Down` | Move the selected log line |
 | `PageUp` / `PageDown` | Move by one screen |
 | `Home` / `End` | Jump to the start or resume live tailing |
-| `Enter` | Inspect the original log and metadata; press again to copy |
+| `Enter` | Inspect the complete original log and metadata; press again to copy |
 | `Esc` | Close the current detail panel |
 | `Ctrl+C` / `Ctrl+Q` | Exit |
 
 F1's matching-only mode and the filter text are synchronized across panes and
 tiled windows launched by the same parent process. Secret values are decoded
 only after you explicitly open the selected Secret.
+
+The selected-log inspector wraps long exception chains and structured payloads
+without truncation. Use `Up`/`Down`, `PageUp`/`PageDown`, or `Home`/`End` to read
+the complete event before copying it.
 
 The Issue Radar continuously groups error levels, HTTP 5xx responses, panics,
 exceptions, timeouts, connection failures, retries, and stream interruptions.

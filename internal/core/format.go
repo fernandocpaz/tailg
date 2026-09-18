@@ -140,7 +140,8 @@ func levelStyle(level string) (string, string) {
 }
 
 var bracketedLevel = regexp.MustCompile(`(?i)\[(?:[^\]]+\s)?(WRN|ERR|INF|DBG|VRB|WARN|ERROR|INFO|DEBUG|VERBOSE|TRACE|TRC)\]`)
-var plainLevel = regexp.MustCompile(`(?i)\b(WRN|ERR|INF|DBG|VRB|WARN|ERROR|INFO|DEBUG|VERBOSE|TRACE|TRC)\b`)
+var plainLevel = regexp.MustCompile(`(?i)^\s*(WRN|ERR|INF|DBG|VRB|WARN|ERROR|INFO|DEBUG|VERBOSE|TRACE|TRC)(?:\s+|:\s*|$)`)
+var trailingPropertyList = regexp.MustCompile(`^(?:[A-Za-z_@][A-Za-z0-9_.@-]*=\S+)(?:\s+[A-Za-z_@][A-Za-z0-9_.@-]*=\S+)*$`)
 
 func textLogStyle(message string) (string, string) {
 	if match := bracketedLevel.FindStringSubmatch(message); len(match) > 1 {
@@ -165,8 +166,13 @@ func StripTrailingStructuredProperties(message string) string {
 		if message[index] != '{' || index == 0 || !strings.ContainsAny(message[index-1:index], " \t") {
 			continue
 		}
+		decoder := json.NewDecoder(strings.NewReader(message[index:]))
 		var object map[string]any
-		if json.Unmarshal([]byte(message[index:]), &object) == nil && object != nil {
+		if decoder.Decode(&object) != nil || object == nil {
+			continue
+		}
+		remainder := strings.TrimSpace(message[index+int(decoder.InputOffset()):])
+		if remainder == "" || trailingPropertyList.MatchString(remainder) {
 			return strings.TrimSpace(message[:index])
 		}
 	}

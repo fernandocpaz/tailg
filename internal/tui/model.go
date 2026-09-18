@@ -85,6 +85,7 @@ type model struct {
 	generation      int
 	notice          string
 	detail          string
+	detailOffset    int
 	heartbeatOpen   bool
 	resourceOpen    bool
 	resourceDetail  string
@@ -389,7 +390,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if m.detail != "" {
-				m.detail = ""
+				m.closeDetail()
 			} else if m.traceOpen {
 				m.closeTrace()
 			} else if m.issueOpen {
@@ -432,7 +433,11 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if key == "enter" {
 				m.notice = copyText(m.detail)
-				m.detail = ""
+				m.closeDetail()
+				return m, nil
+			}
+			if m.updateDetailScroll(key) {
+				return m, nil
 			}
 			return m, nil
 		}
@@ -522,9 +527,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if selected == "" {
 				m.notice = "No selected log line"
 			} else {
-				m.detail = selected
+				m.openDetail(selected)
 				if record, ok := m.state.SelectedRecord(m.selected); ok {
-					m.detail = recordDetails(record)
+					m.openDetail(recordDetails(record))
 				}
 			}
 			return m, nil
@@ -596,7 +601,7 @@ func (m model) View() string {
 		return m.panel("Mapped pod resources", strings.Join(lines, "\n"), "Up/Down select | Enter opens | F2/Esc closes")
 	}
 	if m.detail != "" {
-		return m.panel("Selected log line", m.detail, "Enter copies | F6 request timeline | Esc closes")
+		return m.renderDetail()
 	}
 	records := m.state.Records()
 	height := m.logHeight()
@@ -618,6 +623,82 @@ func (m model) panel(title, body, footer string) string {
 	}
 	header := renderWithColor(headerStyle, "tailg", m.config.Formatter.Color) + "  " + title
 	return strings.Join([]string{truncate(header, m.width), renderRule(m.width, m.config.Formatter.Color), strings.Join(lines, "\n"), truncate(renderWithColor(dimStyle, footer, m.config.Formatter.Color), m.width)}, "\n")
+}
+
+func (m *model) openDetail(value string) {
+	m.detail = value
+	m.detailOffset = 0
+}
+
+func (m *model) closeDetail() {
+	m.detail = ""
+	m.detailOffset = 0
+}
+
+func (m model) detailLines() []string {
+	if m.detail == "" {
+		return nil
+	}
+	wrapped := ansi.Wrap(m.detail, max(1, m.width), "")
+	return strings.Split(wrapped, "\n")
+}
+
+func (m model) detailHeight() int {
+	return max(1, m.height-3)
+}
+
+func (m *model) updateDetailScroll(key string) bool {
+	lines := m.detailLines()
+	height := m.detailHeight()
+	limit := max(0, len(lines)-height)
+	m.detailOffset = min(max(0, m.detailOffset), limit)
+	step := max(1, height-1)
+	switch key {
+	case "up", "k":
+		m.detailOffset--
+	case "down", "j":
+		m.detailOffset++
+	case "pgup":
+		m.detailOffset -= step
+	case "pgdown":
+		m.detailOffset += step
+	case "home":
+		m.detailOffset = 0
+	case "end":
+		m.detailOffset = limit
+	default:
+		return false
+	}
+	m.detailOffset = min(max(0, m.detailOffset), limit)
+	return true
+}
+
+func (m model) renderDetail() string {
+	height := m.detailHeight()
+	allLines := m.detailLines()
+	limit := max(0, len(allLines)-height)
+	start := min(max(0, m.detailOffset), limit)
+	end := min(len(allLines), start+height)
+	lines := append([]string(nil), allLines[start:end]...)
+	for index := range lines {
+		lines[index] = truncate(lines[index], m.width)
+	}
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+
+	position := "0/0"
+	if len(allLines) > 0 {
+		position = fmt.Sprintf("%d-%d/%d", start+1, end, len(allLines))
+	}
+	footer := position + " | Up/Down scroll | PgUp/PgDn page | Home/End | Enter copies | F6 trace | Esc closes"
+	header := renderWithColor(headerStyle, "tailg", m.config.Formatter.Color) + "  Selected log line"
+	return strings.Join([]string{
+		truncate(header, m.width),
+		renderRule(m.width, m.config.Formatter.Color),
+		strings.Join(lines, "\n"),
+		truncate(renderWithColor(dimStyle, footer, m.config.Formatter.Color), m.width),
+	}, "\n")
 }
 func (m model) logHeight() int {
 	return max(1, m.height-6-len(strings.Split(m.renderLogSource(), "\n")))

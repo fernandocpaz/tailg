@@ -19,11 +19,40 @@ func TestFormatterHidesTrailingStructuredProperties(t *testing.T) {
 	}
 }
 
+func TestFormatterHidesStructuredPropertiesBeforeTrailingAssignments(t *testing.T) {
+	formatter := Formatter{}
+	message := `[13:47:22 ERR] SSRS render failed: Query execution failed for dataset 'GetEndEncounter'. {"Step":"Render","Fault":{"Reason":"processing failed"}} ResponseBodyExcerpt=null`
+	got := formatter.Format("pod", "web", message, false)
+	if len(got) != 1 || strings.Contains(got[0], `"Step"`) || strings.Contains(got[0], "ResponseBodyExcerpt") || !strings.Contains(got[0], "GetEndEncounter") {
+		t.Fatalf("formatted = %#v", got)
+	}
+
+	formatter.Detail = true
+	got = formatter.Format("pod", "web", message, false)
+	if len(got) != 1 || !strings.Contains(got[0], `"Step"`) || !strings.Contains(got[0], "ResponseBodyExcerpt=null") {
+		t.Fatalf("detail = %#v", got)
+	}
+}
+
 func TestFormatterParsesStructuredJSON(t *testing.T) {
 	formatter := Formatter{}
 	got := formatter.Format("pod", "web", `{"ts":"2026-08-20T12:00:00Z","level":"ERR","logger":"Component","message":"failed","exception":"boom"}`, false)
 	if len(got) != 2 || !strings.Contains(got[0], "[ERR]") || !strings.Contains(got[0], "[Component]") || got[1] != "boom" {
 		t.Fatalf("formatted = %#v", got)
+	}
+}
+
+func TestFormatterDoesNotTreatNarrativeErrorAsLogLevel(t *testing.T) {
+	formatter := Formatter{Color: true}
+	message := "SoapFaultException: An error has occurred during report processing"
+	got := formatter.Format("pod", "web", message, false)
+	if len(got) != 1 || strings.Contains(got[0], "\x1b[31m") {
+		t.Fatalf("narrative error was colored as an error-level record: %#v", got)
+	}
+
+	got = formatter.Format("pod", "web", "ERROR: report processing failed", false)
+	if len(got) != 1 || !strings.Contains(got[0], "\x1b[31m") {
+		t.Fatalf("leading error level was not colored: %#v", got)
 	}
 }
 
