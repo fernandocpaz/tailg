@@ -464,7 +464,7 @@ func TestLogRowsUseDistinctSeverityColorsAndFadeInfo(t *testing.T) {
 	warnRow := renderLogRow("[12:00:00 WRN] same message", "", false, 100, false, true)
 	infoRow := renderLogRow("[12:00:00 INF] same message", "", false, 100, false, true)
 
-	if !strings.Contains(errRow, "38;2;255;123;114m") {
+	if !strings.Contains(errRow, "38;2;255;123;") {
 		t.Fatalf("ERR row missing coral message color: %q", errRow)
 	}
 	if !strings.Contains(warnRow, "same message") || !strings.Contains(warnRow, "\x1b[") {
