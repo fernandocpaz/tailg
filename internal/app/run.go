@@ -42,6 +42,10 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 	if options.Container == "" {
 		options.Container = ".*"
 	}
+	if options.Target == "*" {
+		fmt.Fprintln(stderr, "the '*' picker target was removed; run tailg with no target to open the application picker")
+		return 2
+	}
 	// Child panes inherit an explicitly supplied scope. A picker selection,
 	// however, must derive a fresh scope on every iteration.
 	traceScopeInherited := len(options.TracePods) > 0 || len(options.TraceSelectors) > 0
@@ -139,19 +143,16 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 		}
 	}
 
+	pickerMode := options.Target == "" && options.Namespace == ""
 	namespaceMode := options.Target == "" && options.Namespace != ""
-	if options.Target == "" && !namespaceMode {
-		fmt.Fprintln(stderr, "a target is required; use '*' for the app picker or --namespace to open every pod")
-		return 2
-	}
-	pickerLoop := options.Target == "*" && options.LiveFilter && !options.NoFollow && !options.SplitPanes && !options.TileWindows
+	pickerLoop := pickerMode && options.LiveFilter && !options.NoFollow && !options.SplitPanes && !options.TileWindows
 
 pickAgain:
 	effectiveNamespace := options.Namespace
 	resolvedTarget := "pod/*"
 	var selectedPods, selectedSelectors []string
 	if !namespaceMode {
-		if options.Target == "*" {
+		if pickerMode {
 			apps, appsErr := runner.Apps(ctx)
 			if appsErr != nil {
 				fmt.Fprintln(stderr, appsErr)
