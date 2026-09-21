@@ -65,3 +65,22 @@ func TestNormalizeSinceDays(t *testing.T) {
 		t.Fatalf("duration=%v ok=%t", duration, ok)
 	}
 }
+
+
+func TestFormatterUsesSeverityHierarchyColors(t *testing.T) {
+	formatter := Formatter{Color: true}
+	tests := []struct {
+		level string
+		code  string
+	}{
+		{"ERR", "\x1b[31m"},
+		{"WRN", "\x1b[33m"},
+		{"INF", "\x1b[90m"},
+	}
+	for _, tt := range tests {
+		line := formatter.Format("pod", "api", "[12:00:00 "+tt.level+"] message", false)
+		if len(line) != 1 || !strings.Contains(line[0], tt.code) {
+			t.Fatalf("%s line did not use expected severity color %q: %#v", tt.level, tt.code, line)
+		}
+	}
+}

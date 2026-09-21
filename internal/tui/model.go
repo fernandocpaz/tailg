@@ -146,6 +146,8 @@ var (
 	accentColor       = lipgloss.AdaptiveColor{Light: "#7A4E00", Dark: "#FFD166"}
 	positiveColor     = lipgloss.AdaptiveColor{Light: "#176B3A", Dark: "#7EE787"}
 	mutedColor        = lipgloss.AdaptiveColor{Light: "#62666D", Dark: "#A8ADB4"}
+	infoColor         = lipgloss.AdaptiveColor{Light: "#70757D", Dark: "#8B949E"}
+	debugColor        = lipgloss.AdaptiveColor{Light: "#858A91", Dark: "#6E7681"}
 	selectionBG       = lipgloss.AdaptiveColor{Light: "#FFF4D6", Dark: "#302A1F"}
 	selectionFG       = lipgloss.AdaptiveColor{Light: "#2A241A", Dark: "#FFF7E6"}
 	modeBackground    = lipgloss.AdaptiveColor{Light: "#7A4E00", Dark: "#FFD166"}
@@ -159,12 +161,18 @@ var (
 	modeStyle         = lipgloss.NewStyle().Bold(true).Foreground(modeForeground).Background(modeBackground).Padding(0, 1)
 	okStyle           = lipgloss.NewStyle().Bold(true).Foreground(positiveColor)
 	warnStyle         = lipgloss.NewStyle().Bold(true).Foreground(accentColor)
+	infoStyle         = lipgloss.NewStyle().Foreground(infoColor)
+	debugStyle        = lipgloss.NewStyle().Foreground(debugColor)
 	// Use a soft coral rather than a terminal theme's bright-red slot.
 	alertStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.CompleteColor{
 		TrueColor: "#FF6B6B", ANSI256: "203", ANSI: "1",
 	})
-	dimStyle = lipgloss.NewStyle().Foreground(mutedColor)
-	keyStyle = lipgloss.NewStyle().Bold(true)
+	errorLineStyle   = lipgloss.NewStyle().Foreground(lipgloss.CompleteColor{TrueColor: "#FF7B72", ANSI256: "203", ANSI: "1"})
+	warningLineStyle = lipgloss.NewStyle().Foreground(accentColor)
+	infoLineStyle    = lipgloss.NewStyle().Foreground(infoColor)
+	debugLineStyle   = lipgloss.NewStyle().Foreground(debugColor)
+	dimStyle         = lipgloss.NewStyle().Foreground(mutedColor)
+	keyStyle         = lipgloss.NewStyle().Bold(true)
 )
 
 var (
@@ -1143,6 +1151,7 @@ func renderLogColumns(columns logColumns, value, query string, selected bool, wi
 			gutter = headerStyle.Render("▌ ")
 		}
 	}
+	lineStyle, hasLineStyle := logLineStyle(columns.level)
 	prefix := gutter
 	if width >= 60 {
 		prefix += renderCell(columns.time, 13, dimStyle, color && !selected)
@@ -1150,15 +1159,22 @@ func renderLogColumns(columns logColumns, value, query string, selected bool, wi
 	}
 	if showPod && width >= 48 {
 		columnWidth := min(48, max(12, width/3))
-		prefix += renderCell(compactPodLabel(columns.pod, columnWidth-1), columnWidth, headerStyle, color && !selected)
+		podStyle := headerStyle
+		if hasLineStyle {
+			podStyle = lineStyle
+		}
+		prefix += renderCell(compactPodLabel(columns.pod, columnWidth-1), columnWidth, podStyle, color && !selected)
 	}
 	messageWidth := max(1, width-lipgloss.Width(prefix))
 	message := truncatePlain(columns.message, messageWidth)
 	errorLine := strings.Contains(value, "\x1b[31m") && columns.level == ""
-	renderedMessage := highlightText(message, query, color, errorLine && !selected)
+	if errorLine {
+		lineStyle, hasLineStyle = errorLineStyle, true
+	}
+	renderedMessage := highlightTextStyled(message, query, color && !selected, lineStyle, hasLineStyle)
 	row := prefix + renderedMessage
 	if selected && color {
-		row = selectedStyle.Width(max(1, width)).Render(row)
+		row = selectedStyle.Width(max(1, width)).Render(core.StripANSI(row))
 	}
 	return truncate(row, width)
 }
@@ -1176,24 +1192,49 @@ func levelRenderStyle(level string) lipgloss.Style {
 	case "WRN":
 		return warnStyle
 	case "INF":
-		return headerStyle
+		return infoStyle
 	default:
-		return dimStyle
+		return debugStyle
+	}
+}
+
+func logLineStyle(level string) (lipgloss.Style, bool) {
+	switch normalizeLevel(level) {
+	case "ERR":
+		return errorLineStyle, true
+	case "WRN":
+		return warningLineStyle, true
+	case "INF":
+		return infoLineStyle, true
+	case "DBG", "VRB", "TRC":
+		return debugLineStyle, true
+	default:
+		return lipgloss.NewStyle(), false
 	}
 }
 
 func highlightText(value, query string, color, errorLine bool) string {
+	style := lipgloss.NewStyle()
+	applyStyle := false
+	if errorLine {
+		style = errorLineStyle
+		applyStyle = true
+	}
+	return highlightTextStyled(value, query, color, style, applyStyle)
+}
+
+func highlightTextStyled(value, query string, color bool, baseStyle lipgloss.Style, applyBase bool) string {
 	query = strings.TrimSpace(query)
 	if query == "" || !color {
-		if errorLine && color {
-			return alertStyle.Render(value)
+		if color && applyBase {
+			return baseStyle.Render(value)
 		}
 		return value
 	}
 	matches := regexp.MustCompile(`(?i)`+regexp.QuoteMeta(query)).FindAllStringIndex(value, -1)
 	if len(matches) == 0 {
-		if errorLine {
-			return alertStyle.Render(value)
+		if applyBase {
+			return baseStyle.Render(value)
 		}
 		return value
 	}
@@ -1201,16 +1242,16 @@ func highlightText(value, query string, color, errorLine bool) string {
 	start := 0
 	for _, match := range matches {
 		before := value[start:match[0]]
-		if errorLine {
-			before = alertStyle.Render(before)
+		if applyBase {
+			before = baseStyle.Render(before)
 		}
 		builder.WriteString(before)
 		builder.WriteString(matchStyle.Render(value[match[0]:match[1]]))
 		start = match[1]
 	}
 	remaining := value[start:]
-	if errorLine {
-		remaining = alertStyle.Render(remaining)
+	if applyBase {
+		remaining = baseStyle.Render(remaining)
 	}
 	builder.WriteString(remaining)
 	return builder.String()
