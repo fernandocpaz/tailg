@@ -454,6 +454,33 @@ func TestRenderErrorLevelColorProfiles(t *testing.T) {
 	}
 }
 
+
+func TestLogRowsUseDistinctSeverityColorsAndFadeInfo(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
+	lipgloss.SetColorProfile(termenv.TrueColor)
+
+	errRow := renderLogRow("[12:00:00 ERR] same message", "", false, 100, false, true)
+	warnRow := renderLogRow("[12:00:00 WRN] same message", "", false, 100, false, true)
+	infoRow := renderLogRow("[12:00:00 INF] same message", "", false, 100, false, true)
+
+	if !strings.Contains(errRow, "38;2;255;123;114m") {
+		t.Fatalf("ERR row missing coral message color: %q", errRow)
+	}
+	if !strings.Contains(warnRow, "same message") || !strings.Contains(warnRow, "\x1b[") {
+		t.Fatalf("WRN row missing warning color: %q", warnRow)
+	}
+	if !strings.Contains(infoRow, "same message") || !strings.Contains(infoRow, "\x1b[") {
+		t.Fatalf("INF row missing muted color: %q", infoRow)
+	}
+	if strings.Contains(infoRow, "38;2;255;123;114m") {
+		t.Fatalf("INF row incorrectly uses error color: %q", infoRow)
+	}
+	if strings.Contains(infoRow, "38;2;255;209;102m") {
+		t.Fatalf("INF row incorrectly uses warning color: %q", infoRow)
+	}
+}
+
 func TestHighlightTextUsesOriginalUnicodeOffsets(t *testing.T) {
 	rendered := highlightText("Ⱥa", "a", true, false)
 	if plain := core.StripANSI(rendered); plain != "Ⱥa" {
