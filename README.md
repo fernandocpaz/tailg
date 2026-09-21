@@ -45,7 +45,7 @@ tailg example-app default --no-follow
 tailg example-app default --include 'request_id=12345'
 tailg example-app default --exclude 'debug|trace'
 tailg example-app default --buffer-lines 100000
-tailg '*' default
+tailg
 tailg 'example-*' default --tile-windows
 tailg 'web-api,job-worker' default --split-panes
 tailg --namespace default
@@ -60,8 +60,10 @@ tailg issues example-app default
 tailg diagnose example-app default --output ndjson
 ```
 
-Targets may be Kubernetes resources, app names, case-insensitive wildcard app
-patterns, or comma-separated app names. Use `*` to select an app interactively.
+Running `tailg` with no target opens the interactive application picker in the
+current Kubernetes namespace. Targets may still be Kubernetes resources, app
+names, case-insensitive wildcard app patterns such as `example-*`, or
+comma-separated app names. The old standalone `*` picker target has been removed.
 The namespace can be supplied positionally or with `--namespace`.
 
 Without `--since`, tailg loads up to 500 visible lines per container before
