@@ -16,6 +16,7 @@ type pickerModel struct {
 	index     int
 	selected  *core.AppChoice
 	cancelled bool
+	width     int
 }
 
 func PickApp(apps []core.AppChoice) (core.AppChoice, error) {
@@ -34,6 +35,10 @@ func PickApp(apps []core.AppChoice) (core.AppChoice, error) {
 }
 func (m pickerModel) Init() tea.Cmd { return nil }
 func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	if size, ok := message.(tea.WindowSizeMsg); ok {
+		m.width = size.Width
+		return m, nil
+	}
 	if key, ok := message.(tea.KeyMsg); ok {
 		switch key.String() {
 		case "ctrl+c", "q", "esc":
@@ -51,9 +56,25 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	return m, nil
 }
+const (
+	pickerAppWidth      = 36
+	pickerReadyWidth    = 7
+	pickerPhaseWidth    = 18
+	pickerRestartsWidth = 8
+	pickerAgeWidth      = 10
+	pickerImageMinWidth = 12
+)
+
 func (m pickerModel) View() string {
-	var lines = []string{headerStyle.Render("Select an application"), dimStyle.Render("Up/Down move | Enter selects | Esc cancels"), ""}
+	var lines = []string{
+		headerStyle.Render("Select an application"),
+		dimStyle.Render("Up/Down move | Enter selects | Esc cancels"),
+		"",
+	}
 	now := time.Now()
+	imageWidth := pickerImageWidth(m.width)
+	header := renderPickerRow("  ", "APPLICATION", "READY", "PHASE", "RESTARTS", "STARTED", "DEPLOYED", "IMAGE", imageWidth)
+	lines = append(lines, dimStyle.Render(header), dimStyle.Render(strings.Repeat("-", lipgloss.Width(header))))
 	for index, app := range m.apps {
 		marker := "  "
 		style := lipgloss.NewStyle()
@@ -61,12 +82,61 @@ func (m pickerModel) View() string {
 			marker = "> "
 			style = selectedStyle
 		}
-		line := fmt.Sprintf("%s%-30s ready=%-7s phase=%-20s restarts=%-3d started=%-10s deployed=%-10s image=%s",
-			marker, app.Name, app.Ready, app.Phases, app.Restarts,
-			formatPickerAge(now, app.StartedAt), formatPickerAge(now, app.DeployedAt), valueOrDash(app.ImageTag))
-		lines = append(lines, style.Render(strings.TrimRight(line, " ")))
+		line := renderPickerRow(
+			marker,
+			app.Name,
+			app.Ready,
+			app.Phases,
+			fmt.Sprint(app.Restarts),
+			formatPickerAge(now, app.StartedAt),
+			formatPickerAge(now, app.DeployedAt),
+			valueOrDash(app.ImageTag),
+			imageWidth,
+		)
+		lines = append(lines, style.Render(line))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func pickerImageWidth(terminalWidth int) int {
+	// marker + fixed columns + six inter-column spaces.
+	fixed := 2 + pickerAppWidth + pickerReadyWidth + pickerPhaseWidth + pickerRestartsWidth + 2*pickerAgeWidth + 6
+	if terminalWidth <= 0 {
+		return 24
+	}
+	available := terminalWidth - fixed
+	if available < pickerImageMinWidth {
+		return pickerImageMinWidth
+	}
+	return available
+}
+
+func renderPickerRow(marker, app, ready, phase, restarts, started, deployed, image string, imageWidth int) string {
+	return fmt.Sprintf(
+		"%s%-*s %-*s %-*s %*s %-*s %-*s %-*s",
+		marker,
+		pickerAppWidth, truncatePickerCell(app, pickerAppWidth),
+		pickerReadyWidth, truncatePickerCell(ready, pickerReadyWidth),
+		pickerPhaseWidth, truncatePickerCell(phase, pickerPhaseWidth),
+		pickerRestartsWidth, truncatePickerCell(restarts, pickerRestartsWidth),
+		pickerAgeWidth, truncatePickerCell(started, pickerAgeWidth),
+		pickerAgeWidth, truncatePickerCell(deployed, pickerAgeWidth),
+		imageWidth, truncatePickerCell(image, imageWidth),
+	)
+}
+
+func truncatePickerCell(value string, width int) string {
+	if width <= 0 || lipgloss.Width(value) <= width {
+		return value
+	}
+	if width == 1 {
+		return "…"
+	}
+	runes := []rune(value)
+	for len(runes) > 0 && lipgloss.Width(string(runes)) > width-1 {
+		runes = runes[:len(runes)-1]
+	}
+	return string(runes) + "…"
 }
 
 func formatPickerAge(now, value time.Time) string {
