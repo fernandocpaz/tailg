@@ -22,7 +22,7 @@ func NewCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) 
 	var refreshSeconds int
 	command := &cobra.Command{
 		Use: "tailg [target] [namespace]", Short: "Human-friendly Kubernetes log tailer built in Go", SilenceUsage: true, SilenceErrors: true, Args: cobra.MaximumNArgs(2),
-		Long:    "tailg follows Kubernetes logs across pods, provides synchronized live filtering, heartbeat diagnostics, resource inspection, status recovery monitoring, and Windows Terminal layouts.",
+		Long:    "tailg follows Kubernetes logs across pods. Run it with no target to open the application picker; explicit targets and wildcard patterns remain supported. It provides synchronized live filtering, heartbeat diagnostics, resource inspection, status recovery monitoring, and Windows Terminal layouts.",
 		Example: strings.Join([]string{"tailg", "tailg example-app default", "tailg 'example-*' default --tile-windows", "tailg example-app default --since 4d", "tailg --status --namespace default", "tailg --status 20 --namespace default", "tailg --versions", "tailg --versions --context tkgs-qa --context tkgs-dev"}, "\n"),
 		Version: BuildDescription(),
 		RunE: func(cmd *cobra.Command, args []string) error {
