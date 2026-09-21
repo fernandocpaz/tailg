@@ -208,8 +208,7 @@ func TestRunStatusOffersRecentErrorsForInteractiveOpening(t *testing.T) {
 	script := `#!/bin/sh
 case "$*" in
   *"get pods -o json"*) printf '%s' '{"items":[{"metadata":{"name":"api-pod"},"spec":{"containers":[{"name":"api"}]},"status":{"phase":"Running","containerStatuses":[{"name":"api","ready":true,"restartCount":0,"state":{"running":{}}}]}}]}' ;;
-  *"logs pod/api-pod -c api"* "--since 20m"*) printf '%s
-' '2026-09-21T15:58:00Z [15:58:00 ERR] upstream timeout' ;;
+  *"logs pod/api-pod -c api"*"--since 20m"*) printf '%s\\n' '2026-09-21T15:58:00Z [15:58:00 ERR] upstream timeout' ;;
   *) echo "unexpected kubectl args: $*" >&2; exit 2 ;;
 esac
 `
