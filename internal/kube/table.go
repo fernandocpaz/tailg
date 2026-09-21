@@ -32,7 +32,7 @@ var (
 	statusGreen = lipgloss.AdaptiveColor{Light: "#006B3C", Dark: "#5AF78E"}
 	statusRed   = lipgloss.AdaptiveColor{Light: "#B00020", Dark: "#FF5F5F"}
 	statusGold  = lipgloss.AdaptiveColor{Light: "#7A5200", Dark: "#FFD75F"}
-	statusCyan  = lipgloss.AdaptiveColor{Light: "#005F87", Dark: "#5FD7FF"}
+	statusAccent = lipgloss.AdaptiveColor{Light: "#7A4E00", Dark: "#FFD166"}
 	statusMuted = lipgloss.AdaptiveColor{Light: "#5F6368", Dark: "#A0A0A0"}
 )
 
@@ -69,7 +69,7 @@ func formatTableStyled(headers []string, rows [][]string, maximums []int, visual
 				return style
 			}
 			if row == table.HeaderRow {
-				return style.Bold(true).Foreground(statusCyan)
+				return style.Bold(true).Foreground(statusAccent)
 			}
 			value := ""
 			if row >= 0 && row < len(prepared) && column < len(prepared[row]) {
@@ -111,7 +111,7 @@ func statusSection(title string, visuals statusVisuals, tone tableTone) string {
 		case toneAlert:
 			style = style.Foreground(statusRed)
 		default:
-			style = style.Foreground(statusCyan)
+			style = style.Foreground(statusAccent)
 		}
 	}
 	return style.Render("● "+title) + "\n"
