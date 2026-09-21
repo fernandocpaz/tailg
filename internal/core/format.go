@@ -12,7 +12,7 @@ import (
 const ansiReset = "\x1b[0m"
 
 var colors = map[string]string{
-	"red": "\x1b[31m", "yellow": "\x1b[33m", "cyan": "\x1b[36m", "dim": "\x1b[90m",
+	"red": "\x1b[31m", "yellow": "\x1b[33m", "info": "\x1b[90m", "dim": "\x1b[90m",
 }
 
 type Formatter struct {
@@ -131,7 +131,7 @@ func levelStyle(level string) (string, string) {
 	case "WRN", "WARN", "WARNING":
 		return "WRN", "yellow"
 	case "INF", "INFO", "INFORMATION":
-		return "INF", "cyan"
+		return "INF", "info"
 	case "DBG", "DEBUG", "VRB", "VERBOSE", "TRACE", "TRC":
 		return strings.ToUpper(strings.TrimSpace(level))[:3], "dim"
 	default:
