@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -11,19 +12,23 @@ import (
 	"github.com/fernandocpaz/tailg/internal/core"
 )
 
+const maxPickerApps = 20
+
 type pickerModel struct {
-	apps      []core.AppChoice
-	index     int
-	selected  *core.AppChoice
-	cancelled bool
-	width     int
+	apps       []core.AppChoice
+	totalApps  int
+	index      int
+	selected   *core.AppChoice
+	cancelled  bool
+	width      int
 }
 
 func PickApp(apps []core.AppChoice) (core.AppChoice, error) {
 	if len(apps) == 0 {
 		return core.AppChoice{}, fmt.Errorf("no applications were found")
 	}
-	result, err := tea.NewProgram(pickerModel{apps: apps}).Run()
+	prepared, total := preparePickerApps(apps)
+	result, err := tea.NewProgram(pickerModel{apps: prepared, totalApps: total}).Run()
 	if err != nil {
 		return core.AppChoice{}, err
 	}
@@ -66,9 +71,13 @@ const (
 )
 
 func (m pickerModel) View() string {
+	subtitle := "Up/Down move | Enter selects | Esc cancels"
+	if m.totalApps > len(m.apps) {
+		subtitle += fmt.Sprintf(" | showing newest %d of %d deployments", len(m.apps), m.totalApps)
+	}
 	var lines = []string{
 		headerStyle.Render("Select an application"),
-		dimStyle.Render("Up/Down move | Enter selects | Esc cancels"),
+		dimStyle.Render(subtitle),
 		"",
 	}
 	now := time.Now()
@@ -96,6 +105,26 @@ func (m pickerModel) View() string {
 		lines = append(lines, style.Render(line))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func preparePickerApps(apps []core.AppChoice) ([]core.AppChoice, int) {
+	total := len(apps)
+	prepared := append([]core.AppChoice(nil), apps...)
+	sort.SliceStable(prepared, func(i, j int) bool {
+		iTime := prepared[i].DeployedAt
+		jTime := prepared[j].DeployedAt
+		if iTime.IsZero() != jTime.IsZero() {
+			return !iTime.IsZero()
+		}
+		if !iTime.Equal(jTime) {
+			return iTime.After(jTime)
+		}
+		return strings.ToLower(prepared[i].Name) < strings.ToLower(prepared[j].Name)
+	})
+	if len(prepared) > maxPickerApps {
+		prepared = prepared[:maxPickerApps]
+	}
+	return prepared, total
 }
 
 func pickerImageWidth(terminalWidth int) int {

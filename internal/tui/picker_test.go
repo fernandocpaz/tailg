@@ -1,9 +1,12 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fernandocpaz/tailg/internal/core"
 )
 
 func TestFormatPickerAge(t *testing.T) {
@@ -62,5 +65,49 @@ func TestPickerImageWidthKeepsImageColumnVisible(t *testing.T) {
 func TestTruncatePickerCell(t *testing.T) {
 	if got := truncatePickerCell("abcdefghijkl", 8); got != "abcdefg…" {
 		t.Fatalf("truncatePickerCell = %q", got)
+	}
+}
+
+
+func TestPreparePickerAppsShowsNewestTwentyDeployments(t *testing.T) {
+	base := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+	apps := make([]core.AppChoice, 0, 25)
+	for i := 0; i < 25; i++ {
+		apps = append(apps, core.AppChoice{
+			Name:       fmt.Sprintf("app-%02d", i),
+			DeployedAt: base.Add(time.Duration(i) * time.Minute),
+		})
+	}
+
+	got, total := preparePickerApps(apps)
+	if total != 25 {
+		t.Fatalf("total=%d, want 25", total)
+	}
+	if len(got) != maxPickerApps {
+		t.Fatalf("len=%d, want %d", len(got), maxPickerApps)
+	}
+	if got[0].Name != "app-24" {
+		t.Fatalf("first=%q, want newest deployment app-24", got[0].Name)
+	}
+	if got[len(got)-1].Name != "app-05" {
+		t.Fatalf("last=%q, want twentieth-newest deployment app-05", got[len(got)-1].Name)
+	}
+	for i := 1; i < len(got); i++ {
+		if got[i].DeployedAt.After(got[i-1].DeployedAt) {
+			t.Fatalf("apps are not sorted newest-first at %d: %s before %s", i, got[i-1].Name, got[i].Name)
+		}
+	}
+}
+
+func TestPreparePickerAppsPutsUnknownDeploymentTimesLast(t *testing.T) {
+	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+	apps := []core.AppChoice{
+		{Name: "unknown"},
+		{Name: "older", DeployedAt: now.Add(-time.Hour)},
+		{Name: "newer", DeployedAt: now},
+	}
+	got, _ := preparePickerApps(apps)
+	if got[0].Name != "newer" || got[1].Name != "older" || got[2].Name != "unknown" {
+		t.Fatalf("unexpected order: %v, %v, %v", got[0].Name, got[1].Name, got[2].Name)
 	}
 }
