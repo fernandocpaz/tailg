@@ -143,7 +143,7 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 		}
 	}
 
-	pickerMode := options.Target == "" && options.Namespace == ""
+	pickerMode := usesAppPicker(options)
 	namespaceMode := options.Target == "" && options.Namespace != ""
 	pickerLoop := pickerMode && options.LiveFilter && !options.NoFollow && !options.SplitPanes && !options.TileWindows
 
@@ -351,6 +351,10 @@ pickAgain:
 		goto pickAgain
 	}
 	return 0
+}
+
+func usesAppPicker(options Options) bool {
+	return options.Target == "" && options.Namespace == ""
 }
 
 func selectedInventory(ctx context.Context, runner kube.Runner, pods, selectors []string) ([]core.InventoryItem, error) {
