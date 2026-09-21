@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -52,6 +53,7 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 func (m pickerModel) View() string {
 	var lines = []string{headerStyle.Render("Select an application"), dimStyle.Render("Up/Down move | Enter selects | Esc cancels"), ""}
+	now := time.Now()
 	for index, app := range m.apps {
 		marker := "  "
 		style := lipgloss.NewStyle()
@@ -59,8 +61,39 @@ func (m pickerModel) View() string {
 			marker = "> "
 			style = selectedStyle
 		}
-		line := fmt.Sprintf("%s%-32s ready=%-7s phase=%-24s restarts=%d", marker, app.Name, app.Ready, app.Phases, app.Restarts)
+		line := fmt.Sprintf("%s%-30s ready=%-7s phase=%-20s restarts=%-3d started=%-10s deployed=%-10s image=%s",
+			marker, app.Name, app.Ready, app.Phases, app.Restarts,
+			formatPickerAge(now, app.StartedAt), formatPickerAge(now, app.DeployedAt), valueOrDash(app.ImageTag))
 		lines = append(lines, style.Render(strings.TrimRight(line, " ")))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func formatPickerAge(now, value time.Time) string {
+	if value.IsZero() {
+		return "-"
+	}
+	age := now.Sub(value)
+	if age < 0 {
+		return value.Local().Format("Jan 02")
+	}
+	switch {
+	case age < time.Minute:
+		return "now"
+	case age < time.Hour:
+		return fmt.Sprintf("%dm ago", int(age/time.Minute))
+	case age < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(age/time.Hour))
+	case age < 7*24*time.Hour:
+		return fmt.Sprintf("%dd ago", int(age/(24*time.Hour)))
+	default:
+		return value.Local().Format("Jan 02")
+	}
+}
+
+func valueOrDash(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return value
 }
