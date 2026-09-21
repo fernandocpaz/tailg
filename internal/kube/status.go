@@ -14,16 +14,28 @@ import (
 )
 
 type StatusOptions struct {
-	Lookback     time.Duration
-	Interval     time.Duration
-	Timeout      time.Duration
-	Output       io.Writer
-	Input        io.Reader
-	Decorated    bool
-	Color        bool
-	Width        int
-	OpenConsoles func([]string) error
-	ExamineRepos func([]string) error
+	Lookback         time.Duration
+	Interval         time.Duration
+	Timeout          time.Duration
+	Output           io.Writer
+	Input            io.Reader
+	Decorated        bool
+	Color            bool
+	Width            int
+	OpenConsoles     func([]string) error
+	ExamineRepos     func([]string) error
+	OpenRecentErrors func([]StatusErrorSelection) error
+}
+
+type StatusErrorSelection struct {
+	Count      int
+	Kind       string
+	Service    string
+	Pod        string
+	Container  string
+	Summary    string
+	SearchTerm string
+	LastSeen   time.Time
 }
 
 type ContainerStatusSummary struct {
@@ -279,10 +291,12 @@ func UnhealthyWorkloadNames(payload map[string]any) []string {
 }
 
 type recentErrorGroup struct {
-	issue    core.Issue
-	count    int
-	lastSeen time.Time
-	sources  map[string]bool
+	issue         core.Issue
+	count         int
+	lastSeen      time.Time
+	latestPod     string
+	latestContainer string
+	sources       map[string]bool
 }
 
 // RecentErrorReport scans the current application containers. Collection
@@ -292,6 +306,11 @@ func (r Runner) RecentErrorReport(ctx context.Context, pods map[string]any, look
 }
 
 func (r Runner) recentErrorReport(ctx context.Context, pods map[string]any, lookback time.Duration, visuals statusVisuals) (string, error) {
+	groups, streams, failed, scanErr := r.scanRecentErrors(ctx, pods, lookback)
+	return formatRecentErrorReportAtStyled(groups, lookback, streams, failed, time.Now(), visuals), scanErr
+}
+
+func (r Runner) scanRecentErrors(ctx context.Context, pods map[string]any, lookback time.Duration) (map[string]*recentErrorGroup, int, int, error) {
 	if lookback <= 0 {
 		lookback = core.DefaultStatusLookback
 	}
@@ -322,17 +341,18 @@ func (r Runner) recentErrorReport(ctx context.Context, pods map[string]any, look
 			}
 			group.count++
 			group.sources[item.Pod+"/"+item.Container] = true
-			if event.ObservedAt.After(group.lastSeen) {
+			if group.latestPod == "" || event.ObservedAt.After(group.lastSeen) {
 				group.lastSeen = event.ObservedAt
+				group.latestPod = item.Pod
+				group.latestContainer = item.Container
 			}
 		}
 	}
 	failed := len(items) - succeeded
-	report := formatRecentErrorReportAtStyled(groups, lookback, len(items), failed, time.Now(), visuals)
 	if len(scanErrors) > 0 {
-		return report, errors.Join(scanErrors...)
+		return groups, len(items), failed, errors.Join(scanErrors...)
 	}
-	return report, nil
+	return groups, len(items), failed, nil
 }
 
 func statusLookbackArgument(lookback time.Duration) string {
@@ -355,20 +375,13 @@ func formatRecentErrorReportAtStyled(groups map[string]*recentErrorGroup, lookba
 		return "\n" + statusSection("RECENT ERRORS", visuals, toneHealthy) +
 			formatTableStyled([]string{"Result", "Window"}, [][]string{{"No recent errors found", header + " | events=0"}}, []int{44, 72}, visuals, toneHealthy, false)
 	}
-	ordered := make([]*recentErrorGroup, 0, len(groups))
+	ordered := orderedRecentErrorGroups(groups)
 	total := 0
-	for _, group := range groups {
-		ordered = append(ordered, group)
+	for _, group := range ordered {
 		total += group.count
 	}
-	sort.Slice(ordered, func(i, j int) bool {
-		if ordered[i].count != ordered[j].count {
-			return ordered[i].count > ordered[j].count
-		}
-		return ordered[i].issue.Key < ordered[j].issue.Key
-	})
 	rows := make([][]string, 0, len(ordered))
-	for _, group := range ordered {
+	for index, group := range ordered {
 		lastSeen := "-"
 		if !group.lastSeen.IsZero() {
 			lastSeen = formatStatusTime(group.lastSeen) + "\n" + formatStatusAge(checkedAt, group.lastSeen)
@@ -377,22 +390,53 @@ func formatRecentErrorReportAtStyled(groups map[string]*recentErrorGroup, lookba
 		if summary == "" {
 			summary = group.issue.Summary
 		}
-		rows = append(rows, []string{fmt.Sprint(group.count), lastSeen, group.issue.Kind, group.issue.Service, recentErrorSources(group), summary})
+		rows = append(rows, []string{fmt.Sprintf("[%d]", index+1), fmt.Sprint(group.count), lastSeen, group.issue.Kind, group.issue.Service, recentErrorSources(group), summary})
 	}
-	headers := []string{"Count", "Last Seen", "Type", "Service", "Pod / Container", "Summary"}
-	maximums := []int{5, 25, 16, 18, 32, 48}
+	headers := []string{"Select", "Count", "Last Seen", "Type", "Service", "Pod / Container", "Summary"}
+	maximums := []int{7, 5, 25, 16, 18, 32, 48}
 	if narrowStatusLayout(visuals) {
-		headers = []string{"Count", "Last Seen", "Error"}
-		maximums = []int{5, 25, max(28, visuals.Width-42)}
+		headers = []string{"Select", "Count", "Last Seen", "Error"}
+		maximums = []int{7, 5, 25, max(28, visuals.Width-50)}
 		compact := make([][]string, 0, len(rows))
 		for _, row := range rows {
-			compact = append(compact, []string{row[0], row[1], row[2] + " | " + row[3] + " | " + row[4] + " | " + row[5]})
+			compact = append(compact, []string{row[0], row[1], row[2], row[3] + " | " + row[4] + " | " + row[5] + " | " + row[6]})
 		}
 		rows = compact
 	}
 	return "\n" + statusSection(fmt.Sprintf("RECENT ERRORS · %d EVENT(S) IN %dm", total, minutes), visuals, toneAlert) +
 		statusMetadata(header+fmt.Sprintf(" | groups=%d | events=%d", len(ordered), total), visuals) +
 		formatTableStyled(headers, rows, maximums, visuals, toneAlert, true)
+}
+
+func orderedRecentErrorGroups(groups map[string]*recentErrorGroup) []*recentErrorGroup {
+	ordered := make([]*recentErrorGroup, 0, len(groups))
+	for _, group := range groups {
+		ordered = append(ordered, group)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].count != ordered[j].count {
+			return ordered[i].count > ordered[j].count
+		}
+		return ordered[i].issue.Key < ordered[j].issue.Key
+	})
+	return ordered
+}
+
+func recentErrorSelections(groups map[string]*recentErrorGroup) []StatusErrorSelection {
+	ordered := orderedRecentErrorGroups(groups)
+	result := make([]StatusErrorSelection, 0, len(ordered))
+	for _, group := range ordered {
+		summary := group.issue.FullSummary
+		if summary == "" {
+			summary = group.issue.Summary
+		}
+		result = append(result, StatusErrorSelection{
+			Count: group.count, Kind: group.issue.Kind, Service: group.issue.Service,
+			Pod: group.latestPod, Container: group.latestContainer,
+			Summary: summary, SearchTerm: group.issue.SearchTerm, LastSeen: group.lastSeen,
+		})
+	}
+	return result
 }
 
 func recentErrorSources(group *recentErrorGroup) string {
@@ -460,10 +504,19 @@ func (r Runner) RunStatus(ctx context.Context, namespace string, options StatusO
 		report, count := namespaceStatusReportAtStyled(payload, namespace, time.Now(), visuals)
 		fmt.Fprint(options.Output, report)
 		if !errorsScanned {
-			errorReport, scanErr := statusRunner.recentErrorReport(ctx, payload, options.Lookback, visuals)
+			groups, streams, failed, scanErr := statusRunner.scanRecentErrors(ctx, payload, options.Lookback)
+			errorReport := formatRecentErrorReportAtStyled(groups, options.Lookback, streams, failed, time.Now(), visuals)
 			fmt.Fprint(options.Output, errorReport)
 			if scanErr != nil {
 				fmt.Fprintln(options.Output, "RECENT ERRORS INCOMPLETE |", scanErr)
+			}
+			if options.OpenRecentErrors != nil {
+				selections := recentErrorSelections(groups)
+				if len(selections) > 0 {
+					if openErr := options.OpenRecentErrors(selections); openErr != nil {
+						fmt.Fprintln(options.Output, "Could not open selected recent error:", openErr)
+					}
+				}
 			}
 			errorsScanned = true
 		}

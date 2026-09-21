@@ -1627,7 +1627,11 @@ type sharedSnapshot struct {
 }
 
 func InitializeSharedFilter(path string) error {
-	if _, err := writeSharedText(path, "", sharedRevision{}); err != nil {
+	return InitializeSharedFilterWithText(path, "")
+}
+
+func InitializeSharedFilterWithText(path, text string) error {
+	if _, err := writeSharedText(path, text, sharedRevision{}); err != nil {
 		return err
 	}
 	_, err := writeSharedMode(path, false, sharedRevision{})

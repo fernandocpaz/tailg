@@ -117,6 +117,13 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 		}
 		if interactive(stdin) {
 			statusOptions.Input = stdin
+			statusOptions.OpenRecentErrors = func(errors []kube.StatusErrorSelection) error {
+				selected, ok, pickErr := tui.PickStatusError(errors)
+				if pickErr != nil || !ok {
+					return pickErr
+				}
+				return openStatusErrorLogs(ctx, options, namespace, selected, stdin, stdout, stderr)
+			}
 			if runtime.GOOS == "windows" {
 				statusOptions.OpenConsoles = func(pods []string) error {
 					if err := prepareSharedFilter(&options); err != nil {
@@ -351,6 +358,63 @@ pickAgain:
 		goto pickAgain
 	}
 	return 0
+}
+
+func openStatusErrorLogs(ctx context.Context, base Options, namespace string, selected kube.StatusErrorSelection, stdin io.Reader, stdout, stderr io.Writer) error {
+	if strings.TrimSpace(selected.Pod) == "" {
+		return fmt.Errorf("selected error has no pod source")
+	}
+	logOptions := base
+	logOptions.Status = false
+	logOptions.Versions = false
+	logOptions.Target = "pod/" + selected.Pod
+	logOptions.Namespace = namespace
+	logOptions.LegacyNamespace = ""
+	logOptions.Selector = ""
+	logOptions.SplitPanes = false
+	logOptions.TileWindows = false
+	logOptions.NoFollow = false
+	logOptions.LiveFilter = true
+	logOptions.DumpRequested = false
+	logOptions.DumpDirectory = ""
+	logOptions.DeploymentDump = false
+	logOptions.DeploymentDumpPath = ""
+	logOptions.TracePods = nil
+	logOptions.TraceSelectors = nil
+	logOptions.Include = nil
+	logOptions.TailSet = false
+	lookback := base.StatusLookback
+	if lookback <= 0 {
+		lookback = core.DefaultStatusLookback
+	}
+	logOptions.Since = fmt.Sprintf("%dm", max(int64(1), int64(lookback/time.Minute)))
+	if strings.TrimSpace(selected.Container) != "" {
+		logOptions.Container = "^" + regexp.QuoteMeta(selected.Container) + "$"
+	}
+
+	query := strings.TrimSpace(selected.SearchTerm)
+	if query == "" {
+		query = strings.TrimSpace(selected.Summary)
+	}
+	var filterFile string
+	if query != "" {
+		filterFile = filepath.Join(os.TempDir(), fmt.Sprintf("tailg-status-error-%d-%d.txt", os.Getpid(), time.Now().UnixNano()))
+		if err := tui.InitializeSharedFilterWithText(filterFile, query); err != nil {
+			return err
+		}
+		logOptions.FilterFile = filterFile
+		defer func() {
+			_ = os.Remove(filterFile)
+			_ = os.Remove(filterFile + ".mode")
+			_ = os.Remove(filterFile + ".lock")
+			_ = os.Remove(filterFile + ".mode.lock")
+		}()
+	}
+
+	if code := Run(ctx, logOptions, stdin, stdout, stderr); code != 0 {
+		return fmt.Errorf("log view exited with status %d", code)
+	}
+	return nil
 }
 
 func usesAppPicker(options Options) bool {
