@@ -28,13 +28,16 @@ type MappedResource struct {
 }
 
 type AppChoice struct {
-	Namespace string
-	Name      string
-	Pods      []string
-	Selector  string
-	Ready     string
-	Phases    string
-	Restarts  int
+	Namespace  string
+	Name       string
+	Pods       []string
+	Selector   string
+	Ready      string
+	Phases     string
+	Restarts   int
+	StartedAt  time.Time
+	DeployedAt time.Time
+	ImageTag   string
 }
 
 type LogEvent struct {

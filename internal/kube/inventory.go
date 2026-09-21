@@ -7,6 +7,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/fernandocpaz/tailg/internal/core"
 )
@@ -106,6 +107,10 @@ func (r Runner) Apps(ctx context.Context) ([]core.AppChoice, error) {
 	if err != nil {
 		return nil, err
 	}
+	replicaSetTimes := map[string]time.Time{}
+	if replicaSets, replicaSetErr := r.JSON(ctx, "get", "replicasets"); replicaSetErr == nil {
+		replicaSetTimes = replicaSetCreationTimes(replicaSets)
+	}
 	effectiveNamespace := r.Namespace
 	if effectiveNamespace == "" {
 		_, effectiveNamespace, err = r.CurrentContext(ctx)
@@ -114,11 +119,14 @@ func (r Runner) Apps(ctx context.Context) ([]core.AppChoice, error) {
 		}
 	}
 	type group struct {
-		pods      []string
-		selector  string
-		readyPods int
-		phases    map[string]int
-		restarts  int
+		pods       []string
+		selector   string
+		readyPods  int
+		phases     map[string]int
+		restarts   int
+		startedAt  time.Time
+		deployedAt time.Time
+		imageTags  map[string]bool
 	}
 	groups := map[string]*group{}
 	for _, raw := range sliceValue(payload["items"]) {
@@ -130,7 +138,7 @@ func (r Runner) Apps(ctx context.Context) ([]core.AppChoice, error) {
 		appName, selector := appIdentity(pod)
 		selected := groups[appName]
 		if selected == nil {
-			selected = &group{selector: selector, phases: map[string]int{}}
+			selected = &group{selector: selector, phases: map[string]int{}, imageTags: map[string]bool{}}
 			groups[appName] = selected
 		}
 		selected.pods = append(selected.pods, name)
@@ -143,6 +151,15 @@ func (r Runner) Apps(ctx context.Context) ([]core.AppChoice, error) {
 		}
 		selected.phases[podPhase(pod)]++
 		selected.restarts += restartCount(pod)
+		if startedAt := podStartedAt(pod); startedAt.After(selected.startedAt) {
+			selected.startedAt = startedAt
+		}
+		if deployedAt := podDeployedAt(pod, replicaSetTimes); deployedAt.After(selected.deployedAt) {
+			selected.deployedAt = deployedAt
+		}
+		for _, tag := range podImageTagLabels(pod) {
+			selected.imageTags[tag] = true
+		}
 	}
 	apps := make([]core.AppChoice, 0, len(groups))
 	for name, group := range groups {
@@ -150,6 +167,7 @@ func (r Runner) Apps(ctx context.Context) ([]core.AppChoice, error) {
 		apps = append(apps, core.AppChoice{
 			Namespace: effectiveNamespace, Name: name, Pods: group.pods, Selector: group.selector,
 			Ready: fmt.Sprintf("%d/%d", group.readyPods, len(group.pods)), Phases: phaseSummary(group.phases), Restarts: group.restarts,
+			StartedAt: group.startedAt, DeployedAt: group.deployedAt, ImageTag: imageTagSummary(group.imageTags),
 		})
 	}
 	sort.Slice(apps, func(i, j int) bool {
@@ -251,6 +269,90 @@ func restartCount(pod map[string]any) int {
 		total += intValue(mapValue(raw)["restartCount"])
 	}
 	return total
+}
+
+func podStartedAt(pod map[string]any) time.Time {
+	status := mapValue(pod["status"])
+	latest := parseKubeTimestamp(status["startTime"])
+	for _, raw := range sliceValue(status["containerStatuses"]) {
+		state := mapValue(mapValue(raw)["state"])
+		startedAt := parseKubeTimestamp(mapValue(state["running"])["startedAt"])
+		if startedAt.After(latest) {
+			latest = startedAt
+		}
+	}
+	return latest
+}
+
+func podDeployedAt(pod map[string]any, replicaSetTimes map[string]time.Time) time.Time {
+	metadata := mapValue(pod["metadata"])
+	fallback := parseKubeTimestamp(metadata["creationTimestamp"])
+	for _, raw := range sliceValue(metadata["ownerReferences"]) {
+		owner := mapValue(raw)
+		if stringValue(owner["kind"]) != "ReplicaSet" {
+			continue
+		}
+		if deployedAt := replicaSetTimes[stringValue(owner["name"])]; !deployedAt.IsZero() {
+			return deployedAt
+		}
+	}
+	return fallback
+}
+
+func replicaSetCreationTimes(payload map[string]any) map[string]time.Time {
+	result := map[string]time.Time{}
+	for _, raw := range sliceValue(payload["items"]) {
+		replicaSet := mapValue(raw)
+		metadata := mapValue(replicaSet["metadata"])
+		name := stringValue(metadata["name"])
+		if name != "" {
+			result[name] = parseKubeTimestamp(metadata["creationTimestamp"])
+		}
+	}
+	return result
+}
+
+func podImageTagLabels(pod map[string]any) []string {
+	containers := sliceValue(mapValue(pod["spec"])["containers"])
+	labels := make([]string, 0, len(containers))
+	for _, raw := range containers {
+		container := mapValue(raw)
+		tag := imageTag(stringValue(container["image"]))
+		if len(containers) == 1 {
+			labels = append(labels, tag)
+			continue
+		}
+		name := stringValue(container["name"])
+		if name == "" {
+			name = "container"
+		}
+		labels = append(labels, name+"="+tag)
+	}
+	return labels
+}
+
+func imageTagSummary(tags map[string]bool) string {
+	if len(tags) == 0 {
+		return "-"
+	}
+	values := make([]string, 0, len(tags))
+	for tag := range tags {
+		values = append(values, tag)
+	}
+	sort.Strings(values)
+	return strings.Join(values, ",")
+}
+
+func parseKubeTimestamp(value any) time.Time {
+	raw := stringValue(value)
+	if raw == "" {
+		return time.Time{}
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed
 }
 
 func appIdentity(pod map[string]any) (string, string) {

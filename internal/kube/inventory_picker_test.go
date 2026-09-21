@@ -1,0 +1,71 @@
+package kube
+
+import (
+	"reflect"
+	"testing"
+	"time"
+)
+
+func TestPodPickerMetadata(t *testing.T) {
+	pod := map[string]any{
+		"metadata": map[string]any{
+			"name":              "api-abc-123",
+			"creationTimestamp": "2026-09-20T10:05:00Z",
+			"ownerReferences": []any{
+				map[string]any{"kind": "ReplicaSet", "name": "api-abc", "controller": true},
+			},
+		},
+		"spec": map[string]any{
+			"containers": []any{
+				map[string]any{"name": "api", "image": "registry.example/api:20260920.3"},
+				map[string]any{"name": "otel", "image": "registry.example/otel@sha256:abc123"},
+			},
+		},
+		"status": map[string]any{
+			"startTime": "2026-09-20T10:06:00Z",
+			"containerStatuses": []any{
+				map[string]any{"name": "api", "state": map[string]any{"running": map[string]any{"startedAt": "2026-09-20T10:08:00Z"}}},
+				map[string]any{"name": "otel", "state": map[string]any{"running": map[string]any{"startedAt": "2026-09-20T10:07:00Z"}}},
+			},
+		},
+	}
+
+	wantStarted := time.Date(2026, 9, 20, 10, 8, 0, 0, time.UTC)
+	if got := podStartedAt(pod); !got.Equal(wantStarted) {
+		t.Fatalf("podStartedAt = %s, want %s", got, wantStarted)
+	}
+
+	rsTimes := map[string]time.Time{
+		"api-abc": time.Date(2026, 9, 20, 9, 59, 0, 0, time.UTC),
+	}
+	if got := podDeployedAt(pod, rsTimes); !got.Equal(rsTimes["api-abc"]) {
+		t.Fatalf("podDeployedAt = %s, want ReplicaSet creation %s", got, rsTimes["api-abc"])
+	}
+
+	wantTags := []string{"api=20260920.3", "otel=sha256:abc123"}
+	if got := podImageTagLabels(pod); !reflect.DeepEqual(got, wantTags) {
+		t.Fatalf("podImageTagLabels = %v, want %v", got, wantTags)
+	}
+}
+
+func TestPodDeployedAtFallsBackToPodCreation(t *testing.T) {
+	pod := map[string]any{
+		"metadata": map[string]any{
+			"creationTimestamp": "2026-09-20T11:00:00Z",
+			"ownerReferences": []any{
+				map[string]any{"kind": "ReplicaSet", "name": "missing-rs", "controller": true},
+			},
+		},
+	}
+	want := time.Date(2026, 9, 20, 11, 0, 0, 0, time.UTC)
+	if got := podDeployedAt(pod, nil); !got.Equal(want) {
+		t.Fatalf("podDeployedAt fallback = %s, want %s", got, want)
+	}
+}
+
+func TestImageTagSummary(t *testing.T) {
+	got := imageTagSummary(map[string]bool{"worker=42": true, "sidecar=1.2": true})
+	if got != "sidecar=1.2,worker=42" {
+		t.Fatalf("imageTagSummary = %q", got)
+	}
+}
