@@ -143,18 +143,27 @@ func (s *searchController) stop() {
 }
 
 var (
-	headerStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
-	selectedStyle    = lipgloss.NewStyle().Background(lipgloss.AdaptiveColor{Light: "#DCE7F7", Dark: "#1F2937"})
-	matchStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("11"))
-	filterLabelStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
-	modeStyle        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("12")).Padding(0, 1)
-	okStyle          = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10"))
-	warnStyle        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("11"))
-	// Avoid the theme's bright-red slot: it can make error labels invisible.
+	accentColor       = lipgloss.AdaptiveColor{Light: "#7A4E00", Dark: "#FFD166"}
+	positiveColor     = lipgloss.AdaptiveColor{Light: "#176B3A", Dark: "#7EE787"}
+	mutedColor        = lipgloss.AdaptiveColor{Light: "#62666D", Dark: "#A8ADB4"}
+	selectionBG       = lipgloss.AdaptiveColor{Light: "#FFF4D6", Dark: "#302A1F"}
+	selectionFG       = lipgloss.AdaptiveColor{Light: "#2A241A", Dark: "#FFF7E6"}
+	modeBackground    = lipgloss.AdaptiveColor{Light: "#7A4E00", Dark: "#FFD166"}
+	modeForeground    = lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#1B1B1B"}
+	matchBackground   = lipgloss.AdaptiveColor{Light: "#FFE8A3", Dark: "#FFE66D"}
+	matchForeground   = lipgloss.AdaptiveColor{Light: "#1B1B1B", Dark: "#1B1B1B"}
+	headerStyle       = lipgloss.NewStyle().Bold(true).Foreground(accentColor)
+	selectedStyle     = lipgloss.NewStyle().Foreground(selectionFG).Background(selectionBG)
+	matchStyle        = lipgloss.NewStyle().Bold(true).Foreground(matchForeground).Background(matchBackground)
+	filterLabelStyle  = lipgloss.NewStyle().Bold(true).Foreground(positiveColor)
+	modeStyle         = lipgloss.NewStyle().Bold(true).Foreground(modeForeground).Background(modeBackground).Padding(0, 1)
+	okStyle           = lipgloss.NewStyle().Bold(true).Foreground(positiveColor)
+	warnStyle         = lipgloss.NewStyle().Bold(true).Foreground(accentColor)
+	// Use a soft coral rather than a terminal theme's bright-red slot.
 	alertStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.CompleteColor{
 		TrueColor: "#FF6B6B", ANSI256: "203", ANSI: "1",
 	})
-	dimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	dimStyle = lipgloss.NewStyle().Foreground(mutedColor)
 	keyStyle = lipgloss.NewStyle().Bold(true)
 )
 
