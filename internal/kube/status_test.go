@@ -34,7 +34,7 @@ esac
 	if code != 0 {
 		t.Fatalf("status code=%d output=%s", code, output.String())
 	}
-	for _, expected := range []string{"all pods healthy", "RECENT ERRORS", "lookback=20m", "Last Seen", "Pod / Container", "api-pod/api", "database timeout"} {
+	for _, expected := range []string{"all pods healthy", "RECENT ERRORS", "lookback=20m", "Select", "[1]", "Last Seen", "Pod / Container", "api-pod/api", "database timeout"} {
 		if !strings.Contains(output.String(), expected) {
 			t.Fatalf("status output missing %q: %s", expected, output.String())
 		}
@@ -176,5 +176,63 @@ func TestPodStatusSummaryKeepsHistoricalCrashEvidenceWithoutMarkingPodUnhealthy(
 	}
 	if issues := PodHealthIssues(pod); len(issues) != 0 {
 		t.Fatalf("historical restart should not make a healthy pod unhealthy: %#v", issues)
+	}
+}
+
+
+func TestRecentErrorSelectionsUseLatestSourceAndSearchTerm(t *testing.T) {
+	now := time.Date(2026, 9, 21, 16, 0, 0, 0, time.UTC)
+	groups := map[string]*recentErrorGroup{
+		"timeout": {
+			issue: core.Issue{Kind: "TIMEOUT", Service: "api", FullSummary: "database timeout", SearchTerm: "timeout"},
+			count: 2, lastSeen: now,
+			latestPod: "api-new", latestContainer: "api",
+			sources: map[string]bool{"api-old/api": true, "api-new/api": true},
+		},
+	}
+	selections := recentErrorSelections(groups)
+	if len(selections) != 1 {
+		t.Fatalf("selections=%#v", selections)
+	}
+	got := selections[0]
+	if got.Pod != "api-new" || got.Container != "api" || got.SearchTerm != "timeout" || got.Summary != "database timeout" || got.Count != 2 {
+		t.Fatalf("selection=%+v", got)
+	}
+}
+
+func TestRunStatusOffersRecentErrorsForInteractiveOpening(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake kubectl is a shell script")
+	}
+	path := filepath.Join(t.TempDir(), "kubectl")
+	script := `#!/bin/sh
+case "$*" in
+  *"get pods -o json"*) printf '%s' '{"items":[{"metadata":{"name":"api-pod"},"spec":{"containers":[{"name":"api"}]},"status":{"phase":"Running","containerStatuses":[{"name":"api","ready":true,"restartCount":0,"state":{"running":{}}}]}}]}' ;;
+  *"logs pod/api-pod -c api"* "--since 20m"*) printf '%s
+' '2026-09-21T15:58:00Z [15:58:00 ERR] upstream timeout' ;;
+  *) echo "unexpected kubectl args: $*" >&2; exit 2 ;;
+esac
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	var offered []StatusErrorSelection
+	code := (Runner{Namespace: "default", Binary: path}).RunStatus(context.Background(), "default", StatusOptions{
+		Lookback: 20 * time.Minute,
+		Output: &output,
+		OpenRecentErrors: func(values []StatusErrorSelection) error {
+			offered = append([]StatusErrorSelection(nil), values...)
+			return nil
+		},
+	})
+	if code != 0 {
+		t.Fatalf("status code=%d output=%s", code, output.String())
+	}
+	if len(offered) != 1 {
+		t.Fatalf("offered=%#v output=%s", offered, output.String())
+	}
+	if offered[0].Pod != "api-pod" || offered[0].Container != "api" || offered[0].SearchTerm == "" {
+		t.Fatalf("offered selection=%+v", offered[0])
 	}
 }
