@@ -91,6 +91,39 @@ func (r Runner) CurrentContext(ctx context.Context) (string, string, error) {
 	return current, namespace, nil
 }
 
+type ContextInfo struct {
+	Name      string
+	Namespace string
+	Current   bool
+}
+
+// Contexts reads kubeconfig without a context override so every configured
+// context remains visible, even when tailg was started with --context.
+func (r Runner) Contexts(ctx context.Context) ([]ContextInfo, error) {
+	configRunner := r
+	configRunner.Context = ""
+	configRunner.Namespace = ""
+	payload, err := configRunner.JSON(ctx, "config", "view")
+	if err != nil {
+		return nil, err
+	}
+	current := stringValue(payload["current-context"])
+	result := make([]ContextInfo, 0, len(sliceValue(payload["contexts"])))
+	for _, raw := range sliceValue(payload["contexts"]) {
+		entry := mapValue(raw)
+		name := stringValue(entry["name"])
+		if name == "" {
+			continue
+		}
+		namespace := stringValue(mapValue(entry["context"])["namespace"])
+		if namespace == "" {
+			namespace = "default"
+		}
+		result = append(result, ContextInfo{Name: name, Namespace: namespace, Current: name == current})
+	}
+	return result, nil
+}
+
 func mapValue(value any) map[string]any {
 	if result, ok := value.(map[string]any); ok {
 		return result

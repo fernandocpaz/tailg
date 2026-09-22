@@ -15,28 +15,35 @@ import (
 const maxPickerApps = 20
 
 type pickerModel struct {
-	apps       []core.AppChoice
-	totalApps  int
-	index      int
-	selected   *core.AppChoice
-	cancelled  bool
-	width      int
+	apps        []core.AppChoice
+	totalApps   int
+	index       int
+	result      PickerResult
+	kubeContext string
+	namespace   string
+	width       int
 }
 
-func PickApp(apps []core.AppChoice) (core.AppChoice, error) {
-	if len(apps) == 0 {
-		return core.AppChoice{}, fmt.Errorf("no applications were found")
-	}
+type PickerAction int
+
+const (
+	PickerQuit PickerAction = iota
+	PickerOpenApp
+	PickerSwitchContext
+)
+
+type PickerResult struct {
+	Action PickerAction
+	App    core.AppChoice
+}
+
+func PickApp(apps []core.AppChoice, kubeContext, namespace string) (PickerResult, error) {
 	prepared, total := preparePickerApps(apps)
-	result, err := tea.NewProgram(pickerModel{apps: prepared, totalApps: total}).Run()
+	result, err := tea.NewProgram(pickerModel{apps: prepared, totalApps: total, kubeContext: kubeContext, namespace: namespace}).Run()
 	if err != nil {
-		return core.AppChoice{}, err
+		return PickerResult{}, err
 	}
-	picker := result.(pickerModel)
-	if picker.cancelled || picker.selected == nil {
-		return core.AppChoice{}, fmt.Errorf("selection cancelled")
-	}
-	return *picker.selected, nil
+	return result.(pickerModel).result, nil
 }
 func (m pickerModel) Init() tea.Cmd { return nil }
 func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -47,20 +54,29 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := message.(tea.KeyMsg); ok {
 		switch key.String() {
 		case "ctrl+c", "q", "esc":
-			m.cancelled = true
+			m.result.Action = PickerQuit
+			return m, tea.Quit
+		case "c":
+			m.result.Action = PickerSwitchContext
 			return m, tea.Quit
 		case "up", "k":
-			m.index = max(0, m.index-1)
+			if len(m.apps) > 0 {
+				m.index = max(0, m.index-1)
+			}
 		case "down", "j":
-			m.index = min(len(m.apps)-1, m.index+1)
+			if len(m.apps) > 0 {
+				m.index = min(len(m.apps)-1, m.index+1)
+			}
 		case "enter":
-			selected := m.apps[m.index]
-			m.selected = &selected
-			return m, tea.Quit
+			if len(m.apps) > 0 {
+				m.result = PickerResult{Action: PickerOpenApp, App: m.apps[m.index]}
+				return m, tea.Quit
+			}
 		}
 	}
 	return m, nil
 }
+
 const (
 	pickerAppWidth      = 36
 	pickerReadyWidth    = 7
@@ -71,14 +87,18 @@ const (
 )
 
 func (m pickerModel) View() string {
-	subtitle := "Up/Down move | Enter selects | Esc cancels"
+	subtitle := "Up/Down move | Enter opens | C context | Q quits"
 	if m.totalApps > len(m.apps) {
 		subtitle += fmt.Sprintf(" | showing newest %d of %d deployments", len(m.apps), m.totalApps)
 	}
 	var lines = []string{
 		headerStyle.Render("Select an application"),
+		fmt.Sprintf("Context: %s  |  Namespace: %s", m.kubeContext, m.namespace),
 		dimStyle.Render(subtitle),
 		"",
+	}
+	if len(m.apps) == 0 {
+		return strings.Join(append(lines, "No applications found in this namespace. Press C to switch context."), "\n")
 	}
 	now := time.Now()
 	imageWidth := pickerImageWidth(m.width)

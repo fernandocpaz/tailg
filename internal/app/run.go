@@ -141,21 +141,25 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 	}
 
 	effectiveContext := options.Context
+	resolvedContext, contextNamespace, contextErr := runner.CurrentContext(ctx)
+	if contextErr != nil {
+		fmt.Fprintln(stderr, contextErr)
+		return 1
+	}
 	if effectiveContext == "" {
-		var contextErr error
-		effectiveContext, _, contextErr = runner.CurrentContext(ctx)
-		if contextErr != nil {
-			fmt.Fprintln(stderr, contextErr)
-			return 1
-		}
+		effectiveContext = resolvedContext
 	}
 
 	pickerMode := usesAppPicker(options)
 	namespaceMode := options.Target == "" && options.Namespace != ""
 	pickerLoop := pickerMode && options.LiveFilter && !options.NoFollow && !options.SplitPanes && !options.TileWindows
+	effectiveNamespace := options.Namespace
+	if pickerMode {
+		effectiveNamespace = contextNamespace
+		runner.Namespace = effectiveNamespace
+	}
 
 pickAgain:
-	effectiveNamespace := options.Namespace
 	resolvedTarget := "pod/*"
 	var selectedPods, selectedSelectors []string
 	if !namespaceMode {
@@ -165,11 +169,42 @@ pickAgain:
 				fmt.Fprintln(stderr, appsErr)
 				return 1
 			}
-			selected, selectErr := tui.PickApp(apps)
+			selection, selectErr := tui.PickApp(apps, effectiveContext, effectiveNamespace)
 			if selectErr != nil {
 				fmt.Fprintln(stderr, selectErr)
 				return 1
 			}
+			switch selection.Action {
+			case tui.PickerQuit:
+				return 0
+			case tui.PickerSwitchContext:
+				contexts, contextsErr := runner.Contexts(ctx)
+				if contextsErr != nil {
+					fmt.Fprintln(stderr, contextsErr)
+					return 1
+				}
+				selectedContext, ok, pickErr := tui.PickContext(contexts, effectiveContext)
+				if pickErr != nil {
+					fmt.Fprintln(stderr, pickErr)
+					return 1
+				}
+				if !ok || selectedContext == effectiveContext {
+					goto pickAgain
+				}
+				candidate := kube.NewRunner("", selectedContext)
+				_, newNamespace, contextErr := candidate.CurrentContext(ctx)
+				if contextErr != nil {
+					fmt.Fprintln(stderr, contextErr)
+					goto pickAgain
+				}
+				effectiveContext = selectedContext
+				effectiveNamespace = newNamespace
+				candidate.Namespace = newNamespace
+				runner = candidate
+				options.Context = selectedContext
+				goto pickAgain
+			}
+			selected := selection.App
 			effectiveNamespace = selected.Namespace
 			if selected.Selector != "" {
 				selectedSelectors = []string{selected.Selector}
@@ -354,7 +389,7 @@ pickAgain:
 		return 1
 	}
 	if pickerLoop {
-		runner.Namespace = options.Namespace
+		runner.Namespace = effectiveNamespace
 		goto pickAgain
 	}
 	return 0

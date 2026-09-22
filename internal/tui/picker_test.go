@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fernandocpaz/tailg/internal/core"
 )
 
@@ -31,6 +32,27 @@ func TestFormatPickerAge(t *testing.T) {
 	}
 }
 
+func TestAppPickerSwitchesContextEvenWithoutApplications(t *testing.T) {
+	m := pickerModel{kubeContext: "tkgs-dev", namespace: "apollo"}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	picker := updated.(pickerModel)
+	if picker.result.Action != PickerSwitchContext {
+		t.Fatalf("action = %v, want switch context", picker.result.Action)
+	}
+	if !strings.Contains(picker.View(), "tkgs-dev") || !strings.Contains(picker.View(), "apollo") {
+		t.Fatalf("missing context or namespace: %q", picker.View())
+	}
+}
+
+func TestAppPickerOpensSelectedApplication(t *testing.T) {
+	m := pickerModel{apps: []core.AppChoice{{Name: "api"}, {Name: "worker"}}}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, _ = updated.(pickerModel).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	picker := updated.(pickerModel)
+	if picker.result.Action != PickerOpenApp || picker.result.App.Name != "worker" {
+		t.Fatalf("unexpected selection: %+v", picker.result)
+	}
+}
 
 func TestRenderPickerRowUsesColumnsWithoutRepeatedLabels(t *testing.T) {
 	row := renderPickerRow(
@@ -67,7 +89,6 @@ func TestTruncatePickerCell(t *testing.T) {
 		t.Fatalf("truncatePickerCell = %q", got)
 	}
 }
-
 
 func TestPreparePickerAppsShowsNewestTwentyDeployments(t *testing.T) {
 	base := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)

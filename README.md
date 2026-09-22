@@ -61,8 +61,12 @@ tailg diagnose example-app default --output ndjson
 ```
 
 Running `tailg` with no target opens the interactive application picker in the
-current Kubernetes namespace. Targets may still be Kubernetes resources, app
-names, case-insensitive wildcard app patterns such as `example-*`, or
+current Kubernetes namespace. Press `C` in the picker to choose another
+kubeconfig context; the list shows each context's namespace. The switch lasts
+for this tailg session and does not change the context used by other terminals.
+After closing a log view, the picker returns in the selected context. Targets
+may still be Kubernetes resources, app names, case-insensitive wildcard app
+patterns such as `example-*`, or
 comma-separated app names. The old standalone `*` picker target has been removed.
 The namespace can be supplied positionally or with `--namespace`.
 
