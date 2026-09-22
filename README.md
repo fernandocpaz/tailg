@@ -66,6 +66,10 @@ kubeconfig context, or `N` to choose a namespace in that context. The namespace
 picker also accepts a typed name with `/` when listing namespaces is blocked by
 cluster permissions. These switches last for this tailg session and do not
 change the context or namespace used by other terminals.
+The current selection stays at the top of each picker, followed by the most
+used choices (five rows total). Select **More** to browse less used choices. tailg remembers
+usage locally when you open an application, and tracks namespaces separately
+for each context.
 After closing a log view, the picker returns in the selected context. Targets
 may still be Kubernetes resources, app names, case-insensitive wildcard app
 patterns such as `example-*`, or

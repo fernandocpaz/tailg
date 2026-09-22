@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -30,5 +31,17 @@ func TestNamespacePickerListAndManualEntry(t *testing.T) {
 	}
 	if !strings.Contains(manual.View(), "Namespace list unavailable") {
 		t.Fatalf("missing listing error: %q", manual.View())
+	}
+}
+
+func TestNamespacePickerUsesHistoryWhenListingIsForbidden(t *testing.T) {
+	usage := map[string]ChoiceUsage{"apollo": {Count: 5}, "lrjob": {Count: 2}}
+	withError := namespacePickerChoices(nil, "ui", errors.New("forbidden"), usage)
+	if got := strings.Join(withError, ","); got != "ui,apollo,lrjob" {
+		t.Fatalf("fallback choices = %q", got)
+	}
+	fromCluster := namespacePickerChoices([]string{"ui", "api"}, "ui", nil, usage)
+	if got := strings.Join(fromCluster, ","); got != "ui,api" {
+		t.Fatalf("listed choices = %q", got)
 	}
 }

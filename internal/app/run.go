@@ -153,6 +153,10 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 	pickerMode := usesAppPicker(options)
 	namespaceMode := options.Target == "" && options.Namespace != ""
 	pickerLoop := pickerMode && options.LiveFilter && !options.NoFollow && !options.SplitPanes && !options.TileWindows
+	var usage pickerUsage
+	if pickerMode {
+		usage = loadPickerUsage()
+	}
 	effectiveNamespace := options.Namespace
 	if pickerMode {
 		effectiveNamespace = contextNamespace
@@ -177,7 +181,7 @@ pickAgain:
 				goto pickAgain
 			case tui.PickerSwitchNamespace:
 				namespaces, listErr := runner.Namespaces(ctx)
-				selectedNamespace, ok, pickErr := tui.PickNamespace(namespaces, effectiveNamespace, listErr)
+				selectedNamespace, ok, pickErr := tui.PickNamespace(namespaces, effectiveNamespace, listErr, usage.Namespaces[effectiveContext])
 				if pickErr != nil {
 					fmt.Fprintln(stderr, pickErr)
 					return 1
@@ -193,7 +197,7 @@ pickAgain:
 					fmt.Fprintln(stderr, contextsErr)
 					return 1
 				}
-				selectedContext, ok, pickErr := tui.PickContext(contexts, effectiveContext)
+				selectedContext, ok, pickErr := tui.PickContext(contexts, effectiveContext, usage.Contexts)
 				if pickErr != nil {
 					fmt.Fprintln(stderr, pickErr)
 					return 1
@@ -273,6 +277,9 @@ pickAgain:
 	if len(items) == 0 && !wantsBundle {
 		fmt.Fprintln(stderr, "No matching pods/containers found.")
 		return 1
+	}
+	if pickerMode && len(items) > 0 {
+		usage.record(effectiveContext, effectiveNamespace)
 	}
 	// A child pane displays one pod, but trace lookup must retain the scope
 	// selected by its parent. Prefer an explicitly propagated scope, then keep

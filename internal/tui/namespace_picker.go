@@ -2,6 +2,7 @@ package tui
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -17,16 +18,17 @@ type namespacePickerModel struct {
 	selected   string
 	loadError  string
 	entering   bool
+	expanded   bool
 	input      textinput.Model
 }
 
 // PickNamespace allows entering a name even when RBAC denies listing all
 // namespaces. Actual access is checked when the app picker loads pods.
-func PickNamespace(namespaces []string, current string, listErr error) (selected string, ok bool, err error) {
+func PickNamespace(namespaces []string, current string, listErr error, usage map[string]ChoiceUsage) (selected string, ok bool, err error) {
 	input := textinput.New()
 	input.Prompt = "Namespace: "
 	input.Placeholder = "type a namespace name"
-	model := namespacePickerModel{namespaces: prepareNamespaces(namespaces, current), input: input}
+	model := namespacePickerModel{namespaces: namespacePickerChoices(namespaces, current, listErr, usage), input: input}
 	if listErr != nil {
 		model.loadError = pickerErrorSummary(listErr)
 	}
@@ -42,6 +44,17 @@ func PickNamespace(namespaces []string, current string, listErr error) (selected
 	}
 	selected = result.(namespacePickerModel).selected
 	return selected, selected != "", nil
+}
+
+func namespacePickerChoices(namespaces []string, current string, listErr error, usage map[string]ChoiceUsage) []string {
+	candidates := append([]string(nil), namespaces...)
+	if listErr != nil {
+		// Past choices remain useful if RBAC denies cluster-wide listing.
+		for name := range usage {
+			candidates = append(candidates, name)
+		}
+	}
+	return rankPickerNames(prepareNamespaces(candidates, current), current, usage)
 }
 
 func prepareNamespaces(namespaces []string, current string) []string {
@@ -83,7 +96,14 @@ func (m namespacePickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		switch key.String() {
-		case "ctrl+c", "q", "esc":
+		case "ctrl+c", "q":
+			return m, tea.Quit
+		case "esc", "b":
+			if m.expanded {
+				m.expanded = false
+				m.index = 0
+				return m, nil
+			}
 			return m, tea.Quit
 		case "/":
 			m.entering = true
@@ -92,9 +112,14 @@ func (m namespacePickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.index = max(0, m.index-1)
 		case "down", "j":
 			if len(m.namespaces) > 0 {
-				m.index = min(len(m.namespaces)-1, m.index+1)
+				m.index = min(visibleChoiceCount(len(m.namespaces), m.expanded)-1, m.index+1)
 			}
 		case "enter":
+			if isMoreChoice(m.index, len(m.namespaces), m.expanded) {
+				m.expanded = true
+				m.index = frequentChoices
+				return m, nil
+			}
 			if len(m.namespaces) > 0 {
 				m.selected = m.namespaces[m.index]
 				return m, tea.Quit
@@ -105,9 +130,13 @@ func (m namespacePickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m namespacePickerModel) View() string {
+	help := "Up/Down move | Enter switches | / enter name | Esc returns to applications"
+	if m.expanded {
+		help = "All namespaces | Up/Down move | Enter switches | / enter name | Esc frequent"
+	}
 	lines := []string{
 		headerStyle.Render("Switch Kubernetes namespace"),
-		dimStyle.Render("Up/Down move | Enter switches | / enter name | Esc returns to applications"),
+		dimStyle.Render(help),
 		"",
 	}
 	if m.loadError != "" {
@@ -120,9 +149,13 @@ func (m namespacePickerModel) View() string {
 		lines = append(lines, "Press / to enter a namespace name.")
 		return strings.Join(lines, "\n")
 	}
-	start := max(0, m.index-visibleNamespaces/2)
-	start = min(start, max(0, len(m.namespaces)-visibleNamespaces))
-	end := min(len(m.namespaces), start+visibleNamespaces)
+	limit := visibleChoiceCount(len(m.namespaces), m.expanded)
+	start := 0
+	if m.expanded && limit > visibleNamespaces {
+		start = max(0, m.index-visibleNamespaces/2)
+		start = min(start, limit-visibleNamespaces)
+	}
+	end := min(limit, start+visibleNamespaces)
 	for index := start; index < end; index++ {
 		marker := "  "
 		style := lipgloss.NewStyle()
@@ -130,9 +163,13 @@ func (m namespacePickerModel) View() string {
 			marker = "> "
 			style = selectedStyle
 		}
+		if isMoreChoice(index, len(m.namespaces), m.expanded) {
+			lines = append(lines, style.Render(marker+"More… ("+strconv.Itoa(len(m.namespaces)-frequentChoices)+" other namespaces)"))
+			continue
+		}
 		lines = append(lines, style.Render(marker+m.namespaces[index]))
 	}
-	if len(m.namespaces) > visibleNamespaces {
+	if m.expanded && len(m.namespaces) > visibleNamespaces {
 		lines = append(lines, dimStyle.Render("Use Up/Down to browse all namespaces"))
 	}
 	return strings.Join(lines, "\n")
