@@ -15,28 +15,65 @@ import (
 const maxPickerApps = 20
 
 type pickerModel struct {
-	apps       []core.AppChoice
-	totalApps  int
-	index      int
-	selected   *core.AppChoice
-	cancelled  bool
-	width      int
+	apps        []core.AppChoice
+	totalApps   int
+	index       int
+	checked     map[string]bool
+	note        string
+	result      PickerResult
+	kubeContext string
+	namespace   string
+	loadError   string
+	width       int
 }
 
-func PickApp(apps []core.AppChoice) (core.AppChoice, error) {
-	if len(apps) == 0 {
-		return core.AppChoice{}, fmt.Errorf("no applications were found")
-	}
+type PickerAction int
+
+const (
+	PickerQuit PickerAction = iota
+	PickerOpenApp
+	PickerSwitchContext
+	PickerSwitchNamespace
+	PickerRefresh
+	PickerSelectPods
+)
+
+type PickerResult struct {
+	Action PickerAction
+	App    core.AppChoice
+	Apps   []core.AppChoice
+	Pods   []string
+	Marked []string
+}
+
+func PickApp(apps []core.AppChoice, kubeContext, namespace string, loadErr error, previous []string) (PickerResult, error) {
 	prepared, total := preparePickerApps(apps)
-	result, err := tea.NewProgram(pickerModel{apps: prepared, totalApps: total}).Run()
+	model := newPickerModel(prepared, total, kubeContext, namespace, previous)
+	if loadErr != nil {
+		model.loadError = pickerErrorSummary(loadErr)
+	}
+	result, err := tea.NewProgram(model).Run()
 	if err != nil {
-		return core.AppChoice{}, err
+		return PickerResult{}, err
 	}
-	picker := result.(pickerModel)
-	if picker.cancelled || picker.selected == nil {
-		return core.AppChoice{}, fmt.Errorf("selection cancelled")
+	return result.(pickerModel).result, nil
+}
+
+func newPickerModel(apps []core.AppChoice, total int, kubeContext, namespace string, previous []string) pickerModel {
+	model := pickerModel{apps: apps, totalApps: total, kubeContext: kubeContext, namespace: namespace}
+	previousSet := make(map[string]bool, len(previous))
+	for _, name := range previous {
+		previousSet[name] = true
 	}
-	return *picker.selected, nil
+	for _, app := range apps {
+		if previousSet[app.Name] {
+			if model.checked == nil {
+				model.checked = make(map[string]bool)
+			}
+			model.checked[app.Name] = true
+		}
+	}
+	return model
 }
 func (m pickerModel) Init() tea.Cmd { return nil }
 func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -47,20 +84,73 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := message.(tea.KeyMsg); ok {
 		switch key.String() {
 		case "ctrl+c", "q", "esc":
-			m.cancelled = true
+			m.result.Action = PickerQuit
 			return m, tea.Quit
+		case "c":
+			m.result.Action = PickerSwitchContext
+			return m, tea.Quit
+		case "n":
+			m.result.Action = PickerSwitchNamespace
+			return m, tea.Quit
+		case "r":
+			m.result.Action = PickerRefresh
+			return m, tea.Quit
+		case "p":
+			if len(m.checked) > 0 {
+				m.note = "Uncheck applications before choosing exact pods."
+				return m, nil
+			}
+			m.result.Action = PickerSelectPods
+			return m, tea.Quit
+		case " ":
+			if len(m.apps) > 0 {
+				if m.checked == nil {
+					m.checked = make(map[string]bool)
+				}
+				name := m.apps[m.index].Name
+				if m.checked[name] {
+					delete(m.checked, name)
+				} else {
+					m.checked[name] = true
+				}
+				m.note = ""
+			}
 		case "up", "k":
-			m.index = max(0, m.index-1)
+			if len(m.apps) > 0 {
+				m.index = max(0, m.index-1)
+			}
 		case "down", "j":
-			m.index = min(len(m.apps)-1, m.index+1)
+			if len(m.apps) > 0 {
+				m.index = min(len(m.apps)-1, m.index+1)
+			}
 		case "enter":
-			selected := m.apps[m.index]
-			m.selected = &selected
-			return m, tea.Quit
+			if len(m.apps) > 0 {
+				selected := m.checkedChoices()
+				marked := make([]string, 0, len(selected))
+				for _, app := range selected {
+					marked = append(marked, app.Name)
+				}
+				if len(selected) == 0 {
+					selected = []core.AppChoice{m.apps[m.index]}
+				}
+				m.result = PickerResult{Action: PickerOpenApp, App: selected[0], Apps: selected, Marked: marked}
+				return m, tea.Quit
+			}
 		}
 	}
 	return m, nil
 }
+
+func (m pickerModel) checkedChoices() []core.AppChoice {
+	var selected []core.AppChoice
+	for _, app := range m.apps {
+		if m.checked[app.Name] {
+			selected = append(selected, app)
+		}
+	}
+	return selected
+}
+
 const (
 	pickerAppWidth      = 36
 	pickerReadyWidth    = 7
@@ -71,14 +161,41 @@ const (
 )
 
 func (m pickerModel) View() string {
-	subtitle := "Up/Down move | Enter selects | Esc cancels"
-	if m.totalApps > len(m.apps) {
-		subtitle += fmt.Sprintf(" | showing newest %d of %d deployments", len(m.apps), m.totalApps)
-	}
 	var lines = []string{
 		headerStyle.Render("Select an application"),
-		dimStyle.Render(subtitle),
+		fmt.Sprintf("Context: %s  |  Namespace: %s", m.kubeContext, m.namespace),
+		renderPickerShortcuts(
+			shortcut("↑↓", "Move"),
+			shortcut("SPACE", "Select"),
+			shortcut("ENTER", "Open"),
+			shortcut("P", "Exact pods"),
+		),
+		renderPickerShortcuts(
+			shortcut("C", "Context"),
+			shortcut("N", "Namespace"),
+			shortcut("R", "Retry"),
+			shortcut("Q", "Quit"),
+		),
 		"",
+	}
+	if m.totalApps > len(m.apps) {
+		lines = append(lines, dimStyle.Render(fmt.Sprintf("Showing newest %d of %d deployments", len(m.apps), m.totalApps)), "")
+	}
+	if len(m.checked) > 0 {
+		podCount := 0
+		for _, app := range m.checkedChoices() {
+			podCount += len(app.Pods)
+		}
+		lines = append(lines, fmt.Sprintf("Selected: %d applications · %d current pods", len(m.checked), podCount), "")
+	}
+	if m.note != "" {
+		lines = append(lines, m.note, "")
+	}
+	if len(m.apps) == 0 {
+		if m.loadError != "" {
+			return strings.Join(append(lines, "Could not load applications: "+m.loadError, "Press C to switch context, N to choose namespace, or R to retry."), "\n")
+		}
+		return strings.Join(append(lines, "No applications found in this namespace. Press C to switch context or N to choose namespace."), "\n")
 	}
 	now := time.Now()
 	imageWidth := pickerImageWidth(m.width)
@@ -86,13 +203,17 @@ func (m pickerModel) View() string {
 	lines = append(lines, dimStyle.Render(header), dimStyle.Render(strings.Repeat("-", lipgloss.Width(header))))
 	for index, app := range m.apps {
 		marker := "  "
+		check := "[ ] "
+		if m.checked[app.Name] {
+			check = "[x] "
+		}
 		style := lipgloss.NewStyle()
 		if index == m.index {
 			marker = "> "
 			style = selectedStyle
 		}
 		line := renderPickerRow(
-			marker,
+			marker+check,
 			app.Name,
 			app.Ready,
 			app.Phases,
@@ -105,6 +226,13 @@ func (m pickerModel) View() string {
 		lines = append(lines, style.Render(line))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// kubectl may emit repeated discovery cache errors before its useful final
+// message. Show that final line so the picker stays readable during recovery.
+func pickerErrorSummary(err error) string {
+	lines := strings.Split(strings.TrimSpace(err.Error()), "\n")
+	return strings.TrimSpace(lines[len(lines)-1])
 }
 
 func preparePickerApps(apps []core.AppChoice) ([]core.AppChoice, int) {
@@ -128,8 +256,8 @@ func preparePickerApps(apps []core.AppChoice) ([]core.AppChoice, int) {
 }
 
 func pickerImageWidth(terminalWidth int) int {
-	// marker + fixed columns + six inter-column spaces.
-	fixed := 2 + pickerAppWidth + pickerReadyWidth + pickerPhaseWidth + pickerRestartsWidth + 2*pickerAgeWidth + 6
+	// marker, selection checkbox, fixed columns, and six inter-column spaces.
+	fixed := 6 + pickerAppWidth + pickerReadyWidth + pickerPhaseWidth + pickerRestartsWidth + 2*pickerAgeWidth + 6
 	if terminalWidth <= 0 {
 		return 24
 	}

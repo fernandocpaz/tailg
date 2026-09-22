@@ -31,6 +31,7 @@ type AppChoice struct {
 	Namespace  string
 	Name       string
 	Pods       []string
+	PodChoices []PodChoice
 	Selector   string
 	Ready      string
 	Phases     string
@@ -38,6 +39,13 @@ type AppChoice struct {
 	StartedAt  time.Time
 	DeployedAt time.Time
 	ImageTag   string
+}
+
+type PodChoice struct {
+	Name      string
+	Ready     string
+	Phase     string
+	StartedAt time.Time
 }
 
 type LogEvent struct {

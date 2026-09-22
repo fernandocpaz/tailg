@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fernandocpaz/tailg/internal/core"
 )
 
@@ -31,6 +33,95 @@ func TestFormatPickerAge(t *testing.T) {
 	}
 }
 
+func TestAppPickerSwitchesContextEvenWithoutApplications(t *testing.T) {
+	m := pickerModel{kubeContext: "tkgs-dev", namespace: "apollo"}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	picker := updated.(pickerModel)
+	if picker.result.Action != PickerSwitchContext {
+		t.Fatalf("action = %v, want switch context", picker.result.Action)
+	}
+	if !strings.Contains(picker.View(), "tkgs-dev") || !strings.Contains(picker.View(), "apollo") {
+		t.Fatalf("missing context or namespace: %q", picker.View())
+	}
+}
+
+func TestAppPickerSwitchesNamespaceEvenWithoutApplications(t *testing.T) {
+	m := pickerModel{kubeContext: "tkgs-dev", namespace: "apollo"}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if got := updated.(pickerModel).result.Action; got != PickerSwitchNamespace {
+		t.Fatalf("action = %v, want switch namespace", got)
+	}
+}
+
+func TestAppPickerCanRecoverFromExpiredCredentials(t *testing.T) {
+	requestError := errors.New("E0922 memcache.go:265: credentials required\nerror: You must be logged in to the server")
+	m := pickerModel{kubeContext: "tkgs-qa", namespace: "apollo", loadError: pickerErrorSummary(requestError)}
+	view := m.View()
+	if !strings.Contains(view, "You must be logged in") || strings.Contains(view, "memcache.go") {
+		t.Fatalf("picker should show the actionable error: %q", view)
+	}
+	for _, key := range []struct {
+		rune   rune
+		action PickerAction
+	}{{'c', PickerSwitchContext}, {'r', PickerRefresh}} {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key.rune}})
+		if got := updated.(pickerModel).result.Action; got != key.action {
+			t.Fatalf("%c action = %v, want %v", key.rune, got, key.action)
+		}
+	}
+}
+
+func TestAppPickerOpensSelectedApplication(t *testing.T) {
+	m := pickerModel{apps: []core.AppChoice{{Name: "api"}, {Name: "worker"}}}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, _ = updated.(pickerModel).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	picker := updated.(pickerModel)
+	if picker.result.Action != PickerOpenApp || picker.result.App.Name != "worker" {
+		t.Fatalf("unexpected selection: %+v", picker.result)
+	}
+}
+
+func TestAppPickerOpensCheckedApplicationsInsteadOfHighlighted(t *testing.T) {
+	m := pickerModel{apps: []core.AppChoice{{Name: "api", Pods: []string{"api-1", "api-2"}}, {Name: "worker", Pods: []string{"worker-1"}}, {Name: "listener", Pods: []string{"listener-1"}}}}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m = updated.(pickerModel)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(pickerModel)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m = updated.(pickerModel)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(pickerModel)
+	if !strings.Contains(m.View(), "Selected: 2 applications · 3 current pods") {
+		t.Fatalf("missing selection count: %q", m.View())
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	selected := updated.(pickerModel).result
+	if selected.Action != PickerOpenApp || len(selected.Apps) != 2 || selected.Apps[0].Name != "api" || selected.Apps[1].Name != "worker" || strings.Join(selected.Marked, ",") != "api,worker" {
+		t.Fatalf("unexpected selection: %+v", selected)
+	}
+}
+
+func TestAppPickerEntersPodModeOnlyWithoutCheckedApps(t *testing.T) {
+	m := pickerModel{apps: []core.AppChoice{{Name: "api"}}}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	updated, _ = updated.(pickerModel).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	if got := updated.(pickerModel); got.result.Action == PickerSelectPods || got.note == "" {
+		t.Fatalf("checked apps should be retained: %+v", got)
+	}
+	updated, _ = updated.(pickerModel).Update(tea.KeyMsg{Type: tea.KeySpace})
+	updated, _ = updated.(pickerModel).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	if got := updated.(pickerModel).result.Action; got != PickerSelectPods {
+		t.Fatalf("pod action = %v", got)
+	}
+}
+
+func TestAppPickerRestoresOnlyVisibleSelections(t *testing.T) {
+	apps := []core.AppChoice{{Name: "api"}, {Name: "worker"}}
+	m := newPickerModel(apps, len(apps), "tkgs-qa", "apollo", []string{"worker", "old-pod"})
+	if choices := m.checkedChoices(); len(choices) != 1 || choices[0].Name != "worker" {
+		t.Fatalf("restored choices = %+v", choices)
+	}
+}
 
 func TestRenderPickerRowUsesColumnsWithoutRepeatedLabels(t *testing.T) {
 	row := renderPickerRow(
@@ -67,7 +158,6 @@ func TestTruncatePickerCell(t *testing.T) {
 		t.Fatalf("truncatePickerCell = %q", got)
 	}
 }
-
 
 func TestPreparePickerAppsShowsNewestTwentyDeployments(t *testing.T) {
 	base := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)

@@ -141,44 +141,100 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 	}
 
 	effectiveContext := options.Context
+	resolvedContext, contextNamespace, contextErr := runner.CurrentContext(ctx)
+	if contextErr != nil {
+		fmt.Fprintln(stderr, contextErr)
+		return 1
+	}
 	if effectiveContext == "" {
-		var contextErr error
-		effectiveContext, _, contextErr = runner.CurrentContext(ctx)
-		if contextErr != nil {
-			fmt.Fprintln(stderr, contextErr)
-			return 1
-		}
+		effectiveContext = resolvedContext
 	}
 
 	pickerMode := usesAppPicker(options)
 	namespaceMode := options.Target == "" && options.Namespace != ""
 	pickerLoop := pickerMode && options.LiveFilter && !options.NoFollow && !options.SplitPanes && !options.TileWindows
+	var usage pickerUsage
+	if pickerMode {
+		usage = loadPickerUsage()
+	}
+	effectiveNamespace := options.Namespace
+	if pickerMode {
+		effectiveNamespace = contextNamespace
+		runner.Namespace = effectiveNamespace
+	}
+	var markedApps []string
+	autoSplitSelection := false
 
 pickAgain:
-	effectiveNamespace := options.Namespace
 	resolvedTarget := "pod/*"
 	var selectedPods, selectedSelectors []string
 	if !namespaceMode {
 		if pickerMode {
 			apps, appsErr := runner.Apps(ctx)
-			if appsErr != nil {
-				fmt.Fprintln(stderr, appsErr)
-				return 1
-			}
-			selected, selectErr := tui.PickApp(apps)
+			selection, selectErr := tui.PickApp(apps, effectiveContext, effectiveNamespace, appsErr, markedApps)
 			if selectErr != nil {
 				fmt.Fprintln(stderr, selectErr)
 				return 1
 			}
-			effectiveNamespace = selected.Namespace
-			if selected.Selector != "" {
-				selectedSelectors = []string{selected.Selector}
-			} else {
-				selectedPods = selected.Pods
+			switch selection.Action {
+			case tui.PickerQuit:
+				return 0
+			case tui.PickerRefresh:
+				goto pickAgain
+			case tui.PickerSelectPods:
+				pods, ok, pickErr := tui.PickPods(apps, effectiveContext, effectiveNamespace)
+				if pickErr != nil {
+					fmt.Fprintln(stderr, pickErr)
+					return 1
+				}
+				if !ok {
+					goto pickAgain
+				}
+				selection = tui.PickerResult{Action: tui.PickerOpenApp, Pods: pods}
+			case tui.PickerSwitchNamespace:
+				namespaces, listErr := runner.Namespaces(ctx)
+				selectedNamespace, ok, pickErr := tui.PickNamespace(namespaces, effectiveNamespace, listErr, usage.Namespaces[effectiveContext])
+				if pickErr != nil {
+					fmt.Fprintln(stderr, pickErr)
+					return 1
+				}
+				if ok && selectedNamespace != effectiveNamespace {
+					effectiveNamespace = selectedNamespace
+					runner.Namespace = selectedNamespace
+					markedApps = nil
+				}
+				goto pickAgain
+			case tui.PickerSwitchContext:
+				contexts, contextsErr := runner.Contexts(ctx)
+				if contextsErr != nil {
+					fmt.Fprintln(stderr, contextsErr)
+					return 1
+				}
+				selectedContext, ok, pickErr := tui.PickContext(contexts, effectiveContext, usage.Contexts)
+				if pickErr != nil {
+					fmt.Fprintln(stderr, pickErr)
+					return 1
+				}
+				if !ok || selectedContext == effectiveContext {
+					goto pickAgain
+				}
+				candidate := kube.NewRunner("", selectedContext)
+				_, newNamespace, contextErr := candidate.CurrentContext(ctx)
+				if contextErr != nil {
+					fmt.Fprintln(stderr, contextErr)
+					goto pickAgain
+				}
+				effectiveContext = selectedContext
+				effectiveNamespace = newNamespace
+				candidate.Namespace = newNamespace
+				runner = candidate
+				options.Context = selectedContext
+				markedApps = nil
+				goto pickAgain
 			}
-			if len(selectedPods) > 0 {
-				resolvedTarget = "pod/" + selectedPods[0]
-			}
+			markedApps = selection.Marked
+			autoSplitSelection = pickerSelectionOpensPanes(selection, runtime.GOOS)
+			selectedPods, selectedSelectors, resolvedTarget = pickerSelectionScope(selection)
 		} else if strings.ContainsAny(options.Target, "*?[") || strings.Contains(options.Target, ",") {
 			selectedPods, selectedSelectors, effectiveNamespace, err = runner.MatchApps(ctx, options.Target)
 			if err != nil {
@@ -228,6 +284,9 @@ pickAgain:
 	if len(items) == 0 && !wantsBundle {
 		fmt.Fprintln(stderr, "No matching pods/containers found.")
 		return 1
+	}
+	if pickerMode && len(items) > 0 {
+		usage.record(effectiveContext, effectiveNamespace)
 	}
 	// A child pane displays one pod, but trace lookup must retain the scope
 	// selected by its parent. Prefer an explicitly propagated scope, then keep
@@ -302,7 +361,7 @@ pickAgain:
 		fmt.Fprintf(stdout, "Opened %d Windows Terminal windows; tiled %d.\n", opened, tiled)
 		return 0
 	}
-	if options.SplitPanes && len(core.UniquePods(items)) > 1 {
+	if (options.SplitPanes || autoSplitSelection) && len(core.UniquePods(items)) > 1 {
 		if err := prepareSharedFilter(&options); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
@@ -354,10 +413,50 @@ pickAgain:
 		return 1
 	}
 	if pickerLoop {
-		runner.Namespace = options.Namespace
+		runner.Namespace = effectiveNamespace
 		goto pickAgain
 	}
 	return 0
+}
+
+// Multi-selection in the interactive picker maps naturally to one pane per
+// resolved pod. The existing pane launcher uses Windows Terminal; on other
+// platforms the selected streams remain combined in the live view.
+func pickerSelectionOpensPanes(selection tui.PickerResult, goos string) bool {
+	if goos != "windows" {
+		return false
+	}
+	if len(uniqueStrings(selection.Pods)) > 1 {
+		return true
+	}
+	return len(selection.Apps) > 1
+}
+
+// App selections follow selectors across rollouts; exact pod selections keep
+// pod names pinned. Inventory and trace lookup share this same scope.
+func pickerSelectionScope(selection tui.PickerResult) (pods, selectors []string, target string) {
+	if len(selection.Pods) > 0 {
+		pods = uniqueStrings(selection.Pods)
+		if len(pods) == 1 {
+			return pods, nil, "pod/" + pods[0]
+		}
+		return pods, nil, fmt.Sprintf("%d selected pods", len(pods))
+	}
+	for _, app := range selection.Apps {
+		if app.Selector != "" {
+			selectors = append(selectors, app.Selector)
+		} else {
+			pods = append(pods, app.Pods...)
+		}
+	}
+	pods, selectors = uniqueStrings(pods), uniqueStrings(selectors)
+	if len(selection.Apps) > 1 {
+		return pods, selectors, fmt.Sprintf("%d selected apps", len(selection.Apps))
+	}
+	if len(pods) > 0 {
+		return pods, selectors, "pod/" + pods[0]
+	}
+	return pods, selectors, "pod/*"
 }
 
 func openStatusErrorLogs(ctx context.Context, base Options, namespace string, selected kube.StatusErrorSelection, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -431,6 +530,11 @@ func selectedInventory(ctx context.Context, runner kube.Runner, pods, selectors 
 			seen[item.Key()] = true
 			result = append(result, item)
 		}
+	}
+	// Keep watching healthy selections if another pinned pod was deleted in a
+	// rollout, or one selected application is temporarily unavailable.
+	if len(result) > 0 {
+		return result, nil
 	}
 	return result, errors.Join(podErr, selectorErr)
 }
