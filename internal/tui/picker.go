@@ -21,6 +21,7 @@ type pickerModel struct {
 	result      PickerResult
 	kubeContext string
 	namespace   string
+	loadError   string
 	width       int
 }
 
@@ -30,6 +31,7 @@ const (
 	PickerQuit PickerAction = iota
 	PickerOpenApp
 	PickerSwitchContext
+	PickerRefresh
 )
 
 type PickerResult struct {
@@ -37,9 +39,13 @@ type PickerResult struct {
 	App    core.AppChoice
 }
 
-func PickApp(apps []core.AppChoice, kubeContext, namespace string) (PickerResult, error) {
+func PickApp(apps []core.AppChoice, kubeContext, namespace string, loadErr error) (PickerResult, error) {
 	prepared, total := preparePickerApps(apps)
-	result, err := tea.NewProgram(pickerModel{apps: prepared, totalApps: total, kubeContext: kubeContext, namespace: namespace}).Run()
+	model := pickerModel{apps: prepared, totalApps: total, kubeContext: kubeContext, namespace: namespace}
+	if loadErr != nil {
+		model.loadError = pickerErrorSummary(loadErr)
+	}
+	result, err := tea.NewProgram(model).Run()
 	if err != nil {
 		return PickerResult{}, err
 	}
@@ -58,6 +64,9 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "c":
 			m.result.Action = PickerSwitchContext
+			return m, tea.Quit
+		case "r":
+			m.result.Action = PickerRefresh
 			return m, tea.Quit
 		case "up", "k":
 			if len(m.apps) > 0 {
@@ -87,7 +96,7 @@ const (
 )
 
 func (m pickerModel) View() string {
-	subtitle := "Up/Down move | Enter opens | C context | Q quits"
+	subtitle := "Up/Down move | Enter opens | C context | R retry | Q quits"
 	if m.totalApps > len(m.apps) {
 		subtitle += fmt.Sprintf(" | showing newest %d of %d deployments", len(m.apps), m.totalApps)
 	}
@@ -98,6 +107,9 @@ func (m pickerModel) View() string {
 		"",
 	}
 	if len(m.apps) == 0 {
+		if m.loadError != "" {
+			return strings.Join(append(lines, "Could not load applications: "+m.loadError, "Press C to switch context or R to retry after logging in."), "\n")
+		}
 		return strings.Join(append(lines, "No applications found in this namespace. Press C to switch context."), "\n")
 	}
 	now := time.Now()
@@ -125,6 +137,13 @@ func (m pickerModel) View() string {
 		lines = append(lines, style.Render(line))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// kubectl may emit repeated discovery cache errors before its useful final
+// message. Show that final line so the picker stays readable during recovery.
+func pickerErrorSummary(err error) string {
+	lines := strings.Split(strings.TrimSpace(err.Error()), "\n")
+	return strings.TrimSpace(lines[len(lines)-1])
 }
 
 func preparePickerApps(apps []core.AppChoice) ([]core.AppChoice, int) {

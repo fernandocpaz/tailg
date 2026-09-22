@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -41,6 +42,24 @@ func TestAppPickerSwitchesContextEvenWithoutApplications(t *testing.T) {
 	}
 	if !strings.Contains(picker.View(), "tkgs-dev") || !strings.Contains(picker.View(), "apollo") {
 		t.Fatalf("missing context or namespace: %q", picker.View())
+	}
+}
+
+func TestAppPickerCanRecoverFromExpiredCredentials(t *testing.T) {
+	requestError := errors.New("E0922 memcache.go:265: credentials required\nerror: You must be logged in to the server")
+	m := pickerModel{kubeContext: "tkgs-qa", namespace: "apollo", loadError: pickerErrorSummary(requestError)}
+	view := m.View()
+	if !strings.Contains(view, "You must be logged in") || strings.Contains(view, "memcache.go") {
+		t.Fatalf("picker should show the actionable error: %q", view)
+	}
+	for _, key := range []struct {
+		rune   rune
+		action PickerAction
+	}{{'c', PickerSwitchContext}, {'r', PickerRefresh}} {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key.rune}})
+		if got := updated.(pickerModel).result.Action; got != key.action {
+			t.Fatalf("%c action = %v, want %v", key.rune, got, key.action)
+		}
 	}
 }
 

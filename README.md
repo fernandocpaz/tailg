@@ -69,6 +69,8 @@ may still be Kubernetes resources, app names, case-insensitive wildcard app
 patterns such as `example-*`, or
 comma-separated app names. The old standalone `*` picker target has been removed.
 The namespace can be supplied positionally or with `--namespace`.
+If credentials have expired, the picker shows the kubectl error so you can
+press `C` to choose another context or log in and press `R` to retry.
 
 Without `--since`, tailg loads up to 500 visible lines per container before
 following new logs. When include/exclude rules remove most of the raw Kubernetes

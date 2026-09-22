@@ -165,11 +165,7 @@ pickAgain:
 	if !namespaceMode {
 		if pickerMode {
 			apps, appsErr := runner.Apps(ctx)
-			if appsErr != nil {
-				fmt.Fprintln(stderr, appsErr)
-				return 1
-			}
-			selection, selectErr := tui.PickApp(apps, effectiveContext, effectiveNamespace)
+			selection, selectErr := tui.PickApp(apps, effectiveContext, effectiveNamespace, appsErr)
 			if selectErr != nil {
 				fmt.Fprintln(stderr, selectErr)
 				return 1
@@ -177,6 +173,8 @@ pickAgain:
 			switch selection.Action {
 			case tui.PickerQuit:
 				return 0
+			case tui.PickerRefresh:
+				goto pickAgain
 			case tui.PickerSwitchContext:
 				contexts, contextsErr := runner.Contexts(ctx)
 				if contextsErr != nil {
