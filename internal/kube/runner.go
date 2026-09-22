@@ -124,6 +124,25 @@ func (r Runner) Contexts(ctx context.Context) ([]ContextInfo, error) {
 	return result, nil
 }
 
+// Namespaces lists namespaces in the selected cluster. The active namespace
+// override must not be attached to a cluster-scoped request.
+func (r Runner) Namespaces(ctx context.Context) ([]string, error) {
+	clusterRunner := r
+	clusterRunner.Namespace = ""
+	payload, err := clusterRunner.JSON(ctx, "get", "namespaces")
+	if err != nil {
+		return nil, err
+	}
+	var namespaces []string
+	for _, raw := range sliceValue(payload["items"]) {
+		name := stringValue(mapValue(mapValue(raw)["metadata"])["name"])
+		if name != "" {
+			namespaces = append(namespaces, name)
+		}
+	}
+	return namespaces, nil
+}
+
 func mapValue(value any) map[string]any {
 	if result, ok := value.(map[string]any); ok {
 		return result

@@ -175,6 +175,18 @@ pickAgain:
 				return 0
 			case tui.PickerRefresh:
 				goto pickAgain
+			case tui.PickerSwitchNamespace:
+				namespaces, listErr := runner.Namespaces(ctx)
+				selectedNamespace, ok, pickErr := tui.PickNamespace(namespaces, effectiveNamespace, listErr)
+				if pickErr != nil {
+					fmt.Fprintln(stderr, pickErr)
+					return 1
+				}
+				if ok && selectedNamespace != effectiveNamespace {
+					effectiveNamespace = selectedNamespace
+					runner.Namespace = selectedNamespace
+				}
+				goto pickAgain
 			case tui.PickerSwitchContext:
 				contexts, contextsErr := runner.Contexts(ctx)
 				if contextsErr != nil {

@@ -45,6 +45,14 @@ func TestAppPickerSwitchesContextEvenWithoutApplications(t *testing.T) {
 	}
 }
 
+func TestAppPickerSwitchesNamespaceEvenWithoutApplications(t *testing.T) {
+	m := pickerModel{kubeContext: "tkgs-dev", namespace: "apollo"}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if got := updated.(pickerModel).result.Action; got != PickerSwitchNamespace {
+		t.Fatalf("action = %v, want switch namespace", got)
+	}
+}
+
 func TestAppPickerCanRecoverFromExpiredCredentials(t *testing.T) {
 	requestError := errors.New("E0922 memcache.go:265: credentials required\nerror: You must be logged in to the server")
 	m := pickerModel{kubeContext: "tkgs-qa", namespace: "apollo", loadError: pickerErrorSummary(requestError)}

@@ -31,6 +31,7 @@ const (
 	PickerQuit PickerAction = iota
 	PickerOpenApp
 	PickerSwitchContext
+	PickerSwitchNamespace
 	PickerRefresh
 )
 
@@ -65,6 +66,9 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case "c":
 			m.result.Action = PickerSwitchContext
 			return m, tea.Quit
+		case "n":
+			m.result.Action = PickerSwitchNamespace
+			return m, tea.Quit
 		case "r":
 			m.result.Action = PickerRefresh
 			return m, tea.Quit
@@ -96,7 +100,7 @@ const (
 )
 
 func (m pickerModel) View() string {
-	subtitle := "Up/Down move | Enter opens | C context | R retry | Q quits"
+	subtitle := "Up/Down move | Enter opens | C context | N namespace | R retry | Q quits"
 	if m.totalApps > len(m.apps) {
 		subtitle += fmt.Sprintf(" | showing newest %d of %d deployments", len(m.apps), m.totalApps)
 	}
@@ -108,9 +112,9 @@ func (m pickerModel) View() string {
 	}
 	if len(m.apps) == 0 {
 		if m.loadError != "" {
-			return strings.Join(append(lines, "Could not load applications: "+m.loadError, "Press C to switch context or R to retry after logging in."), "\n")
+			return strings.Join(append(lines, "Could not load applications: "+m.loadError, "Press C to switch context, N to choose namespace, or R to retry."), "\n")
 		}
-		return strings.Join(append(lines, "No applications found in this namespace. Press C to switch context."), "\n")
+		return strings.Join(append(lines, "No applications found in this namespace. Press C to switch context or N to choose namespace."), "\n")
 	}
 	now := time.Now()
 	imageWidth := pickerImageWidth(m.width)

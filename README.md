@@ -62,8 +62,10 @@ tailg diagnose example-app default --output ndjson
 
 Running `tailg` with no target opens the interactive application picker in the
 current Kubernetes namespace. Press `C` in the picker to choose another
-kubeconfig context; the list shows each context's namespace. The switch lasts
-for this tailg session and does not change the context used by other terminals.
+kubeconfig context, or `N` to choose a namespace in that context. The namespace
+picker also accepts a typed name with `/` when listing namespaces is blocked by
+cluster permissions. These switches last for this tailg session and do not
+change the context or namespace used by other terminals.
 After closing a log view, the picker returns in the selected context. Targets
 may still be Kubernetes resources, app names, case-insensitive wildcard app
 patterns such as `example-*`, or
