@@ -72,15 +72,22 @@ func (m contextPickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m contextPickerModel) View() string {
-	help := "Up/Down move | Enter switches | Esc returns to applications"
-	if m.expanded {
-		help = "All contexts | Up/Down move | Enter switches | Esc frequent"
-	}
 	lines := []string{
 		headerStyle.Render("Switch Kubernetes context"),
-		dimStyle.Render(help),
+		renderPickerShortcuts(
+			shortcut("↑↓", "Move"),
+			shortcut("ENTER", "Switch"),
+			shortcut("ESC", "Applications"),
+		),
 		"",
 		dimStyle.Render(fmt.Sprintf("  %-42s %s", "CONTEXT", "NAMESPACE")),
+	}
+	if m.expanded {
+		lines[1] = renderPickerShortcuts(
+			shortcut("↑↓", "Move through all"),
+			shortcut("ENTER", "Switch"),
+			shortcut("ESC", "Frequent"),
+		)
 	}
 	limit := visibleChoiceCount(len(m.contexts), m.expanded)
 	start := 0

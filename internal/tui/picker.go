@@ -161,15 +161,25 @@ const (
 )
 
 func (m pickerModel) View() string {
-	subtitle := "Up/Down move | Space select | Enter open | P exact pods | C context | N namespace | R retry | Q quit"
-	if m.totalApps > len(m.apps) {
-		subtitle += fmt.Sprintf(" | showing newest %d of %d deployments", len(m.apps), m.totalApps)
-	}
 	var lines = []string{
 		headerStyle.Render("Select an application"),
 		fmt.Sprintf("Context: %s  |  Namespace: %s", m.kubeContext, m.namespace),
-		dimStyle.Render(subtitle),
+		renderPickerShortcuts(
+			shortcut("↑↓", "Move"),
+			shortcut("SPACE", "Select"),
+			shortcut("ENTER", "Open"),
+			shortcut("P", "Exact pods"),
+		),
+		renderPickerShortcuts(
+			shortcut("C", "Context"),
+			shortcut("N", "Namespace"),
+			shortcut("R", "Retry"),
+			shortcut("Q", "Quit"),
+		),
 		"",
+	}
+	if m.totalApps > len(m.apps) {
+		lines = append(lines, dimStyle.Render(fmt.Sprintf("Showing newest %d of %d deployments", len(m.apps), m.totalApps)), "")
 	}
 	if len(m.checked) > 0 {
 		podCount := 0

@@ -130,20 +130,32 @@ func (m namespacePickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m namespacePickerModel) View() string {
-	help := "Up/Down move | Enter switches | / enter name | Esc returns to applications"
-	if m.expanded {
-		help = "All namespaces | Up/Down move | Enter switches | / enter name | Esc frequent"
-	}
 	lines := []string{
 		headerStyle.Render("Switch Kubernetes namespace"),
-		dimStyle.Render(help),
+		renderPickerShortcuts(
+			shortcut("↑↓", "Move"),
+			shortcut("ENTER", "Switch"),
+			shortcut("/", "Enter name"),
+			shortcut("ESC", "Applications"),
+		),
 		"",
+	}
+	if m.expanded {
+		lines[1] = renderPickerShortcuts(
+			shortcut("↑↓", "Move through all"),
+			shortcut("ENTER", "Switch"),
+			shortcut("/", "Enter name"),
+			shortcut("ESC", "Frequent"),
+		)
 	}
 	if m.loadError != "" {
 		lines = append(lines, "Namespace list unavailable: "+m.loadError, "")
 	}
 	if m.entering {
-		lines = append(lines, m.input.View(), dimStyle.Render("Enter uses this name | Esc returns to list"), "")
+		lines = append(lines, m.input.View(), renderPickerShortcuts(
+			shortcut("ENTER", "Use name"),
+			shortcut("ESC", "Namespace list"),
+		), "")
 	}
 	if len(m.namespaces) == 0 {
 		lines = append(lines, "Press / to enter a namespace name.")

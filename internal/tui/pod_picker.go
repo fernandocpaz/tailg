@@ -132,7 +132,15 @@ func (m podPickerModel) View() string {
 	lines := []string{
 		headerStyle.Render("Select exact pods"),
 		fmt.Sprintf("Context: %s  |  Namespace: %s", m.kubeContext, m.namespace),
-		dimStyle.Render("Up/Down/PgUp/PgDown move | Space select | A toggle app's pods | Enter open | Esc applications"),
+		renderPickerShortcuts(
+			shortcut("↑↓ / PGUP PGDN", "Move"),
+			shortcut("SPACE", "Select"),
+			shortcut("A", "Toggle app"),
+		),
+		renderPickerShortcuts(
+			shortcut("ENTER", "Open"),
+			shortcut("ESC", "Applications"),
+		),
 		fmt.Sprintf("Selected: %d pods · pinned to these pod names", m.checkedCount()),
 		"",
 	}

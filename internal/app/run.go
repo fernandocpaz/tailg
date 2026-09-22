@@ -163,6 +163,7 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 		runner.Namespace = effectiveNamespace
 	}
 	var markedApps []string
+	autoSplitSelection := false
 
 pickAgain:
 	resolvedTarget := "pod/*"
@@ -232,6 +233,7 @@ pickAgain:
 				goto pickAgain
 			}
 			markedApps = selection.Marked
+			autoSplitSelection = pickerSelectionOpensPanes(selection, runtime.GOOS)
 			selectedPods, selectedSelectors, resolvedTarget = pickerSelectionScope(selection)
 		} else if strings.ContainsAny(options.Target, "*?[") || strings.Contains(options.Target, ",") {
 			selectedPods, selectedSelectors, effectiveNamespace, err = runner.MatchApps(ctx, options.Target)
@@ -359,7 +361,7 @@ pickAgain:
 		fmt.Fprintf(stdout, "Opened %d Windows Terminal windows; tiled %d.\n", opened, tiled)
 		return 0
 	}
-	if options.SplitPanes && len(core.UniquePods(items)) > 1 {
+	if (options.SplitPanes || autoSplitSelection) && len(core.UniquePods(items)) > 1 {
 		if err := prepareSharedFilter(&options); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
@@ -415,6 +417,19 @@ pickAgain:
 		goto pickAgain
 	}
 	return 0
+}
+
+// Multi-selection in the interactive picker maps naturally to one pane per
+// resolved pod. The existing pane launcher uses Windows Terminal; on other
+// platforms the selected streams remain combined in the live view.
+func pickerSelectionOpensPanes(selection tui.PickerResult, goos string) bool {
+	if goos != "windows" {
+		return false
+	}
+	if len(uniqueStrings(selection.Pods)) > 1 {
+		return true
+	}
+	return len(selection.Apps) > 1
 }
 
 // App selections follow selectors across rollouts; exact pod selections keep
