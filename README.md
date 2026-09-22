@@ -75,6 +75,14 @@ may still be Kubernetes resources, app names, case-insensitive wildcard app
 patterns such as `example-*`, or
 comma-separated app names. The old standalone `*` picker target has been removed.
 The namespace can be supplied positionally or with `--namespace`.
+In the application picker, press `Space` to check multiple applications, then
+`Enter` to open their combined logs. Selected applications follow new replica
+pods after a rollout, and the selection stays checked when you return to the
+picker. With nothing checked, `Enter` opens the highlighted application as
+before. Uncheck applications and press `P` to choose individual pod names across applications instead:
+`Space` checks pods, `A` toggles all pods for the highlighted application, and
+`Enter` opens the checked pods. Exact pod selections stay pinned to those names.
+Switching context or namespace clears checked applications.
 If credentials have expired, the picker shows the kubectl error so you can
 press `C` to choose another context or log in and press `R` to retry.
 

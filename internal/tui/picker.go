@@ -18,6 +18,8 @@ type pickerModel struct {
 	apps        []core.AppChoice
 	totalApps   int
 	index       int
+	checked     map[string]bool
+	note        string
 	result      PickerResult
 	kubeContext string
 	namespace   string
@@ -33,16 +35,20 @@ const (
 	PickerSwitchContext
 	PickerSwitchNamespace
 	PickerRefresh
+	PickerSelectPods
 )
 
 type PickerResult struct {
 	Action PickerAction
 	App    core.AppChoice
+	Apps   []core.AppChoice
+	Pods   []string
+	Marked []string
 }
 
-func PickApp(apps []core.AppChoice, kubeContext, namespace string, loadErr error) (PickerResult, error) {
+func PickApp(apps []core.AppChoice, kubeContext, namespace string, loadErr error, previous []string) (PickerResult, error) {
 	prepared, total := preparePickerApps(apps)
-	model := pickerModel{apps: prepared, totalApps: total, kubeContext: kubeContext, namespace: namespace}
+	model := newPickerModel(prepared, total, kubeContext, namespace, previous)
 	if loadErr != nil {
 		model.loadError = pickerErrorSummary(loadErr)
 	}
@@ -51,6 +57,23 @@ func PickApp(apps []core.AppChoice, kubeContext, namespace string, loadErr error
 		return PickerResult{}, err
 	}
 	return result.(pickerModel).result, nil
+}
+
+func newPickerModel(apps []core.AppChoice, total int, kubeContext, namespace string, previous []string) pickerModel {
+	model := pickerModel{apps: apps, totalApps: total, kubeContext: kubeContext, namespace: namespace}
+	previousSet := make(map[string]bool, len(previous))
+	for _, name := range previous {
+		previousSet[name] = true
+	}
+	for _, app := range apps {
+		if previousSet[app.Name] {
+			if model.checked == nil {
+				model.checked = make(map[string]bool)
+			}
+			model.checked[app.Name] = true
+		}
+	}
+	return model
 }
 func (m pickerModel) Init() tea.Cmd { return nil }
 func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -72,6 +95,26 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case "r":
 			m.result.Action = PickerRefresh
 			return m, tea.Quit
+		case "p":
+			if len(m.checked) > 0 {
+				m.note = "Uncheck applications before choosing exact pods."
+				return m, nil
+			}
+			m.result.Action = PickerSelectPods
+			return m, tea.Quit
+		case " ":
+			if len(m.apps) > 0 {
+				if m.checked == nil {
+					m.checked = make(map[string]bool)
+				}
+				name := m.apps[m.index].Name
+				if m.checked[name] {
+					delete(m.checked, name)
+				} else {
+					m.checked[name] = true
+				}
+				m.note = ""
+			}
 		case "up", "k":
 			if len(m.apps) > 0 {
 				m.index = max(0, m.index-1)
@@ -82,12 +125,30 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			if len(m.apps) > 0 {
-				m.result = PickerResult{Action: PickerOpenApp, App: m.apps[m.index]}
+				selected := m.checkedChoices()
+				marked := make([]string, 0, len(selected))
+				for _, app := range selected {
+					marked = append(marked, app.Name)
+				}
+				if len(selected) == 0 {
+					selected = []core.AppChoice{m.apps[m.index]}
+				}
+				m.result = PickerResult{Action: PickerOpenApp, App: selected[0], Apps: selected, Marked: marked}
 				return m, tea.Quit
 			}
 		}
 	}
 	return m, nil
+}
+
+func (m pickerModel) checkedChoices() []core.AppChoice {
+	var selected []core.AppChoice
+	for _, app := range m.apps {
+		if m.checked[app.Name] {
+			selected = append(selected, app)
+		}
+	}
+	return selected
 }
 
 const (
@@ -100,7 +161,7 @@ const (
 )
 
 func (m pickerModel) View() string {
-	subtitle := "Up/Down move | Enter opens | C context | N namespace | R retry | Q quits"
+	subtitle := "Up/Down move | Space select | Enter open | P exact pods | C context | N namespace | R retry | Q quit"
 	if m.totalApps > len(m.apps) {
 		subtitle += fmt.Sprintf(" | showing newest %d of %d deployments", len(m.apps), m.totalApps)
 	}
@@ -109,6 +170,16 @@ func (m pickerModel) View() string {
 		fmt.Sprintf("Context: %s  |  Namespace: %s", m.kubeContext, m.namespace),
 		dimStyle.Render(subtitle),
 		"",
+	}
+	if len(m.checked) > 0 {
+		podCount := 0
+		for _, app := range m.checkedChoices() {
+			podCount += len(app.Pods)
+		}
+		lines = append(lines, fmt.Sprintf("Selected: %d applications · %d current pods", len(m.checked), podCount), "")
+	}
+	if m.note != "" {
+		lines = append(lines, m.note, "")
 	}
 	if len(m.apps) == 0 {
 		if m.loadError != "" {
@@ -122,13 +193,17 @@ func (m pickerModel) View() string {
 	lines = append(lines, dimStyle.Render(header), dimStyle.Render(strings.Repeat("-", lipgloss.Width(header))))
 	for index, app := range m.apps {
 		marker := "  "
+		check := "[ ] "
+		if m.checked[app.Name] {
+			check = "[x] "
+		}
 		style := lipgloss.NewStyle()
 		if index == m.index {
 			marker = "> "
 			style = selectedStyle
 		}
 		line := renderPickerRow(
-			marker,
+			marker+check,
 			app.Name,
 			app.Ready,
 			app.Phases,
@@ -171,8 +246,8 @@ func preparePickerApps(apps []core.AppChoice) ([]core.AppChoice, int) {
 }
 
 func pickerImageWidth(terminalWidth int) int {
-	// marker + fixed columns + six inter-column spaces.
-	fixed := 2 + pickerAppWidth + pickerReadyWidth + pickerPhaseWidth + pickerRestartsWidth + 2*pickerAgeWidth + 6
+	// marker, selection checkbox, fixed columns, and six inter-column spaces.
+	fixed := 6 + pickerAppWidth + pickerReadyWidth + pickerPhaseWidth + pickerRestartsWidth + 2*pickerAgeWidth + 6
 	if terminalWidth <= 0 {
 		return 24
 	}

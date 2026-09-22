@@ -162,6 +162,7 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 		effectiveNamespace = contextNamespace
 		runner.Namespace = effectiveNamespace
 	}
+	var markedApps []string
 
 pickAgain:
 	resolvedTarget := "pod/*"
@@ -169,7 +170,7 @@ pickAgain:
 	if !namespaceMode {
 		if pickerMode {
 			apps, appsErr := runner.Apps(ctx)
-			selection, selectErr := tui.PickApp(apps, effectiveContext, effectiveNamespace, appsErr)
+			selection, selectErr := tui.PickApp(apps, effectiveContext, effectiveNamespace, appsErr, markedApps)
 			if selectErr != nil {
 				fmt.Fprintln(stderr, selectErr)
 				return 1
@@ -179,6 +180,16 @@ pickAgain:
 				return 0
 			case tui.PickerRefresh:
 				goto pickAgain
+			case tui.PickerSelectPods:
+				pods, ok, pickErr := tui.PickPods(apps, effectiveContext, effectiveNamespace)
+				if pickErr != nil {
+					fmt.Fprintln(stderr, pickErr)
+					return 1
+				}
+				if !ok {
+					goto pickAgain
+				}
+				selection = tui.PickerResult{Action: tui.PickerOpenApp, Pods: pods}
 			case tui.PickerSwitchNamespace:
 				namespaces, listErr := runner.Namespaces(ctx)
 				selectedNamespace, ok, pickErr := tui.PickNamespace(namespaces, effectiveNamespace, listErr, usage.Namespaces[effectiveContext])
@@ -189,6 +200,7 @@ pickAgain:
 				if ok && selectedNamespace != effectiveNamespace {
 					effectiveNamespace = selectedNamespace
 					runner.Namespace = selectedNamespace
+					markedApps = nil
 				}
 				goto pickAgain
 			case tui.PickerSwitchContext:
@@ -216,18 +228,11 @@ pickAgain:
 				candidate.Namespace = newNamespace
 				runner = candidate
 				options.Context = selectedContext
+				markedApps = nil
 				goto pickAgain
 			}
-			selected := selection.App
-			effectiveNamespace = selected.Namespace
-			if selected.Selector != "" {
-				selectedSelectors = []string{selected.Selector}
-			} else {
-				selectedPods = selected.Pods
-			}
-			if len(selectedPods) > 0 {
-				resolvedTarget = "pod/" + selectedPods[0]
-			}
+			markedApps = selection.Marked
+			selectedPods, selectedSelectors, resolvedTarget = pickerSelectionScope(selection)
 		} else if strings.ContainsAny(options.Target, "*?[") || strings.Contains(options.Target, ",") {
 			selectedPods, selectedSelectors, effectiveNamespace, err = runner.MatchApps(ctx, options.Target)
 			if err != nil {
@@ -412,6 +417,33 @@ pickAgain:
 	return 0
 }
 
+// App selections follow selectors across rollouts; exact pod selections keep
+// pod names pinned. Inventory and trace lookup share this same scope.
+func pickerSelectionScope(selection tui.PickerResult) (pods, selectors []string, target string) {
+	if len(selection.Pods) > 0 {
+		pods = uniqueStrings(selection.Pods)
+		if len(pods) == 1 {
+			return pods, nil, "pod/" + pods[0]
+		}
+		return pods, nil, fmt.Sprintf("%d selected pods", len(pods))
+	}
+	for _, app := range selection.Apps {
+		if app.Selector != "" {
+			selectors = append(selectors, app.Selector)
+		} else {
+			pods = append(pods, app.Pods...)
+		}
+	}
+	pods, selectors = uniqueStrings(pods), uniqueStrings(selectors)
+	if len(selection.Apps) > 1 {
+		return pods, selectors, fmt.Sprintf("%d selected apps", len(selection.Apps))
+	}
+	if len(pods) > 0 {
+		return pods, selectors, "pod/" + pods[0]
+	}
+	return pods, selectors, "pod/*"
+}
+
 func openStatusErrorLogs(ctx context.Context, base Options, namespace string, selected kube.StatusErrorSelection, stdin io.Reader, stdout, stderr io.Writer) error {
 	if strings.TrimSpace(selected.Pod) == "" {
 		return fmt.Errorf("selected error has no pod source")
@@ -483,6 +515,11 @@ func selectedInventory(ctx context.Context, runner kube.Runner, pods, selectors 
 			seen[item.Key()] = true
 			result = append(result, item)
 		}
+	}
+	// Keep watching healthy selections if another pinned pod was deleted in a
+	// rollout, or one selected application is temporarily unavailable.
+	if len(result) > 0 {
+		return result, nil
 	}
 	return result, errors.Join(podErr, selectorErr)
 }

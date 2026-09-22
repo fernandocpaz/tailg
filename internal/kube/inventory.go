@@ -120,6 +120,7 @@ func (r Runner) Apps(ctx context.Context) ([]core.AppChoice, error) {
 	}
 	type group struct {
 		pods       []string
+		podChoices []core.PodChoice
 		selector   string
 		readyPods  int
 		phases     map[string]int
@@ -146,6 +147,9 @@ func (r Runner) Apps(ctx context.Context) ([]core.AppChoice, error) {
 			selected.selector = selector
 		}
 		ready, total := readyCounts(pod)
+		selected.podChoices = append(selected.podChoices, core.PodChoice{
+			Name: name, Ready: fmt.Sprintf("%d/%d", ready, total), Phase: podPhase(pod), StartedAt: podStartedAt(pod),
+		})
 		if total > 0 && ready == total {
 			selected.readyPods++
 		}
@@ -164,8 +168,9 @@ func (r Runner) Apps(ctx context.Context) ([]core.AppChoice, error) {
 	apps := make([]core.AppChoice, 0, len(groups))
 	for name, group := range groups {
 		sort.Strings(group.pods)
+		sort.Slice(group.podChoices, func(i, j int) bool { return group.podChoices[i].Name < group.podChoices[j].Name })
 		apps = append(apps, core.AppChoice{
-			Namespace: effectiveNamespace, Name: name, Pods: group.pods, Selector: group.selector,
+			Namespace: effectiveNamespace, Name: name, Pods: group.pods, PodChoices: group.podChoices, Selector: group.selector,
 			Ready: fmt.Sprintf("%d/%d", group.readyPods, len(group.pods)), Phases: phaseSummary(group.phases), Restarts: group.restarts,
 			StartedAt: group.startedAt, DeployedAt: group.deployedAt, ImageTag: imageTagSummary(group.imageTags),
 		})
