@@ -63,21 +63,22 @@ func (r Runner) Stream(ctx context.Context, item core.InventoryItem, options Log
 		stderrBytes, _ := io.ReadAll(stderr)
 		stderrDone <- stderrBytes
 	}()
-	scanner := bufio.NewScanner(stdout)
-	buffer := make([]byte, 64*1024)
-	scanner.Buffer(buffer, 4*1024*1024)
-	for scanner.Scan() {
-		message, observed := SplitTimestamp(scanner.Text())
+	scanErr := readLogLines(stdout, func(line string) bool {
+		message, observed := SplitTimestamp(line)
 		event := core.LogEvent{Pod: item.Pod, Container: item.Container, Message: message, ObservedAt: observed, ReceivedAt: time.Now()}
 		event.Replayed = replay.Duplicate(event)
 		if !sendLogEvent(ctx, output, event) {
-			break
+			return false
 		}
 		if !event.Replayed {
 			options.Cursor.Observe(event)
 		}
+		return true
+	})
+	if scanErr != nil {
+		// Stop kubectl if stdout failed, before waiting on its stderr pipe.
+		_ = cmd.Process.Kill()
 	}
-	scanErr := scanner.Err()
 	stderrBytes := <-stderrDone
 	waitErr := cmd.Wait()
 	if ctx.Err() != nil {
@@ -190,14 +191,48 @@ func (r Runner) Snapshot(ctx context.Context, item core.InventoryItem, options L
 		return nil, err
 	}
 	var events []core.LogEvent
-	scanner := bufio.NewScanner(strings.NewReader(text))
-	buffer := make([]byte, 64*1024)
-	scanner.Buffer(buffer, 4*1024*1024)
-	for scanner.Scan() {
-		message, observed := SplitTimestamp(scanner.Text())
+	err = readLogLines(strings.NewReader(text), func(line string) bool {
+		message, observed := SplitTimestamp(line)
 		events = append(events, core.LogEvent{Pod: item.Pod, Container: item.Container, Message: message, ObservedAt: observed})
+		return true
+	})
+	return events, err
+}
+
+// readLogLines grows with each physical line instead of imposing Scanner's
+// token limit. Preserve a final unterminated line and the usual CRLF semantics.
+func readLogLines(input io.Reader, emit func(string) bool) error {
+	reader := bufio.NewReaderSize(input, 64*1024)
+	for {
+		line, err := reader.ReadString('\n')
+		if len(line) > 0 {
+			line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+			if !emit(line) {
+				return nil
+			}
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
+		}
 	}
-	return events, scanner.Err()
+}
+
+// LogDetails reloads the selected entry directly from its source, independent
+// of display filters, --tail and buffer size. Only Kubernetes log retention
+// bounds the available history. Never substitute another error if it rotated.
+func (r Runner) LogDetails(ctx context.Context, selected core.LogEvent) ([]core.LogEvent, error) {
+	events, err := r.Snapshot(ctx, core.InventoryItem{Pod: selected.Pod, Container: selected.Container}, LogOptions{Tail: -1})
+	if err != nil {
+		return nil, err
+	}
+	block, found := core.LogBlock(events, selected)
+	if !found {
+		return nil, errors.New("selected log is no longer in this container's retained logs")
+	}
+	return block, nil
 }
 
 // CompleteHistory is retained for callers that only render text. Structured
