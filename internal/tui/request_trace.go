@@ -23,6 +23,9 @@ func (m model) hasSearch() bool { return m.config.Search != nil || m.config.Sear
 
 func (m *model) openSelectedTrace() tea.Cmd {
 	record, ok := m.state.SelectedRecord(m.selected)
+	if m.detailRecord != nil {
+		record, ok = *m.detailRecord, true
+	}
 	if !ok || record.Fields.TraceID == "" {
 		m.notice = "Selected log has no valid trace ID"
 		return nil
@@ -186,15 +189,7 @@ func (m model) renderTrace() string {
 
 func (m model) updateTraceKey(key string) (tea.Model, tea.Cmd) {
 	if m.detail != "" {
-		if key == "enter" {
-			m.notice = copyText(m.detail)
-		} else if key == "f6" {
-			m.closeDetail()
-			m.closeTrace()
-		} else {
-			m.updateDetailScroll(key)
-		}
-		return m, nil
+		return m.updateLogDetailKey(key)
 	}
 	rows := m.traceRows()
 	switch key {
@@ -212,7 +207,8 @@ func (m model) updateTraceKey(key string) (tea.Model, tea.Cmd) {
 		return m, m.loadTrace()
 	case "enter":
 		if len(rows) > 0 {
-			m.openDetail(recordDetails(rows[max(0, min(m.traceIndex, len(rows)-1))]))
+			cmd := m.openRecordDetail(rows[max(0, min(m.traceIndex, len(rows)-1))])
+			return m, cmd
 		}
 	}
 	m.traceIndex = max(0, min(m.traceIndex, len(rows)-1))
