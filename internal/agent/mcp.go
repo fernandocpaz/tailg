@@ -23,9 +23,15 @@ type ToolArguments struct {
 	ContextLines *int   `json:"contextLines,omitempty"`
 	MaxBytes     *int   `json:"maxBytes,omitempty"`
 	IssueID      string `json:"issueId,omitempty"`
+	After        string `json:"after,omitempty"`
+	Limit        *int   `json:"limit,omitempty"`
+	EvidenceID   string `json:"evidenceId,omitempty"`
+	Cursor       string `json:"cursor,omitempty"`
+	PageBytes    *int   `json:"pageBytes,omitempty"`
 }
 
 type ToolHandler func(context.Context, string, ToolArguments) (Report, error)
+type AnyToolHandler func(context.Context, string, ToolArguments) (any, error)
 
 type rpcRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -47,6 +53,16 @@ type rpcError struct {
 }
 
 func ServeMCP(ctx context.Context, input io.Reader, output io.Writer, handler ToolHandler) error {
+	var anyHandler AnyToolHandler
+	if handler != nil {
+		anyHandler = func(ctx context.Context, name string, arguments ToolArguments) (any, error) {
+			return handler(ctx, name, arguments)
+		}
+	}
+	return ServeMCPAny(ctx, input, output, anyHandler)
+}
+
+func ServeMCPAny(ctx context.Context, input io.Reader, output io.Writer, handler AnyToolHandler) error {
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	encoder := json.NewEncoder(output)
@@ -72,7 +88,7 @@ func ServeMCP(ctx context.Context, input io.Reader, output io.Writer, handler To
 				"resultType": "complete", "supportedVersions": []string{MCPProtocolVersion},
 				"capabilities": map[string]any{"tools": map[string]any{}},
 				"_meta":        map[string]any{"io.modelcontextprotocol/serverInfo": map[string]string{"name": "tailg", "version": "1"}},
-				"instructions": "Read-only Kubernetes diagnostics. Start with tailg_list_issues; call tailg_get_issue_context for a selected issue or tailg_diagnose for pod health and warning events.",
+				"instructions": "Use tailg_monitor to persist incident changes, tailg_get_changes to resume from a cursor, and tailg_list_incidents for current state. Use tailg_capture_issue_evidence and tailg_read_evidence_page for paginated retained logs. Monitoring and evidence write only the configured local files.",
 				"ttlMs":        3600000, "cacheScope": "public",
 			}
 		case "initialize":
@@ -86,7 +102,7 @@ func ServeMCP(ctx context.Context, input io.Reader, output io.Writer, handler To
 			response.Result = map[string]any{
 				"protocolVersion": params.ProtocolVersion, "capabilities": map[string]any{"tools": map[string]any{"listChanged": false}},
 				"serverInfo":   map[string]string{"name": "tailg", "version": "1"},
-				"instructions": "Read-only, bounded Kubernetes issue diagnostics.",
+				"instructions": "Bounded Kubernetes diagnostics with persistent incident state and cursor-based change replay when --state is configured.",
 			}
 		case "ping":
 			response.Result = map[string]any{"resultType": "complete"}
@@ -112,16 +128,16 @@ func ServeMCP(ctx context.Context, input io.Reader, output io.Writer, handler To
 				response.Error = &rpcError{Code: -32603, Message: "Tool handler is not configured"}
 				break
 			}
-			report, err := handler(ctx, params.Name, arguments)
+			result, err := handler(ctx, params.Name, arguments)
 			if err != nil {
 				response.Result = map[string]any{"resultType": "complete", "isError": true, "content": []any{map[string]string{"type": "text", "text": Redact(err.Error())}}}
 				break
 			}
-			encoded, _ := json.Marshal(report)
+			encoded, _ := json.Marshal(result)
 			response.Result = map[string]any{
 				"resultType": "complete", "isError": false,
 				"content":           []any{map[string]string{"type": "text", "text": string(encoded)}},
-				"structuredContent": report,
+				"structuredContent": result,
 			}
 		default:
 			response.Error = &rpcError{Code: -32601, Message: "Method not found"}
@@ -163,6 +179,11 @@ func mcpTools() []map[string]any {
 		{"name": "tailg_list_issues", "description": "List grouped active Kubernetes log issues with stable IDs and bounded context. Read-only.", "inputSchema": schema(nil, nil), "annotations": map[string]any{"readOnlyHint": true, "destructiveHint": false}},
 		{"name": "tailg_diagnose", "description": "Diagnose log issues, selected pod health, and related Kubernetes warning events. Read-only.", "inputSchema": schema(nil, nil), "annotations": map[string]any{"readOnlyHint": true, "destructiveHint": false}},
 		{"name": "tailg_get_issue_context", "description": "Return bounded same-container context for one stable issue ID. Read-only.", "inputSchema": schema(map[string]any{"issueId": map[string]any{"type": "string", "pattern": "^[0-9a-f]{16}$"}}, []string{"issueId"}), "annotations": map[string]any{"readOnlyHint": true, "destructiveHint": false}},
+		{"name": "tailg_monitor", "description": "Poll the configured Kubernetes scope and persist incident changes. This writes only the local monitor state file.", "inputSchema": schema(nil, nil), "annotations": map[string]any{"readOnlyHint": false, "destructiveHint": false}},
+		{"name": "tailg_list_incidents", "description": "Read persistent incidents and current coverage from the configured monitor state.", "inputSchema": schema(nil, nil), "annotations": map[string]any{"readOnlyHint": true, "destructiveHint": false}},
+		{"name": "tailg_get_changes", "description": "Read monitor changes after a durable cursor; continue from nextCursor and reset if resetRequired is true.", "inputSchema": schema(map[string]any{"after": map[string]any{"type": "string"}, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 1000}}, nil), "annotations": map[string]any{"readOnlyHint": true, "destructiveHint": false}},
+		{"name": "tailg_capture_issue_evidence", "description": "Capture and privately save complete retained logs around one issue. Returns an evidence ID for paginated reading.", "inputSchema": schema(map[string]any{"issueId": map[string]any{"type": "string", "pattern": "^[0-9a-f]{16}$"}}, []string{"issueId"}), "annotations": map[string]any{"readOnlyHint": false, "destructiveHint": false}},
+		{"name": "tailg_read_evidence_page", "description": "Read one bounded UTF-8 page from a saved issue evidence snapshot. Continue with nextCursor.", "inputSchema": schema(map[string]any{"evidenceId": map[string]any{"type": "string", "pattern": "^[0-9a-f]{64}$"}, "cursor": map[string]any{"type": "string"}, "pageBytes": map[string]any{"type": "integer", "minimum": 1024, "maximum": 262144}}, []string{"evidenceId"}), "annotations": map[string]any{"readOnlyHint": true, "destructiveHint": false}},
 	}
 }
 

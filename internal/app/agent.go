@@ -42,6 +42,7 @@ type agentOptions struct {
 	ContextLines     int
 	MaxBytes         int
 	IssueID          string
+	WorkloadScope    bool
 }
 
 func defaultAgentOptions() agentOptions {
@@ -100,10 +101,13 @@ func newIssueCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Wri
 
 func newMCPCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	defaults := defaultAgentOptions()
+	defaults.Since = "5m"
+	var statePath, evidenceDir string
+	var resolveAfter time.Duration
 	command := &cobra.Command{
-		Use: "mcp", Short: "Run the read-only tailg MCP server over stdio", Args: cobra.NoArgs, SilenceUsage: true, SilenceErrors: true,
+		Use: "mcp", Short: "Run the tailg MCP server over stdio for diagnostics and persistent monitoring", Args: cobra.NoArgs, SilenceUsage: true, SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			handler := func(callCtx context.Context, name string, arguments agent.ToolArguments) (agent.Report, error) {
+			handler := func(callCtx context.Context, name string, arguments agent.ToolArguments) (any, error) {
 				options := defaults
 				applyToolArguments(&options, arguments)
 				switch name {
@@ -120,16 +124,110 @@ func newMCPCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Write
 						err = fmt.Errorf("issue ID was not found in the bounded collection window")
 					}
 					return report, err
+				case "tailg_monitor":
+					if statePath == "" || options.Context == "" || options.Namespace == "" {
+						return nil, fmt.Errorf("tailg_monitor requires MCP --state, --context, and --namespace defaults")
+					}
+					spec := agent.MonitorSpec{Context: options.Context, Namespace: options.Namespace, Target: fallback(options.Target, "pod/*"), Selector: options.Selector,
+						Container: options.Container, Since: options.Since, Tail: options.Tail, MaxLines: options.MaxLines, MaxIssues: options.MaxIssues, MaxBytes: options.MaxBytes,
+						Include: options.Include, Exclude: options.Exclude,
+						DefaultExclude: !options.NoDefaultExclude, ResolveAfterSeconds: int64(resolveAfter / time.Second)}
+					store, err := agent.OpenMonitorStore(statePath, spec)
+					if err != nil {
+						return nil, err
+					}
+					defer store.Close()
+					result, err := applyMonitorPoll(callCtx, options, store, nil)
+					return result, err
+				case "tailg_list_incidents":
+					if statePath == "" {
+						return nil, fmt.Errorf("this tool requires MCP --state")
+					}
+					state, err := agent.ReadMonitorState(statePath)
+					if err != nil {
+						return nil, err
+					}
+					return state.ListIncidents(), nil
+				case "tailg_get_changes":
+					if statePath == "" {
+						return nil, fmt.Errorf("this tool requires MCP --state")
+					}
+					state, err := agent.ReadMonitorState(statePath)
+					if err != nil {
+						return nil, err
+					}
+					limit := 100
+					if arguments.Limit != nil {
+						limit = *arguments.Limit
+					}
+					return state.Changes(arguments.After, limit)
+				case "tailg_capture_issue_evidence":
+					if evidenceDir == "" {
+						return nil, fmt.Errorf("this tool requires MCP --evidence-dir")
+					}
+					if options.IssueID == "" {
+						return nil, fmt.Errorf("issueId is required")
+					}
+					options.WorkloadScope = true
+					report, err := collectAgentReport(callCtx, options, agent.ModeIssues)
+					if err != nil {
+						return nil, err
+					}
+					var selected *agent.Issue
+					for index := range report.Issues {
+						if report.Issues[index].ID == options.IssueID {
+							selected = &report.Issues[index]
+							break
+						}
+					}
+					if selected == nil {
+						return nil, fmt.Errorf("issue ID was not found in the bounded collection window")
+					}
+					runner := kube.NewRunner(report.Scope.Namespace, report.Scope.Context)
+					items, err := runner.InventoryForPods(callCtx, selected.Pods)
+					if err != nil {
+						return nil, err
+					}
+					containerPattern, err := regexp.Compile(options.Container)
+					if err != nil {
+						return nil, fmt.Errorf("invalid container regex: %w", err)
+					}
+					items = filterInventory(items, containerPattern)
+					if len(items) == 0 {
+						return nil, fmt.Errorf("no matching containers remain for issue evidence capture")
+					}
+					workloads, identityErr := runner.WorkloadIdentities(callCtx, items)
+					if identityErr != nil {
+						return nil, fmt.Errorf("cannot verify workload identity for evidence capture: %w", identityErr)
+					}
+					snapshot, err := agent.CaptureIssueEvidence(callCtx, runner, items, agent.CollectOptions{Context: report.Scope.Context, Namespace: report.Scope.Namespace,
+						Target: report.Scope.Target, IssueID: selected.ID, Workloads: workloads})
+					if err != nil {
+						return nil, err
+					}
+					return agent.SaveEvidence(evidenceDir, snapshot)
+				case "tailg_read_evidence_page":
+					if evidenceDir == "" {
+						return nil, fmt.Errorf("this tool requires MCP --evidence-dir")
+					}
+					pageBytes := 0
+					if arguments.PageBytes != nil {
+						pageBytes = *arguments.PageBytes
+					}
+					return agent.ReadEvidencePage(evidenceDir, arguments.EvidenceID, arguments.Cursor, pageBytes)
 				default:
-					return agent.Report{}, agent.UnknownTool(name)
+					return nil, agent.UnknownTool(name)
 				}
 			}
-			return agent.ServeMCP(ctx, stdin, stdout, handler)
+			return agent.ServeMCPAny(ctx, stdin, stdout, handler)
 		},
 	}
 	command.Flags().StringVarP(&defaults.Namespace, "namespace", "n", "", "default Kubernetes namespace for tool calls")
 	command.Flags().StringVar(&defaults.Context, "context", "", "default kubectl context for tool calls")
 	command.Flags().DurationVar(&defaults.Timeout, "timeout", defaults.Timeout, "maximum time for each tool call")
+	command.Flags().StringVar(&statePath, "state", "", "persistent monitor state file for incident and change tools")
+	command.Flags().StringVar(&evidenceDir, "evidence-dir", "", "private directory for saved issue evidence snapshots")
+	command.Flags().DurationVar(&resolveAfter, "resolve-after", 5*time.Minute, "complete quiet period required before resolving an incident")
 	command.SetIn(stdin)
 	command.SetOut(stdout)
 	command.SetErr(stderr)
@@ -261,15 +359,34 @@ func collectAgentReport(parent context.Context, options agentOptions, mode agent
 	}
 	items = filterInventory(items, containerPattern)
 	if len(items) == 0 {
+		if options.WorkloadScope && mode == agent.ModeDiagnose {
+			report := agent.Report{SchemaVersion: agent.SchemaVersion, Kind: "DiagnosticReport", GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano),
+				Window: fallback(options.Since, "tail"), Scope: agent.Scope{Context: fallback(effectiveContext, options.Context), Namespace: effectiveNamespace, Target: fallback(options.Target, "pod/*")},
+				Limits:  agent.Limits{Tail: options.Tail, MaxLines: options.MaxLines, MaxIssues: options.MaxIssues, ContextLines: options.ContextLines, MaxBytes: options.MaxBytes},
+				Summary: agent.Summary{Status: "healthy"}, Coverage: agent.Coverage{Status: "complete", ExpectedStreams: 0, CollectedStreams: 0, Reasons: []string{}},
+				Pods: []agent.Pod{}, Issues: []agent.Issue{}, KubernetesEvents: []agent.KubernetesEvent{}, CollectionErrors: []agent.CollectionError{}}
+			return agent.LimitReport(report, options.Output)
+		}
 		return agent.Report{}, fmt.Errorf("no matching pods or containers found")
+	}
+	workloads := map[string]string{}
+	var workloadErr error
+	if options.WorkloadScope {
+		workloads, workloadErr = runner.WorkloadIdentities(ctx, items)
 	}
 
 	collector := agent.Collector{Client: runner}
 	report, err := collector.Collect(ctx, items, agent.CollectOptions{
 		Mode: mode, Namespace: effectiveNamespace, Context: fallback(effectiveContext, options.Context), Target: fallback(options.Target, "pod/*"), Since: options.Since, IssueID: options.IssueID,
+		Workloads:    workloads,
 		Limits:       agent.Limits{Tail: options.Tail, MaxLines: options.MaxLines, MaxIssues: options.MaxIssues, ContextLines: options.ContextLines, MaxBytes: options.MaxBytes},
 		IncludeEvent: func(message string) bool { return len(formatter.Format("", "", message, false)) > 0 },
 	})
+	if workloadErr != nil {
+		report.CollectionErrors = append(report.CollectionErrors, agent.CollectionError{Source: "workload_identity", Message: agent.Redact(workloadErr.Error())})
+		report.Coverage.Status = "partial"
+		report.Coverage.Reasons = append(report.Coverage.Reasons, "workload_identity_incomplete")
+	}
 	if err != nil {
 		return report, err
 	}

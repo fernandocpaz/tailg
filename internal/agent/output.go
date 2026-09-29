@@ -52,6 +52,7 @@ func LimitReport(report Report, format string) (Report, error) {
 			return report, nil
 		}
 		report.Truncated = true
+		markOutputTruncation(&report)
 		switch {
 		case len(report.KubernetesEvents) > 0:
 			report.KubernetesEvents = report.KubernetesEvents[:len(report.KubernetesEvents)-1]
@@ -62,7 +63,6 @@ func LimitReport(report Report, format string) (Report, error) {
 			report.Pods = report.Pods[:len(report.Pods)-1]
 		case len(report.Issues) > 0:
 			report.Issues = report.Issues[:len(report.Issues)-1]
-			refreshSummary(&report)
 		case len(report.Recommendations) > 0:
 			report.Recommendations = nil
 		case len(report.CollectionErrors) > 0:
@@ -70,6 +70,13 @@ func LimitReport(report Report, format string) (Report, error) {
 		default:
 			return Report{}, fmt.Errorf("--max-bytes is too small for the report envelope")
 		}
+	}
+}
+
+func markOutputTruncation(report *Report) {
+	markCoverage(report, "output_byte_limit_reached", false)
+	if report.Summary.Status == "healthy" || report.Summary.Status == "" {
+		report.Summary.Status = "unknown"
 	}
 }
 
@@ -118,9 +125,10 @@ func encodeReport(report Report, format string) ([]byte, error) {
 		Scope           Scope    `json:"scope"`
 		Limits          Limits   `json:"limits"`
 		Summary         Summary  `json:"summary"`
+		Coverage        Coverage `json:"coverage"`
 		Recommendations []string `json:"recommendations,omitempty"`
 		Truncated       bool     `json:"truncated"`
-	}{report.Kind, report.GeneratedAt, report.Window, report.Scope, report.Limits, report.Summary, report.Recommendations, report.Truncated}
+	}{report.Kind, report.GeneratedAt, report.Window, report.Scope, report.Limits, report.Summary, report.Coverage, report.Recommendations, report.Truncated}
 	if err := write("summary", header); err != nil {
 		return nil, err
 	}
@@ -159,6 +167,11 @@ func encodeTextReport(report Report) []byte {
 		}
 		output.WriteString("\n")
 	}
+	fmt.Fprintf(&output, "coverage=%s | streams=%d/%d", valueOr(report.Coverage.Status, "unknown"), report.Coverage.CollectedStreams, report.Coverage.ExpectedStreams)
+	if len(report.Coverage.Reasons) > 0 {
+		fmt.Fprintf(&output, " | gaps=%s", strings.Join(report.Coverage.Reasons, ","))
+	}
+	output.WriteString("\n")
 
 	if len(report.Pods) > 0 {
 		output.WriteString("\nPODS\n")

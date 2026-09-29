@@ -322,16 +322,29 @@ Secret values are never fetched.
 Exit codes are designed for automation: `0` is healthy, `1` means warnings,
 `2` means errors or unhealthy pods, and `3` means collection or output failed.
 
-`tailg mcp` runs a read-only MCP server over stdio. It exposes
-`tailg_list_issues`, `tailg_diagnose`, and `tailg_get_issue_context`, using the
-same collection and classification engine as the CLI. A typical client entry is:
+`tailg monitor` maintains persistent workload-scoped incidents and emits one
+JSON record per poll. Its cursor survives restarts; incomplete coverage pauses
+resolution, and an incident resolves only after a complete quiet period. Pin
+the Kubernetes context and namespace explicitly:
+
+```sh
+tailg monitor --context staging --namespace payments --state .tailg/staging-payments.json
+tailg monitor --context staging --namespace payments --state .tailg/staging-payments.json --once
+```
+
+`tailg mcp` exposes one-shot diagnostics, `tailg_monitor`,
+`tailg_list_incidents`, `tailg_get_changes`, and tools to save and page through
+full retained issue evidence. Configure `--state`, `--context`, and `--namespace`
+for persistent monitoring, and `--evidence-dir` for evidence capture. The agent
+can resume polling from `nextCursor`; monitor output includes coverage so it can
+distinguish a healthy environment from an incomplete scan. Example client entry:
 
 ```json
 {
   "mcpServers": {
     "tailg": {
       "command": "tailg",
-      "args": ["mcp", "--namespace", "default"]
+      "args": ["mcp", "--context", "staging", "--namespace", "payments", "--state", ".tailg/staging-payments.json", "--evidence-dir", ".tailg/evidence"]
     }
   }
 }

@@ -49,6 +49,7 @@ type PodChoice struct {
 }
 
 type LogEvent struct {
+	Workload   string // verified controller identity, optional for legacy callers
 	Pod        string
 	Container  string
 	Message    string
