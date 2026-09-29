@@ -28,6 +28,9 @@ type ToolArguments struct {
 	EvidenceID   string `json:"evidenceId,omitempty"`
 	Cursor       string `json:"cursor,omitempty"`
 	PageBytes    *int   `json:"pageBytes,omitempty"`
+	IncidentID   string `json:"incidentId,omitempty"`
+	Title        string `json:"title,omitempty"`
+	Description  string `json:"description,omitempty"`
 }
 
 type ToolHandler func(context.Context, string, ToolArguments) (Report, error)
@@ -88,7 +91,7 @@ func ServeMCPAny(ctx context.Context, input io.Reader, output io.Writer, handler
 				"resultType": "complete", "supportedVersions": []string{MCPProtocolVersion},
 				"capabilities": map[string]any{"tools": map[string]any{}},
 				"_meta":        map[string]any{"io.modelcontextprotocol/serverInfo": map[string]string{"name": "tailg", "version": "1"}},
-				"instructions": "Use tailg_monitor to persist incident changes, tailg_get_changes to resume from a cursor, and tailg_list_incidents for current state. Use tailg_capture_issue_evidence and tailg_read_evidence_page for paginated retained logs. Monitoring and evidence write only the configured local files.",
+				"instructions": "Use tailg_monitor to persist incident changes, tailg_get_changes to resume from a cursor, and tailg_list_incidents for current state. Treat status=unknown or coverage other than complete as insufficient evidence: do not report the environment healthy or resolve incidents; retry or investigate the collection gap. Use tailg_capture_issue_evidence and tailg_read_evidence_page for paginated retained logs. tailg_create_azure_devops_work_item creates or reuses a tracked item for an open Tailg incident only when Azure DevOps is configured.",
 				"ttlMs":        3600000, "cacheScope": "public",
 			}
 		case "initialize":
@@ -102,7 +105,7 @@ func ServeMCPAny(ctx context.Context, input io.Reader, output io.Writer, handler
 			response.Result = map[string]any{
 				"protocolVersion": params.ProtocolVersion, "capabilities": map[string]any{"tools": map[string]any{"listChanged": false}},
 				"serverInfo":   map[string]string{"name": "tailg", "version": "1"},
-				"instructions": "Bounded Kubernetes diagnostics with persistent incident state and cursor-based change replay when --state is configured.",
+				"instructions": "Bounded Kubernetes diagnostics with persistent incident state and cursor-based change replay when --state is configured. Status unknown or incomplete coverage means Tailg could not establish health; do not interpret it as healthy.",
 			}
 		case "ping":
 			response.Result = map[string]any{"resultType": "complete"}
@@ -184,6 +187,7 @@ func mcpTools() []map[string]any {
 		{"name": "tailg_get_changes", "description": "Read monitor changes after a durable cursor; continue from nextCursor and reset if resetRequired is true.", "inputSchema": schema(map[string]any{"after": map[string]any{"type": "string"}, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 1000}}, nil), "annotations": map[string]any{"readOnlyHint": true, "destructiveHint": false}},
 		{"name": "tailg_capture_issue_evidence", "description": "Capture and privately save complete retained logs around one issue. Returns an evidence ID for paginated reading.", "inputSchema": schema(map[string]any{"issueId": map[string]any{"type": "string", "pattern": "^[0-9a-f]{16}$"}}, []string{"issueId"}), "annotations": map[string]any{"readOnlyHint": false, "destructiveHint": false}},
 		{"name": "tailg_read_evidence_page", "description": "Read one bounded UTF-8 page from a saved issue evidence snapshot. Continue with nextCursor.", "inputSchema": schema(map[string]any{"evidenceId": map[string]any{"type": "string", "pattern": "^[0-9a-f]{64}$"}, "cursor": map[string]any{"type": "string"}, "pageBytes": map[string]any{"type": "integer", "minimum": 1024, "maximum": 262144}}, []string{"evidenceId"}), "annotations": map[string]any{"readOnlyHint": true, "destructiveHint": false}},
+		{"name": "tailg_create_azure_devops_work_item", "description": "Create or reuse an Azure DevOps work item for an open Tailg incident. Requires MCP --state, --ado-organization, --ado-project, and TAILG_AZDO_TOKEN. Deduplicates by incident ID; never creates for resolved incidents.", "inputSchema": schema(map[string]any{"incidentId": map[string]any{"type": "string", "pattern": "^[0-9a-f]{32}$"}, "title": map[string]any{"type": "string", "maxLength": 200}, "description": map[string]any{"type": "string", "maxLength": 20000}}, []string{"incidentId"}), "annotations": map[string]any{"readOnlyHint": false, "destructiveHint": false}},
 	}
 }
 

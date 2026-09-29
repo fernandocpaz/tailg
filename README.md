@@ -332,19 +332,33 @@ tailg monitor --context staging --namespace payments --state .tailg/staging-paym
 tailg monitor --context staging --namespace payments --state .tailg/staging-payments.json --once
 ```
 
+Monitor results include both a health status and collection coverage. Treat
+`unknown`, `partial`, and `unavailable` as “health could not be established,”
+not as healthy; incomplete coverage pauses incident resolution. A follow-up
+agent can create or reuse an Azure DevOps work item for an open incident when
+the MCP server is configured with `--state`, `--ado-organization`, and
+`--ado-project`, plus the `TAILG_AZDO_TOKEN` environment variable. The token
+should have only the Azure DevOps Work Items permission needed to create and
+query work items. Tailg tags each item with its incident ID so retries reuse
+the same work item. For an Azure DevOps PAT, grant the `vso.work_write` scope
+needed to query and create work items.
+
 `tailg mcp` exposes one-shot diagnostics, `tailg_monitor`,
 `tailg_list_incidents`, `tailg_get_changes`, and tools to save and page through
-full retained issue evidence. Configure `--state`, `--context`, and `--namespace`
-for persistent monitoring, and `--evidence-dir` for evidence capture. The agent
-can resume polling from `nextCursor`; monitor output includes coverage so it can
-distinguish a healthy environment from an incomplete scan. Example client entry:
+full retained issue evidence, plus optional Azure DevOps work-item creation.
+Configure `--state`, `--context`, and `--namespace` for persistent monitoring,
+and `--evidence-dir` for evidence capture. Set `TAILG_AZDO_TOKEN` in the MCP
+server process environment; do not put the token in the agent's tool arguments.
+The agent can resume polling from `nextCursor`; monitor output includes
+coverage so it can distinguish a healthy environment from an incomplete scan.
+Example client entry:
 
 ```json
 {
   "mcpServers": {
     "tailg": {
       "command": "tailg",
-      "args": ["mcp", "--context", "staging", "--namespace", "payments", "--state", ".tailg/staging-payments.json", "--evidence-dir", ".tailg/evidence"]
+      "args": ["mcp", "--context", "staging", "--namespace", "payments", "--state", ".tailg/staging-payments.json", "--evidence-dir", ".tailg/evidence", "--ado-organization", "your-organization", "--ado-project", "your-project"]
     }
   }
 }

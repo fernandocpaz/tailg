@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -171,6 +172,52 @@ func TestCoverageUnavailableWhenEveryLogStreamFails(t *testing.T) {
 	if report.Coverage.Status != "unavailable" || report.Coverage.ExpectedStreams != 1 || report.Coverage.CollectedStreams != 0 {
 		t.Fatalf("coverage=%+v", report.Coverage)
 	}
+}
+
+func TestKnownIncidentIsNotResolvedWhenLaterLogCollectionFails(t *testing.T) {
+	item := core.InventoryItem{Pod: "api-1", Container: "api"}
+	client := coverageClient{rows: map[string][]core.LogEvent{item.Key(): {{
+		Pod: item.Pod, Container: item.Container, Message: "ERROR upstream timeout",
+		ObservedAt: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC),
+	}}}}
+	options := coverageOptions(Limits{Tail: 20, MaxLines: 100, MaxIssues: 10})
+	options.Context, options.Namespace, options.Target = "staging", "payments", "deployment/api"
+	options.Mode = ModeIssues
+	options.Workloads = map[string]string{item.Pod: "Deployment/api"}
+	report, err := (Collector{Client: client}).Collect(context.Background(), []core.InventoryItem{item}, options)
+	if err != nil || len(report.Issues) != 1 {
+		t.Fatalf("known incident was not classified: issues=%+v err=%v", report.Issues, err)
+	}
+
+	spec := testMonitorSpec()
+	spec.Context, spec.Namespace = "staging", "payments"
+	store := openTestMonitor(t, filepath.Join(t.TempDir(), "state.json"), spec)
+	defer store.Close()
+	t0 := time.Date(2026, 9, 1, 12, 0, 1, 0, time.UTC)
+	if changes, err := store.Apply(report, t0); err != nil || !containsMonitorEvent(changes, "incident.opened") {
+		t.Fatalf("known incident was not persisted: changes=%+v err=%v", changes, err)
+	}
+
+	client.logErrors = map[string]error{item.Key(): errors.New("logs forbidden")}
+	missed, err := (Collector{Client: client}).Collect(context.Background(), []core.InventoryItem{item}, options)
+	if err == nil || missed.Coverage.Status != "unavailable" {
+		t.Fatalf("fixture did not simulate missed logs: coverage=%+v err=%v", missed.Coverage, err)
+	}
+	if _, err := store.Apply(missed, t0.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if onlyMonitorIncident(t, store.state).Status != "open" || store.state.Status == "healthy" {
+		t.Fatalf("failed log collection falsely resolved or healed the incident: state=%+v", store.state)
+	}
+}
+
+func containsMonitorEvent(events []MonitorEvent, kind string) bool {
+	for _, event := range events {
+		if event.Type == kind {
+			return true
+		}
+	}
+	return false
 }
 
 func hasCoverageReason(coverage Coverage, reason string) bool {

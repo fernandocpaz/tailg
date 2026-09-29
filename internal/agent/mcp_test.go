@@ -40,12 +40,23 @@ func TestMCPSupportsModernDiscoveryAndTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	tools := list["result"].(map[string]any)["tools"].([]any)
-	if len(tools) != 8 {
-		t.Fatalf("got %d tools, want three diagnostic, three monitor, and two evidence tools", len(tools))
+	if len(tools) != 9 {
+		t.Fatalf("got %d tools, want three diagnostic, three monitor, two evidence, and one work-item tool", len(tools))
 	}
 	firstSchema := tools[0].(map[string]any)["inputSchema"].(map[string]any)
 	if _, present := firstSchema["required"]; present {
 		t.Fatalf("optional schema must not contain required: %v", firstSchema)
+	}
+}
+
+func TestMCPInstructionsSayUnknownCoverageIsNotHealthy(t *testing.T) {
+	input := `{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{}}` + "\n"
+	var output strings.Builder
+	if err := ServeMCP(context.Background(), strings.NewReader(input), &output, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "do not report the environment healthy") {
+		t.Fatalf("MCP instructions do not clarify unknown coverage: %s", output.String())
 	}
 }
 

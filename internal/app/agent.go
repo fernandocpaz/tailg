@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -103,6 +104,7 @@ func newMCPCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Write
 	defaults := defaultAgentOptions()
 	defaults.Since = "5m"
 	var statePath, evidenceDir string
+	var adoOrganization, adoProject, adoWorkItemType string
 	var resolveAfter time.Duration
 	command := &cobra.Command{
 		Use: "mcp", Short: "Run the tailg MCP server over stdio for diagnostics and persistent monitoring", Args: cobra.NoArgs, SilenceUsage: true, SilenceErrors: true,
@@ -230,6 +232,30 @@ func newMCPCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Write
 						pageBytes = *arguments.PageBytes
 					}
 					return agent.ReadEvidencePage(evidenceDir, arguments.EvidenceID, arguments.Cursor, pageBytes)
+				case "tailg_create_azure_devops_work_item":
+					if statePath == "" {
+						return nil, fmt.Errorf("this tool requires MCP --state")
+					}
+					if arguments.IncidentID == "" {
+						return nil, fmt.Errorf("incidentId is required")
+					}
+					state, err := agent.ReadMonitorState(statePath)
+					if err != nil {
+						return nil, err
+					}
+					var selected *agent.Incident
+					for _, incident := range state.Incidents {
+						if incident.ID == arguments.IncidentID {
+							copy := incident
+							selected = &copy
+							break
+						}
+					}
+					if selected == nil {
+						return nil, fmt.Errorf("incidentId was not found in the configured monitor state")
+					}
+					client := agent.AzureDevOpsWorkItems{Organization: adoOrganization, Project: adoProject, WorkItemType: adoWorkItemType, Token: os.Getenv("TAILG_AZDO_TOKEN")}
+					return client.CreateForIncident(callCtx, *selected, arguments.Title, arguments.Description)
 				default:
 					return nil, agent.UnknownTool(name)
 				}
@@ -242,6 +268,9 @@ func newMCPCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Write
 	command.Flags().DurationVar(&defaults.Timeout, "timeout", defaults.Timeout, "maximum time for each tool call")
 	command.Flags().StringVar(&statePath, "state", "", "persistent monitor state file for incident and change tools")
 	command.Flags().StringVar(&evidenceDir, "evidence-dir", "", "private directory for saved issue evidence snapshots")
+	command.Flags().StringVar(&adoOrganization, "ado-organization", os.Getenv("TAILG_AZDO_ORGANIZATION"), "Azure DevOps organization for work-item creation")
+	command.Flags().StringVar(&adoProject, "ado-project", os.Getenv("TAILG_AZDO_PROJECT"), "Azure DevOps project for work-item creation")
+	command.Flags().StringVar(&adoWorkItemType, "ado-work-item-type", "Bug", "Azure DevOps work item type to create")
 	command.Flags().DurationVar(&resolveAfter, "resolve-after", 5*time.Minute, "complete quiet period required before resolving an incident")
 	command.SetIn(stdin)
 	command.SetOut(stdout)
