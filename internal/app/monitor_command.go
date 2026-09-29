@@ -113,6 +113,7 @@ func newMonitorCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.W
 		},
 	}
 	addAgentFlags(command, &options)
+	_ = command.Flags().MarkHidden("output")
 	command.Flags().StringVar(&statePath, "state", "", "private persistent monitor state file (required)")
 	command.Flags().DurationVar(&interval, "interval", 30*time.Second, "time between monitor polls")
 	command.Flags().DurationVar(&resolveAfter, "resolve-after", 5*time.Minute, "complete quiet period required before resolving an incident")
