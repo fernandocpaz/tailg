@@ -153,6 +153,17 @@ func TestMonitorRequiresWorkloadAndCompleteAbsenceToResolve(t *testing.T) {
 	if onlyMonitorIncident(t, store.state).Status != "open" {
 		t.Fatal("incident resolved while its workload was absent from scope")
 	}
+	emptyTarget := testMonitorReport(spec)
+	emptyTarget.Coverage = Coverage{Status: "complete", ExpectedStreams: 0, CollectedStreams: 0}
+	emptyTarget.Scope.Workloads = nil
+	for _, offset := range []time.Duration{21 * time.Second, 40 * time.Second} {
+		if _, err := store.Apply(emptyTarget, t0.Add(offset)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if onlyMonitorIncident(t, store.state).Status != "open" {
+		t.Fatal("incident resolved while the monitored target had no matching streams")
+	}
 
 	unknownWorkload := testMonitorIssue("missing-owner", "", "api-1", 1, "2026-01-01T00:00:02Z")
 	_, err := store.Apply(testMonitorReport(spec, unknownWorkload), t0.Add(21*time.Second))

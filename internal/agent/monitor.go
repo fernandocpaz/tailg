@@ -405,7 +405,7 @@ func (s *MonitorStore) Apply(report Report, now time.Time) ([]MonitorEvent, erro
 		// Absence under a partial scan, unhealthy pods or missing workload is
 		// not recovery. Require a continuously observed quiet period.
 		workloadPresent := workloads[incident.Workload]
-		if coverage.Status != "complete" || report.Kind != "DiagnosticReport" || report.Summary.UnhealthyPods > 0 || (!workloadPresent && report.Coverage.ExpectedStreams != 0) {
+		if coverage.Status != "complete" || report.Kind != "DiagnosticReport" || report.Summary.UnhealthyPods > 0 || !workloadPresent {
 			incident.QuietSince = ""
 		} else if incident.QuietSince == "" {
 			incident.QuietSince = timestamp(now)

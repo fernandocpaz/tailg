@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -14,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -27,6 +29,14 @@ const (
 	MinEvidencePageBytes     = 1024
 	MaxEvidencePageBytes     = 256 * 1024
 )
+
+var verifiedEvidenceMu sync.Mutex
+var verifiedEvidenceFiles = map[string]evidenceFileSignature{}
+
+type evidenceFileSignature struct {
+	size    int64
+	modTime int64
+}
 
 // EvidenceSnapshot is a complete, redacted, immutable excerpt for one issue.
 // Content is readable text; timestamps and pod/container source metadata are
@@ -243,6 +253,22 @@ func ReadEvidencePage(dir, id, cursor string, maxBytes int) (EvidencePage, error
 	if contentInfo.Mode()&os.ModeSymlink != 0 || !contentInfo.Mode().IsRegular() || contentInfo.Mode().Perm()&0077 != 0 || int64(manifest.TotalBytes) != contentInfo.Size() {
 		return EvidencePage{}, errors.New("evidence content file permissions, type, or size are invalid")
 	}
+	signature := evidenceFileSignature{size: contentInfo.Size(), modTime: contentInfo.ModTime().UnixNano()}
+	cacheKey := contentPath + "\x00" + id
+	verifiedEvidenceMu.Lock()
+	verified := verifiedEvidenceFiles[cacheKey] == signature
+	verifiedEvidenceMu.Unlock()
+	if !verified {
+		if err := verifyEvidenceContent(contentPath, manifest, id); err != nil {
+			return EvidencePage{}, err
+		}
+		verifiedEvidenceMu.Lock()
+		if len(verifiedEvidenceFiles) >= 4096 {
+			clear(verifiedEvidenceFiles)
+		}
+		verifiedEvidenceFiles[cacheKey] = signature
+		verifiedEvidenceMu.Unlock()
+	}
 	if offset > manifest.TotalBytes {
 		return EvidencePage{}, errors.New("evidence cursor offset is invalid")
 	}
@@ -297,6 +323,92 @@ func ReadEvidencePage(dir, id, cursor string, maxBytes int) (EvidencePage, error
 		page.NextCursor = encodeEvidenceCursor(id, end)
 	}
 	return page, nil
+}
+
+// verifyEvidenceContent recomputes the content-addressed evidence ID while
+// streaming the file, so page reads detect corruption without loading the
+// entire snapshot into memory.
+func verifyEvidenceContent(path string, manifest EvidenceManifest, id string) error {
+	canonical := struct {
+		Scope   Scope  `json:"scope"`
+		IssueID string `json:"issueId"`
+		Content string `json:"content"`
+	}{Scope: manifest.Scope, IssueID: manifest.IssueID}
+	prefix, err := json.Marshal(canonical)
+	if err != nil {
+		return err
+	}
+	// The empty content field ends in `""}`. Keep its opening quote as the
+	// start of the streamed JSON string, then append the final object brace.
+	if len(prefix) < 2 || string(prefix[len(prefix)-2:]) != `"}` {
+		return errors.New("could not prepare evidence identity verification")
+	}
+	h := sha256.New()
+	if _, err := h.Write(prefix[:len(prefix)-2]); err != nil {
+		return err
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	reader := bufio.NewReader(f)
+	for {
+		r, size, readErr := reader.ReadRune()
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil {
+			return readErr
+		}
+		if r == utf8.RuneError && size == 1 {
+			return errors.New("evidence snapshot content is invalid UTF-8")
+		}
+		var encoded []byte
+		switch r {
+		case '"':
+			encoded = []byte(`\"`)
+		case '\\':
+			encoded = []byte(`\\`)
+		case '\b':
+			encoded = []byte(`\b`)
+		case '\f':
+			encoded = []byte(`\f`)
+		case '\n':
+			encoded = []byte(`\n`)
+		case '\r':
+			encoded = []byte(`\r`)
+		case '\t':
+			encoded = []byte(`\t`)
+		case '<':
+			encoded = []byte(`\u003c`)
+		case '>':
+			encoded = []byte(`\u003e`)
+		case '&':
+			encoded = []byte(`\u0026`)
+		case '\u2028':
+			encoded = []byte(`\u2028`)
+		case '\u2029':
+			encoded = []byte(`\u2029`)
+		default:
+			if r < 0x20 {
+				encoded = []byte(fmt.Sprintf(`\u%04x`, r))
+			} else {
+				encoded = make([]byte, size)
+				utf8.EncodeRune(encoded, r)
+			}
+		}
+		if _, err := h.Write(encoded); err != nil {
+			return err
+		}
+	}
+	if _, err := h.Write([]byte(`"}`)); err != nil {
+		return err
+	}
+	if hex.EncodeToString(h.Sum(nil)) != id {
+		return errors.New("evidence snapshot identity verification failed")
+	}
+	return nil
 }
 
 type evidenceRecord struct {

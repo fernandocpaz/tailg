@@ -187,4 +187,11 @@ func TestSaveEvidenceIdempotentAndCursorAndPathValidation(t *testing.T) {
 	if _, err := ReadEvidencePage(link, first.EvidenceID, "", 1024); err == nil {
 		t.Fatal("accepted symlink directory")
 	}
+	contentPath := filepath.Join(dir, first.EvidenceID, "content.txt")
+	if err := os.WriteFile(contentPath, []byte("secret=[REDACTED]\r"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadEvidencePage(dir, first.EvidenceID, "", 1024); err == nil || !strings.Contains(err.Error(), "identity verification") {
+		t.Fatalf("same-size evidence tampering was not detected: %v", err)
+	}
 }

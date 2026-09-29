@@ -181,6 +181,21 @@ func newMCPCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Write
 						}
 					}
 					if selected == nil {
+						// Older clients may pass the unscoped issue ID returned by
+						// pre-workload-scoped versions of tailg_list_issues.
+						options.WorkloadScope = false
+						report, err = collectAgentReport(callCtx, options, agent.ModeIssues)
+						if err != nil {
+							return nil, err
+						}
+						for index := range report.Issues {
+							if report.Issues[index].ID == options.IssueID {
+								selected = &report.Issues[index]
+								break
+							}
+						}
+					}
+					if selected == nil {
 						return nil, fmt.Errorf("issue ID was not found in the bounded collection window")
 					}
 					runner := kube.NewRunner(report.Scope.Namespace, report.Scope.Context)
@@ -363,7 +378,7 @@ func collectAgentReport(parent context.Context, options agentOptions, mode agent
 			report := agent.Report{SchemaVersion: agent.SchemaVersion, Kind: "DiagnosticReport", GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano),
 				Window: fallback(options.Since, "tail"), Scope: agent.Scope{Context: fallback(effectiveContext, options.Context), Namespace: effectiveNamespace, Target: fallback(options.Target, "pod/*")},
 				Limits:  agent.Limits{Tail: options.Tail, MaxLines: options.MaxLines, MaxIssues: options.MaxIssues, ContextLines: options.ContextLines, MaxBytes: options.MaxBytes},
-				Summary: agent.Summary{Status: "healthy"}, Coverage: agent.Coverage{Status: "complete", ExpectedStreams: 0, CollectedStreams: 0, Reasons: []string{}},
+				Summary: agent.Summary{Status: "unknown"}, Coverage: agent.Coverage{Status: "unavailable", ExpectedStreams: 0, CollectedStreams: 0, Reasons: []string{"no_selected_streams"}},
 				Pods: []agent.Pod{}, Issues: []agent.Issue{}, KubernetesEvents: []agent.KubernetesEvent{}, CollectionErrors: []agent.CollectionError{}}
 			return agent.LimitReport(report, options.Output)
 		}
