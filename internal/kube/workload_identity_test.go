@@ -18,13 +18,10 @@ func TestWorkloadIdentitiesResolveStableOwnersAndCachePods(t *testing.T) {
 	// The two ReplicaSets are different rollout revisions, but each verifies
 	// the same Deployment through its actual controller reference.
 	runner := workloadIdentityRunner(t, `
-  *"get pod/api-old -o json"*) printf '%s' '{"metadata":{"name":"api-old","ownerReferences":[{"kind":"ReplicaSet","name":"api-old-rs","uid":"rs-old","controller":true}]}}' ;;
-  *"get pod/api-new -o json"*) printf '%s' '{"metadata":{"name":"api-new","ownerReferences":[{"kind":"ReplicaSet","name":"api-new-rs","uid":"rs-new","controller":true}]}}' ;;
+  *"get pods -o json"*) printf '%s' '{"items":[{"metadata":{"name":"api-old","ownerReferences":[{"kind":"ReplicaSet","name":"api-old-rs","uid":"rs-old","controller":true}]}},{"metadata":{"name":"api-new","ownerReferences":[{"kind":"ReplicaSet","name":"api-new-rs","uid":"rs-new","controller":true}]}},{"metadata":{"name":"worker"}},{"metadata":{"name":"ledger","ownerReferences":[{"kind":"StatefulSet","name":"ledger","uid":"ss-ledger","controller":true}]}}]}' ;;
   *"get replicaset/api-old-rs -o json"*) printf '%s' '{"metadata":{"name":"api-old-rs","uid":"rs-old","ownerReferences":[{"kind":"Deployment","name":"api","uid":"dep-api","controller":true}]}}' ;;
   *"get replicaset/api-new-rs -o json"*) printf '%s' '{"metadata":{"name":"api-new-rs","uid":"rs-new","ownerReferences":[{"kind":"Deployment","name":"api","uid":"dep-api","controller":true}]}}' ;;
   *"get deployment/api -o json"*) printf '%s' '{"metadata":{"name":"api","uid":"dep-api"}}' ;;
-  *"get pod/worker -o json"*) printf '%s' '{"metadata":{"name":"worker"}}' ;;
-  *"get pod/ledger -o json"*) printf '%s' '{"metadata":{"name":"ledger","ownerReferences":[{"kind":"StatefulSet","name":"ledger","uid":"ss-ledger","controller":true}]}}' ;;
   *"get statefulset/ledger -o json"*) printf '%s' '{"metadata":{"name":"ledger","uid":"ss-ledger"}}' ;;
 `)
 	got, err := runner.WorkloadIdentities(context.Background(), []core.InventoryItem{
@@ -54,9 +51,8 @@ func TestWorkloadIdentitiesFallsBackWithContextualErrors(t *testing.T) {
 		t.Skip("fake kubectl is a shell script")
 	}
 	runner := workloadIdentityRunner(t, `
-  *"get pod/forbidden -o json"*) echo 'forbidden: pods is forbidden' >&2; exit 1 ;;
-  *"get pod/wrong -o json"*) printf '%s' '{"metadata":{"name":"different"}}' ;;
-  *"get pod/uid-mismatch -o json"*) printf '%s' '{"metadata":{"name":"uid-mismatch","ownerReferences":[{"kind":"StatefulSet","name":"db","uid":"old","controller":true}]}}' ;;
+  *"get pods -o json"*) printf '%s' '{"items":[{"metadata":{"name":"forbidden","ownerReferences":[{"kind":"StatefulSet","name":"db-forbidden","uid":"db-forbidden","controller":true}]}},{"metadata":{"name":"uid-mismatch","ownerReferences":[{"kind":"StatefulSet","name":"db","uid":"old","controller":true}]}}]}' ;;
+  *"get statefulset/db-forbidden -o json"*) echo 'forbidden: statefulsets is forbidden' >&2; exit 1 ;;
   *"get statefulset/db -o json"*) printf '%s' '{"metadata":{"name":"db","uid":"replacement"}}' ;;
 `)
 	got, err := runner.WorkloadIdentities(context.Background(), []core.InventoryItem{
@@ -72,7 +68,7 @@ func TestWorkloadIdentitiesFallsBackWithContextualErrors(t *testing.T) {
 			t.Errorf("identity[%q] = %q, want fallback %q", pod, got[pod], expected)
 		}
 	}
-	for _, phrase := range []string{"forbidden", "API returned metadata for pod different", "UID did not match"} {
+	for _, phrase := range []string{"forbidden", "pod was absent from the metadata snapshot", "UID did not match"} {
 		if !strings.Contains(err.Error(), phrase) {
 			t.Errorf("error %q does not include %q", err, phrase)
 		}
