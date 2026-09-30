@@ -255,7 +255,7 @@ func newMCPCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Write
 						return nil, fmt.Errorf("incidentId was not found in the configured monitor state")
 					}
 					client := agent.AzureDevOpsWorkItems{Organization: adoOrganization, Project: adoProject, WorkItemType: adoWorkItemType, Token: os.Getenv("TAILG_AZDO_TOKEN")}
-					return client.CreateForIncident(callCtx, *selected, arguments.Title, arguments.Description)
+					return client.CreateForIncidentWithEvidence(callCtx, *selected, arguments.Title, arguments.Description, evidenceDir, arguments.EvidenceID, state.Spec)
 				default:
 					return nil, agent.UnknownTool(name)
 				}

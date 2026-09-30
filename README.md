@@ -343,6 +343,17 @@ query work items. Tailg tags each item with its incident ID so retries reuse
 the same work item. For an Azure DevOps PAT, grant the `vso.work_write` scope
 needed to query and create work items.
 
+To include the complete retained error block in the work item, call
+`tailg_capture_issue_evidence` with the incident's `issueId`, then pass its
+returned `evidenceId` alongside the incident's `id` as `incidentId` to
+`tailg_create_azure_devops_work_item`. Tailg verifies the saved evidence and
+uploads it as a text-file attachment, including on a retry against an existing
+work item; it does not paste multi-megabyte logs into the 20,000-character
+description. Large files use Azure DevOps chunked upload and remain subject to
+the organization's attachment limit. If evidence capture fails, omit
+`evidenceId` and the agent can still create the incident work item with a note
+explaining the missing evidence.
+
 `tailg mcp` exposes one-shot diagnostics, `tailg_monitor`,
 `tailg_list_incidents`, `tailg_get_changes`, and tools to save and page through
 full retained issue evidence, plus optional Azure DevOps work-item creation.
