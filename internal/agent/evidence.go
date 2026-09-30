@@ -250,7 +250,7 @@ func ReadEvidencePage(dir, id, cursor string, maxBytes int) (EvidencePage, error
 	if err != nil {
 		return EvidencePage{}, err
 	}
-	if contentInfo.Mode()&os.ModeSymlink != 0 || !contentInfo.Mode().IsRegular() || contentInfo.Mode().Perm()&0077 != 0 || int64(manifest.TotalBytes) != contentInfo.Size() {
+	if contentInfo.Mode()&os.ModeSymlink != 0 || !contentInfo.Mode().IsRegular() || !isPrivate(contentInfo) || int64(manifest.TotalBytes) != contentInfo.Size() {
 		return EvidencePage{}, errors.New("evidence content file permissions, type, or size are invalid")
 	}
 	signature := evidenceFileSignature{size: contentInfo.Size(), modTime: contentInfo.ModTime().UnixNano()}
@@ -440,7 +440,7 @@ func readEvidenceRecord(path, id string) (evidenceRecord, error) {
 	if err != nil {
 		return evidenceRecord{}, err
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || int64(manifest.TotalBytes) != info.Size() {
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || !isPrivate(info) || int64(manifest.TotalBytes) != info.Size() {
 		return evidenceRecord{}, errors.New("evidence content file permissions, type, or size are unsafe")
 	}
 	f, err := os.Open(contentPath)
@@ -468,7 +468,7 @@ func readEvidenceManifest(dir, id string) (EvidenceManifest, error) {
 	if err != nil {
 		return EvidenceManifest{}, err
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || info.Mode().Perm()&0077 != 0 {
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || !isPrivate(info) {
 		return EvidenceManifest{}, errors.New("evidence snapshot directory permissions or type are unsafe")
 	}
 	manifestPath := filepath.Join(dir, "manifest.json")
@@ -476,7 +476,7 @@ func readEvidenceManifest(dir, id string) (EvidenceManifest, error) {
 	if err != nil {
 		return EvidenceManifest{}, err
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 1024*1024 {
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || !isPrivate(info) || info.Size() > 1024*1024 {
 		return EvidenceManifest{}, errors.New("evidence manifest permissions, type, or size are unsafe")
 	}
 	data, err := os.ReadFile(manifestPath)
@@ -581,7 +581,7 @@ func ensurePrivateDirectory(dir string) error {
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return errors.New("evidence path must be a real directory, not a symlink")
 	}
-	if info.Mode().Perm()&0077 != 0 {
+	if !isPrivate(info) {
 		return errors.New("evidence directory must have private permissions")
 	}
 	return nil
@@ -602,7 +602,7 @@ func validateExistingDirectory(dir string) error {
 	if err != nil {
 		return err
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || info.Mode().Perm()&0077 != 0 {
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || !isPrivate(info) {
 		return errors.New("evidence directory permissions or type are unsafe")
 	}
 	return nil

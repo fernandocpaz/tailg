@@ -213,7 +213,7 @@ func ReadMonitorState(path string) (MonitorState, error) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		return state, fmt.Errorf("invalid monitor state (not overwritten): %w", err)
 	}
-	if info.Mode().Perm()&0o077 != 0 {
+	if !isPrivate(info) {
 		return state, errors.New("monitor state permissions are unsafe (expected private file)")
 	}
 	if state.SchemaVersion != MonitorSchemaVersion || len(state.StoreID) != 32 || state.Incidents == nil || state.Events == nil {

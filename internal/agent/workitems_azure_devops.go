@@ -217,7 +217,7 @@ func openWorkItemEvidence(dir, id string, incident Incident, spec MonitorSpec) (
 	if err != nil {
 		return nil, EvidenceManifest{}, err
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || int64(manifest.TotalBytes) != info.Size() {
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || !isPrivate(info) || int64(manifest.TotalBytes) != info.Size() {
 		return nil, EvidenceManifest{}, errors.New("evidence content file permissions, type, or size are invalid")
 	}
 	// Unlike paginated reads, an external upload always verifies the full file.
@@ -229,7 +229,7 @@ func openWorkItemEvidence(dir, id string, incident Incident, spec MonitorSpec) (
 		return nil, EvidenceManifest{}, err
 	}
 	opened, err := f.Stat()
-	if err != nil || !opened.Mode().IsRegular() || opened.Mode().Perm()&0077 != 0 || opened.Size() != info.Size() {
+	if err != nil || !opened.Mode().IsRegular() || !isPrivate(opened) || opened.Size() != info.Size() {
 		f.Close()
 		return nil, EvidenceManifest{}, errors.New("evidence content changed while opening")
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -118,7 +119,7 @@ func TestEvidencePaginationReconstructsLargeUnicodeSnapshotAndIsStable(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0700 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0700 {
 		t.Fatalf("evidence directory mode=%v", info.Mode())
 	}
 	var rebuilt strings.Builder
