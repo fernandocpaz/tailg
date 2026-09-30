@@ -17,23 +17,51 @@ structured diagnostics for scripts and AI agents.
 
 ## Install
 
-With Go:
+### Pinned build with AI monitoring and Azure DevOps evidence attachments
+
+With Go 1.25 or newer installed, use this exact version (rather than
+`@latest`, which may still refer to an older tagged release):
 
 ```sh
-go install github.com/fernandocpaz/tailg/cmd/tailg@latest
-```
-
-Or download the binary for your platform from GitHub Releases and put it on
-your `PATH`.
-
-Check the installed version and source commit with `tailg version` or
-`tailg --version`. Release binaries also report their build time. To install
-the current main branch before a new release is tagged:
-
-```sh
-go install github.com/fernandocpaz/tailg/cmd/tailg@main
+go install github.com/fernandocpaz/tailg/cmd/tailg@v0.1.1-0.20260930142834-637d6a33b177
 tailg version
 ```
+
+If `tailg` is not found after installation, add Go's installed-binary directory
+to your `PATH`. On Linux or macOS, run this in your terminal and add the same
+line to your shell startup file (`~/.bashrc` or `~/.zshrc`) to make it permanent:
+
+```sh
+export PATH="$(go env GOPATH)/bin:$PATH"
+tailg version
+```
+
+On Windows PowerShell, run this for the current session, then add the path
+printed by `Join-Path (go env GOPATH) 'bin'` to your user `Path` environment
+variable to make it permanent:
+
+```powershell
+$tailgBin = Join-Path (go env GOPATH) 'bin'
+$env:Path += ";$tailgBin"
+tailg version
+```
+
+### New machine without Go
+
+1. Install Go 1.25 or newer using the official [Go downloads](https://go.dev/dl/)
+   and [OS-specific installation instructions](https://go.dev/doc/install).
+   Use the Windows MSI, macOS package, or Linux archive for your architecture.
+2. Open a new terminal and verify `go version` reports Go 1.25 or newer.
+3. Run the pinned `go install` command above, add Go's binary directory to
+   `PATH` as shown for your OS, and verify with `tailg version`.
+4. Install and configure `kubectl` and Kubernetes credentials before using
+   Tailg against a cluster.
+
+If you do not want to install Go, download a prebuilt binary for your OS and
+architecture from [GitHub Releases](https://github.com/fernandocpaz/tailg/releases)
+and put it on your `PATH`. Check its `tailg version` output: an existing
+release may predate the pinned AI-monitoring and evidence-attachment build.
+Release binaries also report their build time.
 
 ## Usage
 
