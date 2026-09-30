@@ -45,6 +45,12 @@ func (c Collector) Collect(ctx context.Context, items []core.InventoryItem, opti
 		Scope: Scope{Context: options.Context, Namespace: options.Namespace, Target: options.Target, Pods: core.UniquePods(items)},
 		Pods:  []Pod{}, Issues: []Issue{}, KubernetesEvents: []KubernetesEvent{}, Recommendations: []string{}, CollectionErrors: []CollectionError{},
 	}
+	items = uniqueStreams(items)
+	report.Scope.Workloads = selectedWorkloads(items, options.Workloads)
+	report.Coverage = Coverage{Status: "complete", ExpectedStreams: len(items), Reasons: []string{}}
+	if len(items) == 0 {
+		markCoverage(&report, "no_selected_streams", true)
+	}
 	selectedPods := make(map[string]bool, len(report.Scope.Pods))
 	for _, pod := range report.Scope.Pods {
 		selectedPods[pod] = true
@@ -54,7 +60,9 @@ func (c Collector) Collect(ctx context.Context, items []core.InventoryItem, opti
 		payload, err := c.Client.JSON(ctx, "get", "pods")
 		if err != nil {
 			report.CollectionErrors = append(report.CollectionErrors, collectionError("pods", err))
+			markCoverage(&report, "pod_metadata_collection_failed", false)
 		} else {
+			foundPods := make(map[string]bool)
 			for _, status := range kube.PodStatusSummaries(payload) {
 				if !selectedPods[status.Name] {
 					continue
@@ -69,51 +77,84 @@ func (c Collector) Collect(ctx context.Context, items []core.InventoryItem, opti
 					})
 				}
 				report.Pods = append(report.Pods, pod)
+				foundPods[status.Name] = true
 				if len(status.Issues) > 0 {
 					report.Summary.UnhealthyPods++
+				}
+			}
+			for pod := range selectedPods {
+				if !foundPods[pod] {
+					markCoverage(&report, "selected_pod_missing_from_metadata", false)
 				}
 			}
 		}
 		payload, err = c.Client.JSON(ctx, "get", "events", "--sort-by=.lastTimestamp")
 		if err != nil {
 			report.CollectionErrors = append(report.CollectionErrors, collectionError("events", err))
+			markCoverage(&report, "event_collection_failed", false)
 		} else {
 			report.KubernetesEvents = warningEvents(payload, selectedPods, 50)
+			if len(report.KubernetesEvents) >= 50 {
+				markCoverage(&report, "event_limit_reached", false)
+			}
 		}
 	}
 
 	radar := core.NewIssueRadar(options.Limits.MaxIssues)
 	var events []collectedEvent
 	snapshotSuccess := 0
+	issueKeys := make(map[string]struct{})
 	for _, item := range items {
 		if len(events) >= options.Limits.MaxLines {
 			report.Truncated = true
+			markCoverage(&report, "max_lines_reached", false)
 			break
 		}
 		rows, err := c.Client.Snapshot(ctx, item, kube.LogOptions{Since: options.Since, Tail: options.Limits.Tail})
 		if err != nil {
 			report.CollectionErrors = append(report.CollectionErrors, collectionError(item.Pod+"/"+item.Container, err))
+			markCoverage(&report, "log_collection_failed", false)
 			continue
 		}
 		snapshotSuccess++
+		report.Coverage.CollectedStreams++
+		if options.Limits.Tail > 0 && len(rows) >= options.Limits.Tail {
+			markCoverage(&report, "tail_limit_reached", false)
+		}
 		for _, event := range rows {
 			if len(events) >= options.Limits.MaxLines {
 				report.Truncated = true
+				markCoverage(&report, "max_lines_reached", false)
 				break
 			}
 			if options.IncludeEvent != nil && !options.IncludeEvent(event.Message) {
 				continue
 			}
+			event.Workload = options.Workloads[event.Pod]
 			classified, ok := core.ClassifyIssue(event)
 			key := ""
 			if ok {
 				key = classified.Key
 				radar.Observe(event)
+				issueKeys[key] = struct{}{}
 			}
 			events = append(events, collectedEvent{event: event, key: key})
 		}
+		if options.Limits.MaxLines > 0 && len(events) >= options.Limits.MaxLines {
+			report.Truncated = true
+			markCoverage(&report, "max_lines_reached", false)
+		}
+	}
+	issueLimit := options.Limits.MaxIssues
+	if issueLimit <= 0 {
+		issueLimit = 200
+	}
+	if len(issueKeys) > issueLimit {
+		markCoverage(&report, "issue_group_limit_reached", false)
 	}
 	if snapshotSuccess == 0 && len(items) > 0 {
+		markCoverage(&report, "no_log_streams_collected", true)
+		refreshSummary(&report)
 		return report, fmt.Errorf("could not collect logs from any selected container")
 	}
 	sort.SliceStable(events, func(i, j int) bool {
@@ -148,7 +189,8 @@ func (c Collector) Collect(ctx context.Context, items []core.InventoryItem, opti
 		}
 		report.Issues = append(report.Issues, Issue{
 			ID: id, Severity: severityName(issue.Severity), Kind: issue.Kind,
-			Summary: Redact(issue.Summary), SearchTerm: Redact(issue.SearchTerm), Service: issue.Service,
+			Workload: issue.Workload,
+			Summary:  Redact(issue.Summary), SearchTerm: Redact(issue.SearchTerm), Service: issue.Service,
 			Pods: issue.Pods, Count: issue.Count, TotalCount: issue.TotalCount,
 			FirstSeen: timestamp(issue.FirstSeen), LastSeen: timestamp(issue.LastSeen), Increasing: issue.Increasing,
 			New: issue.New, MaxDurationMs: durationMilliseconds(issue.MaxDuration),
@@ -186,8 +228,55 @@ func refreshSummary(report *Report) {
 		report.Summary.Status = "error"
 	case report.Summary.Warnings > 0 || len(report.CollectionErrors) > 0:
 		report.Summary.Status = "warning"
+	case report.Coverage.Status != "complete":
+		report.Summary.Status = "unknown"
 	default:
 		report.Summary.Status = "healthy"
+	}
+}
+
+func uniqueStreams(items []core.InventoryItem) []core.InventoryItem {
+	seen := make(map[string]bool, len(items))
+	result := make([]core.InventoryItem, 0, len(items))
+	for _, item := range items {
+		if seen[item.Key()] {
+			continue
+		}
+		seen[item.Key()] = true
+		result = append(result, item)
+	}
+	return result
+}
+
+func selectedWorkloads(items []core.InventoryItem, workloads map[string]string) []string {
+	seen := make(map[string]bool)
+	result := make([]string, 0)
+	for _, item := range items {
+		workload := strings.TrimSpace(workloads[item.Pod])
+		if workload == "" || seen[workload] {
+			continue
+		}
+		seen[workload] = true
+		result = append(result, workload)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func markCoverage(report *Report, reason string, unavailable bool) {
+	for _, existing := range report.Coverage.Reasons {
+		if existing == reason {
+			if unavailable {
+				report.Coverage.Status = "unavailable"
+			}
+			return
+		}
+	}
+	report.Coverage.Reasons = append(report.Coverage.Reasons, reason)
+	if unavailable {
+		report.Coverage.Status = "unavailable"
+	} else if report.Coverage.Status != "unavailable" {
+		report.Coverage.Status = "partial"
 	}
 }
 
@@ -257,6 +346,8 @@ func ExitCode(report Report) int {
 		return 2
 	case "warning":
 		return 1
+	case "unknown":
+		return 3
 	default:
 		return 0
 	}

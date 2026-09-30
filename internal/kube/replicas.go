@@ -80,6 +80,12 @@ type resolvedWorkload struct {
 }
 
 func (r Runner) resolvePodWorkload(ctx context.Context, pod map[string]any) (*resolvedWorkload, string) {
+	return r.resolvePodWorkloadWith(ctx, pod, func(ctx context.Context, kind, name string) (map[string]any, error) {
+		return r.JSON(ctx, "get", resourceToken(kind, name))
+	})
+}
+
+func (r Runner) resolvePodWorkloadWith(ctx context.Context, pod map[string]any, getResource func(context.Context, string, string) (map[string]any, error)) (*resolvedWorkload, string) {
 	refs := ownerReferences(mapValue(pod["metadata"]))
 	if len(refs) == 0 {
 		return nil, ""
@@ -95,9 +101,12 @@ func (r Runner) resolvePodWorkload(ctx context.Context, pod map[string]any) (*re
 	if !supportedWorkloadKind(kind) && kind != "ReplicaSet" {
 		return &resolvedWorkload{kind: kind, name: name, unsupported: true}, ""
 	}
-	obj, err := r.JSON(ctx, "get", resourceToken(kind, name))
+	obj, err := getResource(ctx, kind, name)
 	if err != nil {
 		return &resolvedWorkload{kind: kind, name: name}, "Could not read " + kind + "/" + name + ": " + shortError(err)
+	}
+	if returnedName := stringValue(mapValue(obj["metadata"])["name"]); returnedName != name {
+		return nil, fmt.Sprintf("Owner %s/%s metadata name did not match the requested object.", kind, name)
 	}
 	if !sameUID(ref, obj) {
 		return nil, fmt.Sprintf("Pod owner %s/%s UID did not match the observed object; replacement ownership was not attributed.", kind, name)
@@ -118,9 +127,12 @@ func (r Runner) resolvePodWorkload(ctx context.Context, pod map[string]any) (*re
 		return &resolvedWorkload{kind: "ReplicaSet", name: name, object: obj, apiGroup: apiGroup(obj)}, ""
 	}
 	deploymentName := stringValue(rsOwner["name"])
-	deployment, deploymentErr := r.JSON(ctx, "get", resourceToken("Deployment", deploymentName))
+	deployment, deploymentErr := getResource(ctx, "Deployment", deploymentName)
 	if deploymentErr != nil {
 		return &resolvedWorkload{kind: "ReplicaSet", name: name, object: obj, apiGroup: apiGroup(obj)}, "Could not read Deployment/" + deploymentName + ": " + shortError(deploymentErr)
+	}
+	if returnedName := stringValue(mapValue(deployment["metadata"])["name"]); returnedName != deploymentName {
+		return &resolvedWorkload{kind: "ReplicaSet", name: name, object: obj, apiGroup: apiGroup(obj)}, fmt.Sprintf("ReplicaSet owner Deployment/%s metadata name did not match the requested object.", deploymentName)
 	}
 	if !sameUID(rsOwner, deployment) {
 		return &resolvedWorkload{kind: "ReplicaSet", name: name, object: obj, apiGroup: apiGroup(obj)}, fmt.Sprintf("ReplicaSet owner Deployment/%s UID did not match; deployment ownership was not attributed.", deploymentName)

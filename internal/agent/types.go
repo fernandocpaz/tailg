@@ -24,6 +24,7 @@ type Scope struct {
 	Namespace string   `json:"namespace"`
 	Target    string   `json:"target"`
 	Pods      []string `json:"pods"`
+	Workloads []string `json:"workloads,omitempty"`
 }
 
 type Summary struct {
@@ -34,6 +35,16 @@ type Summary struct {
 	Warnings      int    `json:"warnings"`
 	UnhealthyPods int    `json:"unhealthyPods"`
 	LogLines      int    `json:"logLines"`
+}
+
+// Coverage describes how much of the requested evidence was collected. It is
+// deliberately separate from Summary.Status: a complete report can contain
+// errors, while an incomplete report must never be interpreted as healthy.
+type Coverage struct {
+	Status           string   `json:"status"`
+	ExpectedStreams  int      `json:"expectedStreams"`
+	CollectedStreams int      `json:"collectedStreams"`
+	Reasons          []string `json:"reasons"`
 }
 
 type LogLine struct {
@@ -51,6 +62,7 @@ type IssueContext struct {
 
 type Issue struct {
 	ID            string       `json:"id"`
+	Workload      string       `json:"workload,omitempty"`
 	Severity      string       `json:"severity"`
 	Kind          string       `json:"kind"`
 	Summary       string       `json:"summary"`
@@ -115,6 +127,7 @@ type Report struct {
 	Scope            Scope             `json:"scope"`
 	Limits           Limits            `json:"limits"`
 	Summary          Summary           `json:"summary"`
+	Coverage         Coverage          `json:"coverage"`
 	Pods             []Pod             `json:"pods"`
 	Issues           []Issue           `json:"issues"`
 	KubernetesEvents []KubernetesEvent `json:"kubernetesEvents"`
@@ -131,6 +144,7 @@ type CollectOptions struct {
 	Since        string
 	Limits       Limits
 	IssueID      string
+	Workloads    map[string]string
 	IncludeEvent func(string) bool
 	Now          func() time.Time
 }

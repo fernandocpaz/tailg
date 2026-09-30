@@ -128,6 +128,7 @@ func NewCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) 
 	command.AddCommand(newAgentCommand(ctx, stdin, stdout, stderr, agent.ModeDiagnose))
 	command.AddCommand(newIssueCommand(ctx, stdin, stdout, stderr))
 	command.AddCommand(newMCPCommand(ctx, stdin, stdout, stderr))
+	command.AddCommand(newMonitorCommand(ctx, stdin, stdout, stderr))
 	command.AddCommand(&cobra.Command{
 		Use:   "version",
 		Short: "Print the tailg version and build information",

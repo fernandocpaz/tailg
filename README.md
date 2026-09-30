@@ -17,23 +17,51 @@ structured diagnostics for scripts and AI agents.
 
 ## Install
 
-With Go:
+### Pinned build with AI monitoring and Azure DevOps evidence attachments
+
+With Go 1.25 or newer installed, use this exact version (rather than
+`@latest`, which may still refer to an older tagged release):
 
 ```sh
-go install github.com/fernandocpaz/tailg/cmd/tailg@latest
-```
-
-Or download the binary for your platform from GitHub Releases and put it on
-your `PATH`.
-
-Check the installed version and source commit with `tailg version` or
-`tailg --version`. Release binaries also report their build time. To install
-the current main branch before a new release is tagged:
-
-```sh
-go install github.com/fernandocpaz/tailg/cmd/tailg@main
+go install github.com/fernandocpaz/tailg/cmd/tailg@v0.1.1-0.20260930142834-637d6a33b177
 tailg version
 ```
+
+If `tailg` is not found after installation, add Go's installed-binary directory
+to your `PATH`. On Linux or macOS, run this in your terminal and add the same
+line to your shell startup file (`~/.bashrc` or `~/.zshrc`) to make it permanent:
+
+```sh
+export PATH="$(go env GOPATH)/bin:$PATH"
+tailg version
+```
+
+On Windows PowerShell, run this for the current session, then add the path
+printed by `Join-Path (go env GOPATH) 'bin'` to your user `Path` environment
+variable to make it permanent:
+
+```powershell
+$tailgBin = Join-Path (go env GOPATH) 'bin'
+$env:Path += ";$tailgBin"
+tailg version
+```
+
+### New machine without Go
+
+1. Install Go 1.25 or newer using the official [Go downloads](https://go.dev/dl/)
+   and [OS-specific installation instructions](https://go.dev/doc/install).
+   Use the Windows MSI, macOS package, or Linux archive for your architecture.
+2. Open a new terminal and verify `go version` reports Go 1.25 or newer.
+3. Run the pinned `go install` command above, add Go's binary directory to
+   `PATH` as shown for your OS, and verify with `tailg version`.
+4. Install and configure `kubectl` and Kubernetes credentials before using
+   Tailg against a cluster.
+
+If you do not want to install Go, download a prebuilt binary for your OS and
+architecture from [GitHub Releases](https://github.com/fernandocpaz/tailg/releases)
+and put it on your `PATH`. Check its `tailg version` output: an existing
+release may predate the pinned AI-monitoring and evidence-attachment build.
+Release binaries also report their build time.
 
 ## Usage
 
@@ -322,16 +350,54 @@ Secret values are never fetched.
 Exit codes are designed for automation: `0` is healthy, `1` means warnings,
 `2` means errors or unhealthy pods, and `3` means collection or output failed.
 
-`tailg mcp` runs a read-only MCP server over stdio. It exposes
-`tailg_list_issues`, `tailg_diagnose`, and `tailg_get_issue_context`, using the
-same collection and classification engine as the CLI. A typical client entry is:
+`tailg monitor` maintains persistent workload-scoped incidents and emits one
+JSON record per poll. Its cursor survives restarts; incomplete coverage pauses
+resolution, and an incident resolves only after a complete quiet period. Pin
+the Kubernetes context and namespace explicitly:
+
+```sh
+tailg monitor --context staging --namespace payments --state .tailg/staging-payments.json
+tailg monitor --context staging --namespace payments --state .tailg/staging-payments.json --once
+```
+
+Monitor results include both a health status and collection coverage. Treat
+`unknown`, `partial`, and `unavailable` as “health could not be established,”
+not as healthy; incomplete coverage pauses incident resolution. A follow-up
+agent can create or reuse an Azure DevOps work item for an open incident when
+the MCP server is configured with `--state`, `--ado-organization`, and
+`--ado-project`, plus the `TAILG_AZDO_TOKEN` environment variable. The token
+should have only the Azure DevOps Work Items permission needed to create and
+query work items. Tailg tags each item with its incident ID so retries reuse
+the same work item. For an Azure DevOps PAT, grant the `vso.work_write` scope
+needed to query and create work items.
+
+To include the complete retained error block in the work item, call
+`tailg_capture_issue_evidence` with the incident's `issueId`, then pass its
+returned `evidenceId` alongside the incident's `id` as `incidentId` to
+`tailg_create_azure_devops_work_item`. Tailg verifies the saved evidence and
+uploads it as a text-file attachment, including on a retry against an existing
+work item; it does not paste multi-megabyte logs into the 20,000-character
+description. Large files use Azure DevOps chunked upload and remain subject to
+the organization's attachment limit. If evidence capture fails, omit
+`evidenceId` and the agent can still create the incident work item with a note
+explaining the missing evidence.
+
+`tailg mcp` exposes one-shot diagnostics, `tailg_monitor`,
+`tailg_list_incidents`, `tailg_get_changes`, and tools to save and page through
+full retained issue evidence, plus optional Azure DevOps work-item creation.
+Configure `--state`, `--context`, and `--namespace` for persistent monitoring,
+and `--evidence-dir` for evidence capture. Set `TAILG_AZDO_TOKEN` in the MCP
+server process environment; do not put the token in the agent's tool arguments.
+The agent can resume polling from `nextCursor`; monitor output includes
+coverage so it can distinguish a healthy environment from an incomplete scan.
+Example client entry:
 
 ```json
 {
   "mcpServers": {
     "tailg": {
       "command": "tailg",
-      "args": ["mcp", "--namespace", "default"]
+      "args": ["mcp", "--context", "staging", "--namespace", "payments", "--state", ".tailg/staging-payments.json", "--evidence-dir", ".tailg/evidence", "--ado-organization", "your-organization", "--ado-project", "your-project"]
     }
   }
 }
