@@ -22,6 +22,7 @@ import (
 )
 
 type Config struct {
+	LogDetails      func(context.Context, core.LogEvent) ([]core.LogEvent, error)
 	ExplainReplicas func(context.Context, string) (core.ReplicaExplanation, error)
 	Version         string
 	SearchRecords   func(context.Context, string) ([]core.LogRecord, error)
@@ -86,6 +87,12 @@ type model struct {
 	notice          string
 	detail          string
 	detailOffset    int
+	detailRecord    *core.LogRecord
+	detailLoading   bool
+	detailNotice    string
+	detailGen       int
+	detailSearches  *searchController
+	detailLayout    *detailLayout
 	heartbeatOpen   bool
 	resourceOpen    bool
 	resourceDetail  string
@@ -231,6 +238,8 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
+	case logDetailMsg:
+		return m.updateLogDetail(msg)
 	case replicaMsg:
 		return m.updateReplicaResult(msg)
 	case tea.WindowSizeMsg:
@@ -445,18 +454,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateResourceKey(key)
 		}
 		if m.detail != "" {
-			if key == "f6" {
-				return m, m.openSelectedTrace()
-			}
-			if key == "enter" {
-				m.notice = copyText(m.detail)
-				m.closeDetail()
-				return m, nil
-			}
-			if m.updateDetailScroll(key) {
-				return m, nil
-			}
-			return m, nil
+			return m.updateLogDetailKey(key)
 		}
 		switch key {
 		case "f1":
@@ -544,10 +542,11 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if selected == "" {
 				m.notice = "No selected log line"
 			} else {
-				m.openDetail(selected)
 				if record, ok := m.state.SelectedRecord(m.selected); ok {
-					m.openDetail(recordDetails(record))
+					cmd := m.openRecordDetail(record)
+					return m, cmd
 				}
+				m.openDetail(selected)
 			}
 			return m, nil
 		}
@@ -643,21 +642,30 @@ func (m model) panel(title, body, footer string) string {
 }
 
 func (m *model) openDetail(value string) {
+	m.closeDetail()
 	m.detail = value
 	m.detailOffset = 0
+	m.detailLayout = &detailLayout{}
 }
 
 func (m *model) closeDetail() {
+	if m.detailSearches != nil {
+		m.detailSearches.stop()
+	}
+	m.detailGen++
 	m.detail = ""
 	m.detailOffset = 0
+	m.detailRecord = nil
+	m.detailLoading = false
+	m.detailNotice = ""
+	m.detailLayout = nil
 }
 
 func (m model) detailLines() []string {
 	if m.detail == "" {
 		return nil
 	}
-	wrapped := ansi.Wrap(m.detail, max(1, m.width), "")
-	return strings.Split(wrapped, "\n")
+	return m.wrappedDetailLines()
 }
 
 func (m model) detailHeight() int {
@@ -697,9 +705,6 @@ func (m model) renderDetail() string {
 	start := min(max(0, m.detailOffset), limit)
 	end := min(len(allLines), start+height)
 	lines := append([]string(nil), allLines[start:end]...)
-	for index := range lines {
-		lines[index] = truncate(lines[index], m.width)
-	}
 	for len(lines) < height {
 		lines = append(lines, "")
 	}
@@ -708,8 +713,13 @@ func (m model) renderDetail() string {
 	if len(allLines) > 0 {
 		position = fmt.Sprintf("%d-%d/%d", start+1, end, len(allLines))
 	}
-	footer := position + " | Up/Down scroll | PgUp/PgDn page | Home/End | Enter copies | F6 trace | Esc closes"
-	header := renderWithColor(headerStyle, "tailg", m.config.Formatter.Color) + "  Selected log line"
+	footer := position + " | Up/Down PgUp/PgDn Home/End | Enter copy | R reload | F6 trace | Esc close"
+	header := renderWithColor(headerStyle, "tailg", m.config.Formatter.Color) + "  Full log entry"
+	if m.detailLoading {
+		header += " | Loading..."
+	} else if m.detailNotice != "" {
+		header += " | BUFFERED ONLY"
+	}
 	return strings.Join([]string{
 		truncate(header, m.width),
 		renderRule(m.width, m.config.Formatter.Color),

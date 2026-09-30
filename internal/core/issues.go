@@ -25,6 +25,7 @@ const (
 )
 
 type Issue struct {
+	Workload string
 	Key      string
 	Severity IssueSeverity
 	Kind     string
@@ -70,10 +71,10 @@ func ClassifyIssue(event LogEvent) (Issue, bool) {
 		if ok && detected.severity == IssueError {
 			severity = IssueError
 		}
-		key := service + "\x00SLOW REQUEST\x00" + method + "\x00" + endpointFingerprint(endpoint)
+		key := workloadIssuePrefix(event) + service + "\x00SLOW REQUEST\x00" + method + "\x00" + endpointFingerprint(endpoint)
 		summary := fmt.Sprintf("slow %s %s (>250ms)", method, endpoint)
 		return Issue{
-			Key: key, Severity: severity, Kind: "SLOW REQUEST", Summary: summary, FullSummary: summary,
+			Key: key, Workload: event.Workload, Severity: severity, Kind: "SLOW REQUEST", Summary: summary, FullSummary: summary,
 			SearchTerm: slowSearchTerm(method, endpoint),
 			Service:    service, MaxDuration: fields.Duration, TraceID: fields.TraceID, Endpoint: endpoint,
 		}, true
@@ -81,9 +82,9 @@ func ClassifyIssue(event LogEvent) (Issue, bool) {
 	if !ok {
 		return Issue{}, false
 	}
-	key := service + "\x00" + detected.kind + "\x00" + issueFingerprint(detected.summary)
+	key := workloadIssuePrefix(event) + service + "\x00" + detected.kind + "\x00" + issueFingerprint(detected.summary)
 	return Issue{
-		Key: key, Severity: detected.severity, Kind: detected.kind, Summary: detected.summary, FullSummary: detected.fullSummary,
+		Key: key, Workload: event.Workload, Severity: detected.severity, Kind: detected.kind, Summary: detected.summary, FullSummary: detected.fullSummary,
 		SearchTerm: detected.search, Service: service, MaxDuration: fields.Duration,
 		TraceID: fields.TraceID, Endpoint: normalizeEndpoint(fields.Path),
 	}, true
@@ -102,6 +103,13 @@ func slowSearchTerm(method, endpoint string) string {
 func IsSlowRequest(fields LogFields) bool {
 	return fields.HasDuration && fields.Duration > DefaultSlowRequestThreshold &&
 		normalizeHTTPMethod(fields.Method) != "" && normalizeEndpoint(fields.Path) != ""
+}
+
+func workloadIssuePrefix(event LogEvent) string {
+	if event.Workload == "" {
+		return ""
+	}
+	return event.Workload + "\x00"
 }
 
 func issueService(event LogEvent, fields LogFields) string {
@@ -260,6 +268,7 @@ func (r *IssueRadar) Observe(event LogEvent) bool {
 		}
 		record = &issueRecord{
 			issue: Issue{
+				Workload:    classified.Workload,
 				Key:         key,
 				Severity:    classified.Severity,
 				Kind:        classified.Kind,
