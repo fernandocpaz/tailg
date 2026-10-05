@@ -31,6 +31,7 @@ type AppChoice struct {
 	Namespace  string
 	Name       string
 	Pods       []string
+	PodChoices []PodChoice
 	Selector   string
 	Ready      string
 	Phases     string
@@ -40,7 +41,15 @@ type AppChoice struct {
 	ImageTag   string
 }
 
+type PodChoice struct {
+	Name      string
+	Ready     string
+	Phase     string
+	StartedAt time.Time
+}
+
 type LogEvent struct {
+	Workload   string // verified controller identity, optional for legacy callers
 	Pod        string
 	Container  string
 	Message    string

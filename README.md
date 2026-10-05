@@ -17,23 +17,57 @@ structured diagnostics for scripts and AI agents.
 
 ## Install
 
-With Go:
+### Latest complete release
+
+With Go 1.25 or newer installed:
 
 ```sh
 go install github.com/fernandocpaz/tailg/cmd/tailg@latest
-```
-
-Or download the binary for your platform from GitHub Releases and put it on
-your `PATH`.
-
-Check the installed version and source commit with `tailg version` or
-`tailg --version`. Release binaries also report their build time. To install
-the current main branch before a new release is tagged:
-
-```sh
-go install github.com/fernandocpaz/tailg/cmd/tailg@main
 tailg version
 ```
+
+The latest release is **v0.1.2**, including context and namespace switching,
+multiple application/pod selection, full error details, AI monitoring, and
+Azure DevOps evidence attachments. To pin this release:
+
+```sh
+go install github.com/fernandocpaz/tailg/cmd/tailg@v0.1.2
+```
+
+If `tailg` is not found after installation, add Go's installed-binary directory
+to your `PATH`. On Linux or macOS, run this in your terminal and add the same
+line to your shell startup file (`~/.bashrc` or `~/.zshrc`) to make it permanent:
+
+```sh
+export PATH="$(go env GOPATH)/bin:$PATH"
+tailg version
+```
+
+On Windows PowerShell, run this for the current session, then add the path
+printed by `Join-Path (go env GOPATH) 'bin'` to your user `Path` environment
+variable to make it permanent:
+
+```powershell
+$tailgBin = Join-Path (go env GOPATH) 'bin'
+$env:Path += ";$tailgBin"
+tailg version
+```
+
+### New machine without Go
+
+1. Install Go 1.25 or newer using the official [Go downloads](https://go.dev/dl/)
+   and [OS-specific installation instructions](https://go.dev/doc/install).
+   Use the Windows MSI, macOS package, or Linux archive for your architecture.
+2. Open a new terminal and verify `go version` reports Go 1.25 or newer.
+3. Run the pinned `go install` command above, add Go's binary directory to
+   `PATH` as shown for your OS, and verify with `tailg version`.
+4. Install and configure `kubectl` and Kubernetes credentials before using
+   Tailg against a cluster.
+
+If you do not want to install Go, download a prebuilt binary for your OS and
+architecture from [GitHub Releases](https://github.com/fernandocpaz/tailg/releases)
+and put it on your `PATH`. Verify `tailg version` reports v0.1.2 or newer. Release binaries also report
+their build time.
 
 ## Usage
 
@@ -61,10 +95,33 @@ tailg diagnose example-app default --output ndjson
 ```
 
 Running `tailg` with no target opens the interactive application picker in the
-current Kubernetes namespace. Targets may still be Kubernetes resources, app
-names, case-insensitive wildcard app patterns such as `example-*`, or
+current Kubernetes namespace. Press `C` in the picker to choose another
+kubeconfig context, or `N` to choose a namespace in that context. The namespace
+picker also accepts a typed name with `/` when listing namespaces is blocked by
+cluster permissions. These switches last for this tailg session and do not
+change the context or namespace used by other terminals.
+The current selection stays at the top of each picker, followed by the most
+used choices (five rows total). Select **More** to browse less used choices. tailg remembers
+usage locally when you open an application, and tracks namespaces separately
+for each context.
+After closing a log view, the picker returns in the selected context. Targets
+may still be Kubernetes resources, app names, case-insensitive wildcard app
+patterns such as `example-*`, or
 comma-separated app names. The old standalone `*` picker target has been removed.
 The namespace can be supplied positionally or with `--namespace`.
+In the application picker, press `Space` to check multiple applications, then
+`Enter` to open them. In Windows Terminal, a multi-selection automatically opens
+one split pane per resolved pod; on other platforms the selected logs share the
+combined live view. Application selections in the combined view follow new
+replica pods after a rollout, and the selection stays checked when you return
+to the picker. With nothing checked, `Enter` opens the highlighted application
+as before. Uncheck applications and press `P` to choose individual pod names across applications instead:
+`Space` checks pods, `A` toggles all pods for the highlighted application, and
+`Enter` opens the checked pods, using the same automatic split-pane behavior.
+Exact pod selections stay pinned to those names.
+Switching context or namespace clears checked applications.
+If credentials have expired, the picker shows the kubectl error so you can
+press `C` to choose another context or log in and press `R` to retry.
 
 Without `--since`, tailg loads up to 500 visible lines per container before
 following new logs. When include/exclude rules remove most of the raw Kubernetes
@@ -130,7 +187,7 @@ the view is paused or the service is quiet.
 | `Up` / `Down` | Move the selected log line |
 | `PageUp` / `PageDown` | Move by one screen |
 | `Home` / `End` | Jump to the start or resume live tailing |
-| `Enter` | Inspect the complete original log and metadata; press again to copy |
+| `Enter` | Inspect the full log entry and stack trace; press again to copy |
 | `Esc` | Close the current detail panel |
 | `Ctrl+C` / `Ctrl+Q` | Exit |
 
@@ -138,9 +195,20 @@ F1's matching-only mode and the filter text are synchronized across panes and
 tiled windows launched by the same parent process. Secret values are decoded
 only after you explicitly open the selected Secret.
 
-The selected-log inspector wraps long exception chains and structured payloads
-without truncation. Use `Up`/`Down`, `PageUp`/`PageDown`, or `Home`/`End` to read
-the complete event before copying it.
+The selected-log inspector includes adjacent exception and stack-trace lines
+from the same pod/container, even when a filter hides those lines. It reloads
+the entry from Kubernetes without the live buffer or `--tail` limits; selecting
+a stack frame also finds the error header. A new timestamped/leveled/JSON entry
+ends the block. Common .NET, Java and Python exception formats are recognized;
+unrecognized unindented output stays separate.
+
+Long lines and payloads wrap without ellipses, and log readers have no fixed
+per-line size limit. Use `Up`/`Down`, `PageUp`/`PageDown`, or `Home`/`End` to read
+the full entry. `Enter` copies all its text, including off-screen lines, after
+loading finishes. `R` reloads the entry if the application is still writing it.
+If retrieval fails or the selected log has rotated away, the inspector keeps
+the buffered text and shows a warning. Text already shortened by the source
+application (for example, a truncated `SqlPreview`) cannot be reconstructed.
 
 The Issue Radar continuously groups error levels, HTTP 5xx responses, panics,
 exceptions, timeouts, connection failures, retries, and stream interruptions.
@@ -283,21 +351,61 @@ Issue IDs are stable across dynamic values such as request IDs, so an agent can
 request the same issue's bounded context. The commands apply strict limits for
 collection time, lines, grouped issues, context lines, and encoded bytes. Common
 bearer tokens, JWTs, passwords, API keys, and secrets are redacted before output.
-Secret values are never fetched.
+This includes quoted credential values and Basic/Bearer authorization headers.
+Redaction is best-effort, not a guarantee for arbitrary secrets or encodings;
+review diagnostics before sharing them. Kubernetes Secret values are never fetched.
 
 Exit codes are designed for automation: `0` is healthy, `1` means warnings,
 `2` means errors or unhealthy pods, and `3` means collection or output failed.
 
-`tailg mcp` runs a read-only MCP server over stdio. It exposes
-`tailg_list_issues`, `tailg_diagnose`, and `tailg_get_issue_context`, using the
-same collection and classification engine as the CLI. A typical client entry is:
+`tailg monitor` maintains persistent workload-scoped incidents and emits one
+JSON record per poll. Its cursor survives restarts; incomplete coverage pauses
+resolution, and an incident resolves only after a complete quiet period. Pin
+the Kubernetes context and namespace explicitly:
+
+```sh
+tailg monitor --context staging --namespace payments --state .tailg/staging-payments.json
+tailg monitor --context staging --namespace payments --state .tailg/staging-payments.json --once
+```
+
+Monitor results include both a health status and collection coverage. Treat
+`unknown`, `partial`, and `unavailable` as “health could not be established,”
+not as healthy; incomplete coverage pauses incident resolution. A follow-up
+agent can create or reuse an Azure DevOps work item for an open incident when
+the MCP server is configured with `--state`, `--ado-organization`, and
+`--ado-project`, plus the `TAILG_AZDO_TOKEN` environment variable. The token
+should have only the Azure DevOps Work Items permission needed to create and
+query work items. Tailg tags each item with its incident ID so retries reuse
+the same work item. For an Azure DevOps PAT, grant the `vso.work_write` scope
+needed to query and create work items.
+
+To include the complete retained error block in the work item, call
+`tailg_capture_issue_evidence` with the incident's `issueId`, then pass its
+returned `evidenceId` alongside the incident's `id` as `incidentId` to
+`tailg_create_azure_devops_work_item`. Tailg verifies the saved evidence and
+uploads it as a text-file attachment, including on a retry against an existing
+work item; it does not paste multi-megabyte logs into the 20,000-character
+description. Large files use Azure DevOps chunked upload and remain subject to
+the organization's attachment limit. If evidence capture fails, omit
+`evidenceId` and the agent can still create the incident work item with a note
+explaining the missing evidence.
+
+`tailg mcp` exposes one-shot diagnostics, `tailg_monitor`,
+`tailg_list_incidents`, `tailg_get_changes`, and tools to save and page through
+full retained issue evidence, plus optional Azure DevOps work-item creation.
+Configure `--state`, `--context`, and `--namespace` for persistent monitoring,
+and `--evidence-dir` for evidence capture. Set `TAILG_AZDO_TOKEN` in the MCP
+server process environment; do not put the token in the agent's tool arguments.
+The agent can resume polling from `nextCursor`; monitor output includes
+coverage so it can distinguish a healthy environment from an incomplete scan.
+Example client entry:
 
 ```json
 {
   "mcpServers": {
     "tailg": {
       "command": "tailg",
-      "args": ["mcp", "--namespace", "default"]
+      "args": ["mcp", "--context", "staging", "--namespace", "payments", "--state", ".tailg/staging-payments.json", "--evidence-dir", ".tailg/evidence", "--ado-organization", "your-organization", "--ado-project", "your-project"]
     }
   }
 }

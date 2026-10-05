@@ -77,7 +77,11 @@ func NormalizeSince(value string) string {
 	if duration%time.Hour == 0 {
 		return fmt.Sprintf("%dh", int(duration/time.Hour))
 	}
-	return fmt.Sprintf("%ds", int(duration/time.Second))
+	if duration%time.Second == 0 {
+		return fmt.Sprintf("%ds", int(duration/time.Second))
+	}
+	// Duration.String uses kubectl-compatible units without losing fractions.
+	return duration.String()
 }
 
 func FormatDuration(value time.Duration, available bool) string {

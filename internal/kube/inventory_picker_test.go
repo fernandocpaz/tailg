@@ -1,7 +1,11 @@
 package kube
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -45,6 +49,31 @@ func TestPodPickerMetadata(t *testing.T) {
 	wantTags := []string{"api=20260920.3", "otel=sha256:abc123"}
 	if got := podImageTagLabels(pod); !reflect.DeepEqual(got, wantTags) {
 		t.Fatalf("podImageTagLabels = %v, want %v", got, wantTags)
+	}
+}
+
+func TestAppsProvideIndividualPodDetailsForPicker(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX kubectl fixture")
+	}
+	path := filepath.Join(t.TempDir(), "kubectl")
+	script := `#!/bin/sh
+case "$*" in
+  *"get pods -o json"*) echo '{"items":[{"metadata":{"name":"api-123","labels":{"app":"api"}},"spec":{"containers":[{"name":"api"}]},"status":{"phase":"Running","startTime":"2026-09-20T10:06:00Z","containerStatuses":[{"name":"api","ready":true,"state":{"running":{"startedAt":"2026-09-20T10:08:00Z"}}}]}}]}' ;;
+  *"get replicasets -o json"*) echo '{"items":[]}' ;;
+  *) exit 1 ;;
+esac
+`
+	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	apps, err := (Runner{Binary: path, Namespace: "apollo"}).Apps(context.Background())
+	if err != nil || len(apps) != 1 || len(apps[0].PodChoices) != 1 {
+		t.Fatalf("app choices = %+v, error = %v", apps, err)
+	}
+	pod := apps[0].PodChoices[0]
+	if pod.Name != "api-123" || pod.Ready != "1/1" || pod.Phase != "Running" || pod.StartedAt.IsZero() {
+		t.Fatalf("unexpected pod choice: %+v", pod)
 	}
 }
 

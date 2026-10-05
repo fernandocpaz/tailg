@@ -362,6 +362,25 @@ func (s *FilterState) AllRecords() []LogRecord {
 	return cloneRecords(s.allRecords)
 }
 
+// SelectedBlock uses unfiltered history/live records so matches-only mode does
+// not hide the stack frames attached to the selected error.
+func (s *FilterState) SelectedBlock(record LogRecord) []LogEvent {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	source := s.allRecords
+	if s.externalRecords != nil {
+		source = s.externalRecords
+	}
+	events := make([]LogEvent, 0, len(source))
+	for _, candidate := range source {
+		events = append(events, candidate.Event)
+	}
+	if block, ok := LogBlock(events, record.Event); ok {
+		return block
+	}
+	return []LogEvent{record.Event}
+}
+
 func (s *FilterState) Lines() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
