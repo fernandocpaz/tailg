@@ -454,6 +454,7 @@ func TestRenderErrorLevelColorProfiles(t *testing.T) {
 	}
 }
 
+
 func TestLogRowsUseDistinctSeverityColorsAndFadeInfo(t *testing.T) {
 	previousProfile := lipgloss.ColorProfile()
 	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
