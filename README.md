@@ -26,13 +26,10 @@ go install github.com/fernandocpaz/tailg/cmd/tailg@latest
 tailg version
 ```
 
-The latest release is **v0.1.2**, including context and namespace switching,
-multiple application/pod selection, full error details, AI monitoring, and
-Azure DevOps evidence attachments. To pin this release:
-
-```sh
-go install github.com/fernandocpaz/tailg/cmd/tailg@v0.1.2
-```
+Use the same command to update. Every tested update merged into `main`
+automatically publishes a new stable release, so `@latest` follows released
+features. Go's module proxy can briefly cache an older version immediately
+after publication; rerun the command after it refreshes.
 
 If `tailg` is not found after installation, add Go's installed-binary directory
 to your `PATH`. On Linux or macOS, run this in your terminal and add the same
@@ -59,15 +56,14 @@ tailg version
    and [OS-specific installation instructions](https://go.dev/doc/install).
    Use the Windows MSI, macOS package, or Linux archive for your architecture.
 2. Open a new terminal and verify `go version` reports Go 1.25 or newer.
-3. Run the pinned `go install` command above, add Go's binary directory to
+3. Run the `@latest` install command above, add Go's binary directory to
    `PATH` as shown for your OS, and verify with `tailg version`.
 4. Install and configure `kubectl` and Kubernetes credentials before using
    Tailg against a cluster.
 
 If you do not want to install Go, download a prebuilt binary for your OS and
-architecture from [GitHub Releases](https://github.com/fernandocpaz/tailg/releases)
-and put it on your `PATH`. Verify `tailg version` reports v0.1.2 or newer. Release binaries also report
-their build time.
+architecture from [the latest GitHub release](https://github.com/fernandocpaz/tailg/releases/latest)
+and put it on your `PATH`. Release binaries report their version and build time.
 
 ## Usage
 

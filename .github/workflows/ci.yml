@@ -17,6 +17,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
       - run: go test -race ./...
       - run: go vet ./...
       - run: go build -trimpath ./cmd/tailg
