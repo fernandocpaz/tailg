@@ -4,13 +4,15 @@ on:
   push:
     tags: ['v*']
     branches: [main]
-    paths:
-      - '.github/RELEASE'
-      - '.github/RELEASE_NOTES.md'
-      - '.github/workflows/release.yml'
 
 permissions:
   contents: write
+
+# Serialize version selection and publication so simultaneous merges do not
+# choose the same next tag. Pending runs may coalesce to the newest main commit.
+concurrency:
+  group: tailg-release
+  cancel-in-progress: false
 
 jobs:
   metadata:
@@ -19,6 +21,10 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Test release version selection
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
       - name: Resolve release version
         id: version
         shell: bash
@@ -26,7 +32,7 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             version="$GITHUB_REF_NAME"
           else
-            version="$(tr -d '[:space:]' < .github/RELEASE)"
+            version="$(python3 .github/scripts/release_version.py)"
           fi
           if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
             echo "Invalid release version: $version" >&2
@@ -99,7 +105,15 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
-          body_path: .github/RELEASE_NOTES.md
+          body: |
+            Built from tested `main` commit `${{ github.sha }}`.
+
+            Install or update:
+            ```sh
+            go install github.com/fernandocpaz/tailg/cmd/tailg@latest
+            tailg version
+            ```
+          generate_release_notes: true
           tag_name: ${{ needs.metadata.outputs.version }}
           target_commitish: ${{ github.sha }}
           files: dist/*
