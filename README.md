@@ -283,7 +283,9 @@ Issue IDs are stable across dynamic values such as request IDs, so an agent can
 request the same issue's bounded context. The commands apply strict limits for
 collection time, lines, grouped issues, context lines, and encoded bytes. Common
 bearer tokens, JWTs, passwords, API keys, and secrets are redacted before output.
-Secret values are never fetched.
+This includes quoted credential values and Basic/Bearer authorization headers.
+Redaction is best-effort, not a guarantee for arbitrary secrets or encodings;
+review diagnostics before sharing them. Kubernetes Secret values are never fetched.
 
 Exit codes are designed for automation: `0` is healthy, `1` means warnings,
 `2` means errors or unhealthy pods, and `3` means collection or output failed.
