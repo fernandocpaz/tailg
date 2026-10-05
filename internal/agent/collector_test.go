@@ -34,7 +34,7 @@ func TestCollectorProducesStableBoundedIssueContext(t *testing.T) {
 	client := fakeKubernetesClient{
 		snapshots: map[string][]core.LogEvent{item.Key(): {
 			{Pod: item.Pod, Container: item.Container, Message: "request started", ObservedAt: now.Add(-3 * time.Second)},
-			{Pod: item.Pod, Container: item.Container, Message: "ERROR upstream timeout password=hunter2", ObservedAt: now.Add(-2 * time.Second)},
+			{Pod: item.Pod, Container: item.Container, Message: "ERROR upstream timeout Authorization: Bearer sentinel-bearer password=\"hunter2 secret phrase\"", ObservedAt: now.Add(-2 * time.Second)},
 			{Pod: item.Pod, Container: item.Container, Message: "request finished", ObservedAt: now.Add(-time.Second)},
 		}},
 		pods: map[string]any{"items": []any{map[string]any{
@@ -63,6 +63,17 @@ func TestCollectorProducesStableBoundedIssueContext(t *testing.T) {
 	}
 	if strings.Contains(issue.Context.Match.Message, "hunter2") || !strings.Contains(issue.Context.Match.Message, "[REDACTED]") {
 		t.Fatalf("credential was not redacted: %q", issue.Context.Match.Message)
+	}
+	for _, format := range []string{"json", "ndjson", "text"} {
+		var output strings.Builder
+		if err := WriteReport(&output, report, format); err != nil {
+			t.Fatal(err)
+		}
+		for _, secret := range []string{"hunter2", "secret phrase", "sentinel-bearer"} {
+			if strings.Contains(output.String(), secret) {
+				t.Fatalf("%s report leaked %q", format, secret)
+			}
+		}
 	}
 	if len(issue.Context.Before) != 1 || len(issue.Context.After) != 1 {
 		t.Fatalf("unexpected context: %+v", issue.Context)

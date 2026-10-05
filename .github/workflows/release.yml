@@ -34,6 +34,25 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+  validate:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Linux race tests
+        if: runner.os == 'Linux'
+        run: go test -race ./...
+      - name: Windows native tests
+        if: runner.os == 'Windows'
+        run: go test ./...
+      - run: go vet ./...
+
   build:
     needs: metadata
     runs-on: ubuntu-latest
@@ -69,7 +88,7 @@ jobs:
           path: dist/*
 
   release:
-    needs: [metadata, build]
+    needs: [metadata, validate, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

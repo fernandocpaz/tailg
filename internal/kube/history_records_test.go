@@ -2,8 +2,8 @@ package kube
 
 import (
 	"context"
+	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -13,25 +13,45 @@ import (
 
 const historyTraceID = "0123456789abcdef0123456789abcdef"
 
+// Re-execute this test binary as kubectl, avoiding POSIX shell fixtures on Windows.
+func TestMain(m *testing.M) {
+	if os.Getenv("TAILG_HISTORY_HELPER") == "1" {
+		args := strings.Join(os.Args[1:], " ")
+		emit := func(timestamp, message, trace string) {
+			fmt.Printf("2026-09-10T12:00:%sZ {\"trace_id\":\"%s\",\"msg\":\"%s\"}\n", timestamp, trace, message)
+		}
+		switch {
+		case strings.Contains(args, "pod/fail"):
+			fmt.Fprintln(os.Stderr, "pod unavailable")
+			os.Exit(7)
+		case strings.Contains(args, "pod/one"):
+			emit("02", "one-late", historyTraceID)
+			emit("04", "one-last", historyTraceID)
+		case strings.Contains(args, "pod/two"):
+			emit("01", "two-first", historyTraceID)
+			emit("03", "other", "ffffffffffffffffffffffffffffffff")
+		case strings.Contains(args, "pod/ready"):
+			emit("02", "ready", historyTraceID)
+		case strings.Contains(args, "pod/first"):
+			emit("03", "first", historyTraceID)
+		case strings.Contains(args, "pod/second"):
+			emit("01", "second", historyTraceID)
+		case strings.Contains(args, "pod/slow"):
+			time.Sleep(5 * time.Second)
+		}
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
 func fakeKubectl(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "kubectl")
-	script := `#!/bin/sh
-case "$*" in
-  *pod/fail*) echo "pod unavailable" >&2; exit 7 ;;
-  *pod/one*) cat <<'EOF'
-2026-09-10T12:00:02Z {"trace_id":"0123456789abcdef0123456789abcdef","msg":"one-late"}
-2026-09-10T12:00:04Z {"trace_id":"0123456789abcdef0123456789abcdef","msg":"one-last"}
-EOF
-  ;;
-  *pod/two*) cat <<'EOF'
-2026-09-10T12:00:01Z {"trace_id":"0123456789abcdef0123456789abcdef","msg":"two-first"}
-2026-09-10T12:00:03Z {"trace_id":"ffffffffffffffffffffffffffffffff","msg":"other"}
-EOF
-  ;;
-esac
-`
-	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+	t.Setenv("TAILG_HISTORY_HELPER", "1")
+	// Race-instrumented helper processes otherwise sleep one second on exit,
+	// consuming the collection timeout before the deliberately slow stream.
+	t.Setenv("GORACE", os.Getenv("GORACE")+" atexit_sleep_ms=0")
+	path, err := os.Executable()
+	if err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -101,23 +121,11 @@ func TestCompleteTraceRejectsInvalidID(t *testing.T) {
 }
 
 func TestCompleteTraceRetainsRecordsOnTimeout(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "kubectl")
-	script := `#!/bin/sh
-case "$*" in
-  *pod/ready*) cat <<'EOF'
-2026-09-10T12:00:02Z {"trace_id":"0123456789abcdef0123456789abcdef","msg":"ready"}
-EOF
-  ;;
-  *pod/slow*) sleep 2 ;;
-esac
-`
-	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	path := fakeKubectl(t)
 	runner := NewRunner("default", "")
 	runner.Binary = path
 	items := []core.InventoryItem{{Pod: "ready", Container: "app"}, {Pod: "slow", Container: "app"}}
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	records, err := runner.CompleteTrace(ctx, items, "", core.Formatter{}, historyTraceID, 10)
@@ -130,23 +138,7 @@ esac
 }
 
 func TestCompleteTraceSortsBeforeCappingTimedOutCollection(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "kubectl")
-	script := `#!/bin/sh
-case "$*" in
-  *pod/first*) cat <<'EOF'
-2026-09-10T12:00:03Z {"trace_id":"0123456789abcdef0123456789abcdef","msg":"first"}
-EOF
-  ;;
-  *pod/second*) cat <<'EOF'
-2026-09-10T12:00:01Z {"trace_id":"0123456789abcdef0123456789abcdef","msg":"second"}
-EOF
-  ;;
-  *pod/slow*) sleep 2 ;;
-esac
-`
-	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	path := fakeKubectl(t)
 	runner := NewRunner("default", "")
 	runner.Binary = path
 	items := []core.InventoryItem{
@@ -154,7 +146,7 @@ esac
 		{Pod: "second", Container: "app"},
 		{Pod: "slow", Container: "app"},
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	records, err := runner.CompleteTrace(ctx, items, "", core.Formatter{}, historyTraceID, 1)

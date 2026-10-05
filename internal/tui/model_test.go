@@ -566,3 +566,18 @@ func TestIssueRadarEnterLoadsCompleteHistoryContext(t *testing.T) {
 		t.Fatalf("issue context state = open:%t filter:%q matchesOnly:%t followsLive:%t command:%v", got.issueOpen, got.input.Value(), got.state.MatchesOnly(), got.followsLive, command)
 	}
 }
+
+func TestSharedFileLockDoesNotRunActionWhenUnavailable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "filter")
+	if err := os.Mkdir(path+".lock", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	err := withSharedFileLock(path, func() error { called = true; return nil })
+	if err == nil {
+		t.Fatal("expected unavailable lock error")
+	}
+	if called {
+		t.Fatal("action ran without acquiring lock")
+	}
+}
