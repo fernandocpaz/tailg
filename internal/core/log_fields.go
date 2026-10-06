@@ -71,7 +71,7 @@ func ParseLogFields(event LogEvent) LogFields {
 	return f
 }
 
-var leadingPlainLogLevel = regexp.MustCompile(`(?i)^\s*(WRN|ERR|INF|DBG|VRB|WARN|ERROR|INFO|DEBUG|VERBOSE|TRACE|TRC)(?:\s+|:\s*|$)`)
+var leadingPlainLogLevel = regexp.MustCompile(`(?i)^\s*(WRN|ERR|FTL|FATAL|CRIT|CRITICAL|INF|DBG|VRB|WARN|ERROR|INFO|DEBUG|VERBOSE|TRACE|TRC)(?:\s+|:\s*|$)`)
 
 func leadingTextLogLevel(message string) string {
 	if match := bracketedLevel.FindStringSubmatch(message); len(match) > 1 {
@@ -341,7 +341,7 @@ func isHex(value string) bool {
 func normalizeLogLevel(value string) string {
 	text := strings.ToUpper(strings.TrimSpace(value))
 	switch text {
-	case "ERR", "ERROR", "FATAL", "CRIT", "CRITICAL":
+	case "ERR", "ERROR", "FTL", "FATAL", "CRIT", "CRITICAL":
 		return "ERR"
 	case "WRN", "WARN", "WARNING":
 		return "WRN"

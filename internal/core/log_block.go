@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-var logEntryPrefix = regexp.MustCompile(`(?i)^(?:\[?\d{2}:\d{2}:\d{2}|\[?\d{4}-\d{2}-\d{2}[T ]|\[?(?:ERR|ERROR|FATAL|CRIT|CRITICAL|WRN|WARN|WARNING|INF|INFO|INFORMATION|DBG|DEBUG|VRB|VERBOSE|TRACE|TRC)\b)`)
+var logEntryPrefix = regexp.MustCompile(`(?i)^(?:\[?\d{2}:\d{2}:\d{2}|\[?\d{4}-\d{2}-\d{2}[T ]|\[?(?:ERR|ERROR|FTL|FATAL|CRIT|CRITICAL|WRN|WARN|WARNING|INF|INFO|INFORMATION|DBG|DEBUG|VRB|VERBOSE|TRACE|TRC)\b)`)
 var exceptionPrefix = regexp.MustCompile(`^(?:[[:alnum:]_$]+\.)*[[:alnum:]_$]*(?:Exception|Error)(?:\b|\()`)
 
 // IsLogContinuation recognizes common exception/stack-trace lines. A new

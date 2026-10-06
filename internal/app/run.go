@@ -407,7 +407,7 @@ pickAgain:
 			}
 			records, traceErr := runner.CompleteTrace(traceCtx, current, options.Since, formatter, traceID, options.BufferLines)
 			return records, errors.Join(inventoryErr, traceErr)
-		}, LogDetails: runner.LogDetails, ExplainReplicas: runner.ExplainReplicas, MappedResources: runner.MappedResources, ResourceDetail: runner.ResourceDetail})
+		}, ErrorLogs: runner.PodErrorLogs, LogDetails: runner.LogDetails, ExplainReplicas: runner.ExplainReplicas, MappedResources: runner.MappedResources, ResourceDetail: runner.ResourceDetail})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
