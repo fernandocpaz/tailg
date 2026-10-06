@@ -40,8 +40,8 @@ type podHealthSample struct {
 }
 
 type podHealthDisplay struct {
-	sample            podHealthSample
-	kind              podHealthKind
+	sample             podHealthSample
+	kind               podHealthKind
 	warningsIncreasing bool
 }
 
@@ -66,7 +66,7 @@ func podMonitorFlashCmd(generation int) tea.Cmd {
 	})
 }
 
-func scanPodHealthCmd(rows []podPickerRow, kubeContext, namespace string, generation int) tea.Cmd {
+func scanPodHealthCmd(parent context.Context, rows []podPickerRow, kubeContext, namespace string, generation int) tea.Cmd {
 	pods := make([]string, 0, len(rows))
 	seen := make(map[string]bool, len(rows))
 	for _, row := range rows {
@@ -77,7 +77,7 @@ func scanPodHealthCmd(rows []podPickerRow, kubeContext, namespace string, genera
 	}
 
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), podMonitorTimeout)
+		ctx, cancel := context.WithTimeout(parent, podMonitorTimeout)
 		defer cancel()
 
 		runner := kube.NewRunner(namespace, kubeContext)

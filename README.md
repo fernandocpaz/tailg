@@ -91,7 +91,24 @@ tailg diagnose example-app default --output ndjson
 ```
 
 Running `tailg` with no target opens the interactive application picker in the
-current Kubernetes namespace. Press `C` in the picker to choose another
+current Kubernetes namespace.
+Press `M` in this main application list to toggle log monitoring (off by
+default). It scans all containers in every pod belonging to the displayed
+applications immediately, then polls the previous minute of logs every 60
+seconds. The menu always shows `M Monitor`, and the status line shows
+`Monitor: OFF` or `Monitor: ON · every 1m`, scan progress, the last scan time,
+and any failed pod scans.
+
+Application names reflect the combined log activity of their pods: green for
+clean activity, gray for little activity or incomplete clean scans, orange for
+warnings, red for errors, and flashing red for at least five errors per minute
+across the application. Warning trends compare consecutive scans. The cursor
+and selection checkbox remain visible alongside these colors. Monitoring also
+works in the `P` exact-pod picker, where each pod has its own color. Press `M`
+again to stop; leaving either picker cancels its active scan. Scans use at most
+four concurrent workers with a 20-second timeout.
+
+Press `C` in the picker to choose another
 kubeconfig context, or `N` to choose a namespace in that context. The namespace
 picker also accepts a typed name with `/` when listing namespaces is blocked by
 cluster permissions. These switches last for this tailg session and do not

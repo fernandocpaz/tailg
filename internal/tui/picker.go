@@ -25,6 +25,8 @@ type pickerModel struct {
 	namespace   string
 	loadError   string
 	width       int
+	podMonitorState
+	monitorApps map[string]podHealthDisplay
 }
 
 type PickerAction int
@@ -53,6 +55,9 @@ func PickApp(apps []core.AppChoice, kubeContext, namespace string, loadErr error
 		model.loadError = pickerErrorSummary(loadErr)
 	}
 	result, err := tea.NewProgram(model).Run()
+	if final, ok := result.(pickerModel); ok {
+		final.podMonitorState.stop()
+	}
 	if err != nil {
 		return PickerResult{}, err
 	}
@@ -77,6 +82,17 @@ func newPickerModel(apps []core.AppChoice, total int, kubeContext, namespace str
 }
 func (m pickerModel) Init() tea.Cmd { return nil }
 func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	// Aggregate before updating previous pod samples so warning trends compare
+	// the current minute with the preceding scan across the whole application.
+	if msg, ok := message.(podHealthScanMsg); ok && m.monitorEnabled && msg.generation == m.monitorGeneration {
+		m.monitorApps = make(map[string]podHealthDisplay, len(m.apps))
+		for _, app := range m.apps {
+			m.monitorApps[app.Name] = classifyAppHealth(app, msg.samples, m.monitorPrevious)
+		}
+	}
+	if handled, cmd := m.podMonitorState.update(message, preparePodPickerRows(m.apps), m.kubeContext, m.namespace); handled {
+		return m, cmd
+	}
 	if size, ok := message.(tea.WindowSizeMsg); ok {
 		m.width = size.Width
 		return m, nil
@@ -84,15 +100,19 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := message.(tea.KeyMsg); ok {
 		switch key.String() {
 		case "ctrl+c", "q", "esc":
+			m.podMonitorState.stop()
 			m.result.Action = PickerQuit
 			return m, tea.Quit
 		case "c":
+			m.podMonitorState.stop()
 			m.result.Action = PickerSwitchContext
 			return m, tea.Quit
 		case "n":
+			m.podMonitorState.stop()
 			m.result.Action = PickerSwitchNamespace
 			return m, tea.Quit
 		case "r":
+			m.podMonitorState.stop()
 			m.result.Action = PickerRefresh
 			return m, tea.Quit
 		case "p":
@@ -100,8 +120,12 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.note = "Uncheck applications before choosing exact pods."
 				return m, nil
 			}
+			m.podMonitorState.stop()
 			m.result.Action = PickerSelectPods
 			return m, tea.Quit
+		case "m", "M":
+			m.monitorApps = nil
+			return m, m.podMonitorState.toggle(preparePodPickerRows(m.apps), m.kubeContext, m.namespace)
 		case " ":
 			if len(m.apps) > 0 {
 				if m.checked == nil {
@@ -134,6 +158,7 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					selected = []core.AppChoice{m.apps[m.index]}
 				}
 				m.result = PickerResult{Action: PickerOpenApp, App: selected[0], Apps: selected, Marked: marked}
+				m.podMonitorState.stop()
 				return m, tea.Quit
 			}
 		}
@@ -169,6 +194,7 @@ func (m pickerModel) View() string {
 			shortcut("SPACE", "Select"),
 			shortcut("ENTER", "Open"),
 			shortcut("P", "Exact pods"),
+			shortcut("M", "Monitor"),
 		),
 		renderPickerShortcuts(
 			shortcut("C", "Context"),
@@ -176,6 +202,7 @@ func (m pickerModel) View() string {
 			shortcut("R", "Retry"),
 			shortcut("Q", "Quit"),
 		),
+		podMonitorSummary(m.monitorEnabled, m.monitorBusy, m.monitorLastScan, m.monitorError),
 		"",
 	}
 	if m.totalApps > len(m.apps) {
@@ -223,7 +250,20 @@ func (m pickerModel) View() string {
 			valueOrDash(app.ImageTag),
 			imageWidth,
 		)
-		lines = append(lines, style.Render(line))
+		if m.monitorEnabled {
+			// Style cells separately so cursor highlighting cannot replace the
+			// application's health color. Keep the existing fixed column widths.
+			prefix := marker + check
+			name := fmt.Sprintf("%-*s", pickerAppWidth, truncatePickerCell(app.Name, pickerAppWidth))
+			suffix := strings.TrimPrefix(line, prefix+name)
+			name = renderMonitoredPodName(name, m.monitorApps[app.Name], m.monitorFlashOn)
+			lines = append(lines, style.Render(prefix)+name+style.Render(suffix))
+		} else {
+			lines = append(lines, style.Render(line))
+		}
+	}
+	if m.monitorEnabled {
+		lines = append(lines, dimStyle.Render(podMonitorLegend()))
 	}
 	return strings.Join(lines, "\n")
 }
