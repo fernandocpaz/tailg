@@ -104,11 +104,12 @@ func scanPodHealthCmd(rows []podPickerRow, kubeContext, namespace string, genera
 			}()
 		}
 
+	feed:
 		for _, pod := range pods {
 			select {
 			case jobs <- pod:
 			case <-ctx.Done():
-				break
+				break feed
 			}
 		}
 		close(jobs)
