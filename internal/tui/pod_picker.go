@@ -7,7 +7,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/fernandocpaz/tailg/internal/core"
 )
 
@@ -230,27 +229,35 @@ func (m podPickerModel) View() string {
 		if m.checked[row.pod.Name] {
 			check = "[x] "
 		}
-		style := lipgloss.NewStyle()
-		if index == m.index {
+		selected := index == m.index
+		if selected {
 			marker = "> "
-			style = selectedStyle
 		}
 		appName := row.app
 		if index > start && m.rows[index-1].app == row.app {
 			appName = ""
 		}
-		podName := truncatePickerCell(row.pod.Name, 53)
+
+		prefix := fmt.Sprintf("%s%s%-25s ", marker, check, truncatePickerCell(appName, 25))
+		podCell := fmt.Sprintf("%-53s", truncatePickerCell(row.pod.Name, 53))
+		suffix := fmt.Sprintf(" %-7s %-12s %s",
+			valueOrDash(row.pod.Ready), valueOrDash(row.pod.Phase), formatPickerAge(now, row.pod.StartedAt))
+
 		if m.monitorEnabled {
 			if health, ok := m.monitorHealth[row.pod.Name]; ok {
-				podName = renderMonitoredPodName(podName, health, m.monitorFlashOn)
+				podCell = renderMonitoredPodName(podCell, health, m.monitorFlashOn)
 			} else {
-				podName = dimStyle.Render(podName)
+				podCell = dimStyle.Render(podCell)
 			}
 		}
-		line := fmt.Sprintf("%s%s%-25s %-53s %-7s %-12s %s", marker, check,
-			truncatePickerCell(appName, 25), podName,
-			valueOrDash(row.pod.Ready), valueOrDash(row.pod.Phase), formatPickerAge(now, row.pod.StartedAt))
-		lines = append(lines, style.Render(line))
+		if selected {
+			prefix = selectedStyle.Render(prefix)
+			suffix = selectedStyle.Render(suffix)
+			if !m.monitorEnabled {
+				podCell = selectedStyle.Render(podCell)
+			}
+		}
+		lines = append(lines, prefix+podCell+suffix)
 	}
 	if m.monitorEnabled {
 		lines = append(lines, dimStyle.Render(podMonitorLegend()))
