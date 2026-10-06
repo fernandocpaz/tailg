@@ -122,13 +122,16 @@ func (m model) wrappedDetailLines() []string {
 	if m.detailLoading {
 		status = "Loading the full entry from this pod..."
 	}
-	width := max(1, m.width)
-	cache := m.detailLayout
+	return wrapDetailText(m.detailLayout, m.detail, status, m.width)
+}
+
+func wrapDetailText(cache *detailLayout, text, status string, width int) []string {
+	width = max(1, width)
 	if cache == nil {
 		cache = &detailLayout{}
 	}
-	if cache.text != m.detail || cache.width != width || cache.status != status {
-		value := m.detail
+	if cache.text != text || cache.width != width || cache.status != status {
+		value := text
 		if status != "" {
 			value = status + "\n\n" + value
 		}
@@ -136,7 +139,7 @@ func (m model) wrappedDetailLines() []string {
 		// untouched. Hard wrapping is the final guard for long tokens/Unicode.
 		value = strings.ReplaceAll(value, "\t", "    ")
 		wrapped := ansi.Hardwrap(ansi.Wrap(value, width, ""), width, true)
-		cache.text, cache.status, cache.width = m.detail, status, width
+		cache.text, cache.status, cache.width = text, status, width
 		cache.lines = strings.Split(wrapped, "\n")
 	}
 	return cache.lines

@@ -192,11 +192,12 @@ the view is paused or the service is quiet.
 | --- | --- |
 | `F1` | Toggle between context view and matching lines only |
 | `F2` | Browse ConfigMaps and Secrets mapped into the pod |
-| `F3` | Open the Issue Radar for grouped errors and warnings |
+| `F3` | Fetch the selected pod's complete retained ERR / FTL logs, grouped by date |
 | `F4` | Inspect per-container log freshness, replay counts and buffer usage |
 | `F5` | Open heartbeat diagnostics |
 | `F6` | Follow the selected request's trace across the selected workloads |
 | `F7` | Explain the selected pod's replica count and controller |
+| `F8` | Open the Issue Radar for grouped errors and warnings |
 | `Up` / `Down` | Move the selected log line |
 | `PageUp` / `PageDown` | Move by one screen |
 | `Home` / `End` | Jump to the start or resume live tailing |
@@ -207,6 +208,22 @@ the view is paused or the service is quiet.
 F1's matching-only mode and the filter text are synchronized across panes and
 tiled windows launched by the same parent process. Secret values are decoded
 only after you explicitly open the selected Secret.
+
+Press `F3` to fetch all retained error/fatal entries directly from the selected
+log row's pod (or the displayed pod when no row is selected). This reads every
+container with `kubectl logs --tail -1`, without the live buffer, startup tail,
+`--since`, or display filters. ERR and FTL are included, along with structured
+ERROR/FATAL levels and adjacent exception/stack-trace lines. Repeated entries
+stay separate and raw JSON/properties remain intact.
+
+The results use the same local-calendar date groups as the log timeline:
+`Today · YYYY-MM-DD`, `1 day ago · YYYY-MM-DD`, and older dates, with a sticky
+date label while scrolling. Each error and its stack trace stay together.
+Use `Up`/`Down`, `PageUp`/`PageDown`, or `Home`/`End` to read the complete text;
+`R` reloads, `Enter` copies all results, and `F3`/`Esc` returns to the live view.
+Loading is asynchronous and can be cancelled by closing the view. Collection
+failures are shown alongside any available results. Kubernetes log rotation
+limits the history that can still be retrieved.
 
 The selected-log inspector includes adjacent exception and stack-trace lines
 from the same pod/container, even when a filter hides those lines. It reloads
@@ -223,7 +240,8 @@ If retrieval fails or the selected log has rotated away, the inspector keeps
 the buffered text and shows a warning. Text already shortened by the source
 application (for example, a truncated `SqlPreview`) cannot be reconstructed.
 
-The Issue Radar continuously groups error levels, HTTP 5xx responses, panics,
+Press `F8` for the Issue Radar, which continuously groups error levels,
+HTTP 5xx responses, panics,
 exceptions, timeouts, connection failures, retries, and stream interruptions.
 It shows active issue and event counts without hiding the live logs. Select an
 issue and press `Enter` to load its complete-history context. Issue text and

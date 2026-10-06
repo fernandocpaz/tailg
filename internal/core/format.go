@@ -126,7 +126,7 @@ func firstString(value map[string]any, names ...string) string {
 
 func levelStyle(level string) (string, string) {
 	switch strings.ToUpper(strings.TrimSpace(level)) {
-	case "ERR", "ERROR", "FATAL", "CRIT", "CRITICAL":
+	case "ERR", "ERROR", "FTL", "FATAL", "CRIT", "CRITICAL":
 		return "ERR", "red"
 	case "WRN", "WARN", "WARNING":
 		return "WRN", "yellow"
@@ -139,8 +139,8 @@ func levelStyle(level string) (string, string) {
 	}
 }
 
-var bracketedLevel = regexp.MustCompile(`(?i)\[(?:[^\]]+\s)?(WRN|ERR|INF|DBG|VRB|WARN|ERROR|INFO|DEBUG|VERBOSE|TRACE|TRC)\]`)
-var plainLevel = regexp.MustCompile(`(?i)^\s*(WRN|ERR|INF|DBG|VRB|WARN|ERROR|INFO|DEBUG|VERBOSE|TRACE|TRC)(?:\s+|:\s*|$)`)
+var bracketedLevel = regexp.MustCompile(`(?i)\[(?:[^\]]+\s)?(WRN|ERR|FTL|FATAL|CRIT|CRITICAL|INF|DBG|VRB|WARN|ERROR|INFO|DEBUG|VERBOSE|TRACE|TRC)\]`)
+var plainLevel = regexp.MustCompile(`(?i)^\s*(WRN|ERR|FTL|FATAL|CRIT|CRITICAL|INF|DBG|VRB|WARN|ERROR|INFO|DEBUG|VERBOSE|TRACE|TRC)(?:\s+|:\s*|$)`)
 var trailingPropertyList = regexp.MustCompile(`^(?:[A-Za-z_@][A-Za-z0-9_.@-]*=\S+)(?:\s+[A-Za-z_@][A-Za-z0-9_.@-]*=\S+)*$`)
 
 func textLogStyle(message string) (string, string) {

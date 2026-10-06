@@ -22,6 +22,7 @@ import (
 )
 
 type Config struct {
+	ErrorLogs       func(context.Context, string) ([][]core.LogEvent, error)
 	LogDetails      func(context.Context, core.LogEvent) ([]core.LogEvent, error)
 	ExplainReplicas func(context.Context, string) (core.ReplicaExplanation, error)
 	Version         string
@@ -68,6 +69,7 @@ type resourceDetailMsg struct {
 type sharedFilterTick time.Time
 
 type model struct {
+	errorLogs       errorLogsState
 	replicas        replicaViewState
 	ctx             context.Context
 	cancel          context.CancelFunc
@@ -238,6 +240,8 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
+	case errorLogsMsg:
+		return m.updateErrorLogs(msg)
 	case logDetailMsg:
 		return m.updateLogDetail(msg)
 	case replicaMsg:
@@ -417,6 +421,8 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if m.detail != "" {
 				m.closeDetail()
+			} else if m.errorLogs.open {
+				m.closeErrorLogs()
 			} else if m.traceOpen {
 				m.closeTrace()
 			} else if m.issueOpen {
@@ -431,6 +437,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.resourceOpen = false
 			}
 			return m, nil
+		}
+		if m.errorLogs.open {
+			return m.updateErrorLogsKey(key)
 		}
 		if m.replicas.open {
 			return m.updateReplicaKey(key)
@@ -491,6 +500,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.loadResources(pod)
 		case "f3":
+			cmd := m.openErrorLogs("")
+			return m, cmd
+		case "f8":
 			m.issueOpen = true
 			m.issueIndex = 0
 			m.issueLineOffset = 0
@@ -583,6 +595,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	if m.width <= 0 || m.height <= 0 {
 		return "starting tailg..."
+	}
+	if m.errorLogs.open {
+		return m.renderErrorLogs()
 	}
 	if m.replicas.open {
 		return m.renderReplicaExplanation()
@@ -832,6 +847,7 @@ func (m model) renderFooter() string {
 	shortcuts := []string{
 		renderKey("F1", "mode", m.config.Formatter.Color),
 		renderKey("F2", "resources", m.config.Formatter.Color),
+		renderKey("F3", "errors", m.config.Formatter.Color),
 		m.renderIssueKey(),
 		renderKey("F4", "streams", m.config.Formatter.Color),
 		m.renderHeartbeatKey(),
@@ -845,7 +861,7 @@ func (m model) renderFooter() string {
 
 func (m model) renderIssueKey() string {
 	stats := m.issueStats()
-	key := "F3"
+	key := "F8"
 	if m.config.Formatter.Color && stats.Groups > 0 {
 		style := warnStyle
 		if stats.Errors > 0 {
@@ -916,9 +932,9 @@ func (m model) renderIssueRadar() string {
 }
 
 func (m model) issueRadarFooter() string {
-	footer := "Up/Down select | PgUp/PgDn scroll issue | Enter loads context | F6 trace | B baseline | C clear | F3/Esc closes"
+	footer := "Up/Down select | PgUp/PgDn scroll issue | Enter loads context | F3 pod errors | F6 trace | B baseline | C clear | F8/Esc closes"
 	if m.notice != "" {
-		footer = m.notice + " | F3/Esc closes"
+		footer = m.notice + " | F8/Esc closes"
 	}
 	lines := strings.Split(ansi.Wrap(renderWithColor(dimStyle, footer, m.config.Formatter.Color), max(1, m.width), ""), "\n")
 	return strings.Join(lines[:min(len(lines), max(1, m.height-3))], "\n")
@@ -1006,8 +1022,15 @@ func (m model) updateIssueKey(key string) (tea.Model, tea.Cmd) {
 		m.issueIndex = min(max(0, m.issueIndex), len(issues)-1)
 	}
 	switch key {
-	case "f3", "esc":
+	case "f8", "esc":
 		m.issueOpen = false
+	case "f3":
+		pod := ""
+		if len(issues) > 0 && len(issues[m.issueIndex].Pods) > 0 {
+			pod = issues[m.issueIndex].Pods[0]
+		}
+		cmd := m.openErrorLogs(pod)
+		return m, cmd
 	case "up", "p", "k":
 		m.issueIndex = max(0, m.issueIndex-1)
 	case "down", "n", "j":
@@ -1131,7 +1154,7 @@ func parseLogColumns(value string, showPod bool) logColumns {
 
 func normalizeLevel(level string) string {
 	switch strings.ToUpper(strings.TrimSpace(level)) {
-	case "ERROR", "FATAL", "CRIT", "CRITICAL":
+	case "ERROR", "FTL", "FATAL", "CRIT", "CRITICAL":
 		return "ERR"
 	case "WARN", "WARNING":
 		return "WRN"

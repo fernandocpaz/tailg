@@ -454,7 +454,6 @@ func TestRenderErrorLevelColorProfiles(t *testing.T) {
 	}
 }
 
-
 func TestLogRowsUseDistinctSeverityColorsAndFadeInfo(t *testing.T) {
 	previousProfile := lipgloss.ColorProfile()
 	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
@@ -532,8 +531,8 @@ func TestIssueRadarRendersGroupedIssuesAndHeaderBadge(t *testing.T) {
 		followsLive: true,
 	}
 
-	view := m.View()
-	for _, expected := range []string{"Issue radar", "1 active • 1 events", "ERR", "checkout-api", "request timed out", "Enter loads context", "F3/Esc closes"} {
+	view := strings.Join(strings.Fields(m.View()), " ")
+	for _, expected := range []string{"Issue radar", "1 active • 1 events", "ERR", "checkout-api", "request timed out", "Enter loads context", "F8/Esc closes"} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("issue radar missing %q:\n%s", expected, view)
 		}
