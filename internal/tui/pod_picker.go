@@ -19,12 +19,20 @@ type podPickerRow struct {
 }
 
 type podPickerModel struct {
-	rows        []podPickerRow
-	checked     map[string]bool
-	index       int
-	selected    []string
-	kubeContext string
-	namespace   string
+	rows              []podPickerRow
+	checked           map[string]bool
+	index             int
+	selected          []string
+	kubeContext       string
+	namespace         string
+	monitorEnabled    bool
+	monitorBusy       bool
+	monitorGeneration int
+	monitorHealth     map[string]podHealthDisplay
+	monitorPrevious   map[string]podHealthSample
+	monitorLastScan   time.Time
+	monitorFlashOn    bool
+	monitorError      string
 }
 
 // PickPods pins exactly the selected pod names. Esc returns to the app picker.
@@ -63,6 +71,51 @@ func preparePodPickerRows(apps []core.AppChoice) []podPickerRow {
 func (m podPickerModel) Init() tea.Cmd { return nil }
 
 func (m podPickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := message.(type) {
+	case podHealthScanMsg:
+		if !m.monitorEnabled || msg.generation != m.monitorGeneration {
+			return m, nil
+		}
+		if m.monitorHealth == nil {
+			m.monitorHealth = make(map[string]podHealthDisplay)
+		}
+		if m.monitorPrevious == nil {
+			m.monitorPrevious = make(map[string]podHealthSample)
+		}
+		failures := 0
+		for pod, sample := range msg.samples {
+			previous := m.monitorPrevious[pod]
+			m.monitorHealth[pod] = classifyPodHealth(sample, previous)
+			m.monitorPrevious[pod] = sample
+			if sample.err != nil {
+				failures++
+			}
+		}
+		m.monitorBusy = false
+		m.monitorLastScan = msg.scannedAt
+		m.monitorError = ""
+		if failures > 0 {
+			m.monitorError = fmt.Sprintf("%d pod scans failed", failures)
+		}
+		return m, nil
+	case podMonitorPollMsg:
+		if !m.monitorEnabled || msg.generation != m.monitorGeneration {
+			return m, nil
+		}
+		commands := []tea.Cmd{podMonitorPollCmd(m.monitorGeneration)}
+		if !m.monitorBusy {
+			m.monitorBusy = true
+			commands = append(commands, scanPodHealthCmd(m.rows, m.kubeContext, m.namespace, m.monitorGeneration))
+		}
+		return m, tea.Batch(commands...)
+	case podMonitorFlashMsg:
+		if !m.monitorEnabled || msg.generation != m.monitorGeneration {
+			return m, nil
+		}
+		m.monitorFlashOn = !m.monitorFlashOn
+		return m, podMonitorFlashCmd(m.monitorGeneration)
+	}
+
 	if key, ok := message.(tea.KeyMsg); ok {
 		switch key.String() {
 		case "ctrl+c", "q", "esc":
@@ -93,6 +146,22 @@ func (m podPickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				name := m.rows[m.index].pod.Name
 				m.checked[name] = !m.checked[name]
 			}
+		case "m":
+			m.monitorGeneration++
+			m.monitorEnabled = !m.monitorEnabled
+			m.monitorError = ""
+			if !m.monitorEnabled {
+				m.monitorBusy = false
+				m.monitorFlashOn = false
+				return m, nil
+			}
+			m.monitorBusy = true
+			m.monitorFlashOn = true
+			return m, tea.Batch(
+				scanPodHealthCmd(m.rows, m.kubeContext, m.namespace, m.monitorGeneration),
+				podMonitorPollCmd(m.monitorGeneration),
+				podMonitorFlashCmd(m.monitorGeneration),
+			)
 		case "a":
 			if len(m.rows) > 0 {
 				if m.checked == nil {
@@ -139,9 +208,11 @@ func (m podPickerModel) View() string {
 		),
 		renderPickerShortcuts(
 			shortcut("ENTER", "Open"),
+			shortcut("M", "Monitor"),
 			shortcut("ESC", "Applications"),
 		),
 		fmt.Sprintf("Selected: %d pods · pinned to these pod names", m.checkedCount()),
+		podMonitorSummary(m.monitorEnabled, m.monitorBusy, m.monitorLastScan, m.monitorError),
 		"",
 	}
 	if len(m.rows) == 0 {
@@ -168,10 +239,21 @@ func (m podPickerModel) View() string {
 		if index > start && m.rows[index-1].app == row.app {
 			appName = ""
 		}
+		podName := truncatePickerCell(row.pod.Name, 53)
+		if m.monitorEnabled {
+			if health, ok := m.monitorHealth[row.pod.Name]; ok {
+				podName = renderMonitoredPodName(podName, health, m.monitorFlashOn)
+			} else {
+				podName = dimStyle.Render(podName)
+			}
+		}
 		line := fmt.Sprintf("%s%s%-25s %-53s %-7s %-12s %s", marker, check,
-			truncatePickerCell(appName, 25), truncatePickerCell(row.pod.Name, 53),
+			truncatePickerCell(appName, 25), podName,
 			valueOrDash(row.pod.Ready), valueOrDash(row.pod.Phase), formatPickerAge(now, row.pod.StartedAt))
 		lines = append(lines, style.Render(line))
+	}
+	if m.monitorEnabled {
+		lines = append(lines, dimStyle.Render(podMonitorLegend()))
 	}
 	if len(m.rows) > visiblePodRows {
 		lines = append(lines, dimStyle.Render(fmt.Sprintf("Showing %d–%d of %d pods", start+1, end, len(m.rows))))
