@@ -18,26 +18,22 @@ type podPickerRow struct {
 }
 
 type podPickerModel struct {
-	rows              []podPickerRow
-	checked           map[string]bool
-	index             int
-	selected          []string
-	kubeContext       string
-	namespace         string
-	monitorEnabled    bool
-	monitorBusy       bool
-	monitorGeneration int
-	monitorHealth     map[string]podHealthDisplay
-	monitorPrevious   map[string]podHealthSample
-	monitorLastScan   time.Time
-	monitorFlashOn    bool
-	monitorError      string
+	rows        []podPickerRow
+	checked     map[string]bool
+	index       int
+	selected    []string
+	kubeContext string
+	namespace   string
+	podMonitorState
 }
 
 // PickPods pins exactly the selected pod names. Esc returns to the app picker.
 func PickPods(apps []core.AppChoice, kubeContext, namespace string) (selected []string, ok bool, err error) {
 	model := podPickerModel{rows: preparePodPickerRows(apps), kubeContext: kubeContext, namespace: namespace}
 	result, err := tea.NewProgram(model).Run()
+	if final, ok := result.(podPickerModel); ok {
+		final.podMonitorState.stop()
+	}
 	if err != nil {
 		return nil, false, err
 	}
@@ -70,54 +66,14 @@ func preparePodPickerRows(apps []core.AppChoice) []podPickerRow {
 func (m podPickerModel) Init() tea.Cmd { return nil }
 
 func (m podPickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := message.(type) {
-	case podHealthScanMsg:
-		if !m.monitorEnabled || msg.generation != m.monitorGeneration {
-			return m, nil
-		}
-		if m.monitorHealth == nil {
-			m.monitorHealth = make(map[string]podHealthDisplay)
-		}
-		if m.monitorPrevious == nil {
-			m.monitorPrevious = make(map[string]podHealthSample)
-		}
-		failures := 0
-		for pod, sample := range msg.samples {
-			previous := m.monitorPrevious[pod]
-			m.monitorHealth[pod] = classifyPodHealth(sample, previous)
-			m.monitorPrevious[pod] = sample
-			if sample.err != nil {
-				failures++
-			}
-		}
-		m.monitorBusy = false
-		m.monitorLastScan = msg.scannedAt
-		m.monitorError = ""
-		if failures > 0 {
-			m.monitorError = fmt.Sprintf("%d pod scans failed", failures)
-		}
-		return m, nil
-	case podMonitorPollMsg:
-		if !m.monitorEnabled || msg.generation != m.monitorGeneration {
-			return m, nil
-		}
-		commands := []tea.Cmd{podMonitorPollCmd(m.monitorGeneration)}
-		if !m.monitorBusy {
-			m.monitorBusy = true
-			commands = append(commands, scanPodHealthCmd(m.rows, m.kubeContext, m.namespace, m.monitorGeneration))
-		}
-		return m, tea.Batch(commands...)
-	case podMonitorFlashMsg:
-		if !m.monitorEnabled || msg.generation != m.monitorGeneration {
-			return m, nil
-		}
-		m.monitorFlashOn = !m.monitorFlashOn
-		return m, podMonitorFlashCmd(m.monitorGeneration)
+	if handled, cmd := m.podMonitorState.update(message, m.rows, m.kubeContext, m.namespace); handled {
+		return m, cmd
 	}
 
 	if key, ok := message.(tea.KeyMsg); ok {
 		switch key.String() {
 		case "ctrl+c", "q", "esc":
+			m.podMonitorState.stop()
 			return m, tea.Quit
 		case "up", "k":
 			m.index = max(0, m.index-1)
@@ -145,22 +101,8 @@ func (m podPickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				name := m.rows[m.index].pod.Name
 				m.checked[name] = !m.checked[name]
 			}
-		case "m":
-			m.monitorGeneration++
-			m.monitorEnabled = !m.monitorEnabled
-			m.monitorError = ""
-			if !m.monitorEnabled {
-				m.monitorBusy = false
-				m.monitorFlashOn = false
-				return m, nil
-			}
-			m.monitorBusy = true
-			m.monitorFlashOn = true
-			return m, tea.Batch(
-				scanPodHealthCmd(m.rows, m.kubeContext, m.namespace, m.monitorGeneration),
-				podMonitorPollCmd(m.monitorGeneration),
-				podMonitorFlashCmd(m.monitorGeneration),
-			)
+		case "m", "M":
+			return m, m.podMonitorState.toggle(m.rows, m.kubeContext, m.namespace)
 		case "a":
 			if len(m.rows) > 0 {
 				if m.checked == nil {
@@ -189,6 +131,7 @@ func (m podPickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				if len(m.selected) == 0 {
 					m.selected = []string{m.rows[m.index].pod.Name}
 				}
+				m.podMonitorState.stop()
 				return m, tea.Quit
 			}
 		}
