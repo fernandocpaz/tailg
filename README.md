@@ -100,9 +100,13 @@ If `.spec.timeZone` is unset, the schedule uses the controller's local time
 zone, shown as `controller local`. Use the arrow keys to scroll to every
 CronJob; highlighting a row shows its full schedule and last scheduled date.
 
-Highlight a CronJob and press **X — Run now**, then **Y** to create one Job
-from its current template in the displayed context and namespace. `N` or
-`Esc` cancels. The schedule and suspension setting stay unchanged. Manual
+Highlight a CronJob and press **X — Run now** to open a centered terminal modal
+over the dimmed application list. It shows the CronJob, context, namespace,
+schedule, suspension state, and active Jobs. **Cancel** is focused initially;
+use `Tab` or `Left`/`Right` to select **Run now**, then `Enter`, or press `Y`
+directly. `N` or `Esc` cancels and restores the current list selection.
+While the modal is open, keys operate the modal; `Up`/`Down` scroll long details
+in smaller terminals. The schedule and suspension setting stay unchanged. Manual
 runs bypass the schedule and CronJob concurrency policy, so the confirmation
 shows whether the CronJob is suspended or already has active Jobs.
 The picker refreshes after creation; press `R` as the pod starts, then `Enter`
