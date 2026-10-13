@@ -15,18 +15,20 @@ import (
 const maxPickerApps = 20
 
 type pickerModel struct {
-	apps        []core.AppChoice
-	totalApps   int
-	index       int
-	checked     map[string]bool
-	note        string
-	result      PickerResult
-	kubeContext string
-	namespace   string
-	loadError   string
-	width       int
-	height      int
-	confirmRun  *core.AppChoice
+	apps              []core.AppChoice
+	totalApps         int
+	index             int
+	checked           map[string]bool
+	note              string
+	result            PickerResult
+	kubeContext       string
+	namespace         string
+	loadError         string
+	width             int
+	height            int
+	confirmRun        *core.AppChoice
+	confirmRunFocused bool
+	confirmRunScroll  int
 	podMonitorState
 	monitorApps map[string]podHealthDisplay
 }
@@ -102,23 +104,15 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if size, ok := message.(tea.WindowSizeMsg); ok {
 		m.width = size.Width
 		m.height = size.Height
+		if m.confirmRun != nil && size.Width >= minCronJobModalWidth && size.Height >= minCronJobModalHeight {
+			_, maxScroll := m.cronJobModalLayout(size.Width, size.Height)
+			m.confirmRunScroll = min(m.confirmRunScroll, maxScroll)
+		}
 		return m, nil
 	}
 	if key, ok := message.(tea.KeyMsg); ok {
 		if m.confirmRun != nil {
-			switch key.String() {
-			case "y", "Y":
-				m.result = PickerResult{Action: PickerRunCronJob, App: *m.confirmRun, Marked: m.markedNames()}
-				m.podMonitorState.stop()
-				return m, tea.Quit
-			case "n", "N", "esc":
-				m.confirmRun = nil
-			case "ctrl+c":
-				m.podMonitorState.stop()
-				m.result.Action = PickerQuit
-				return m, tea.Quit
-			}
-			return m, nil
+			return m.updateCronJobModal(key)
 		}
 		switch key.String() {
 		case "ctrl+c", "q", "esc":
@@ -141,6 +135,8 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.apps) > 0 && m.apps[m.index].CronJob != nil {
 				app := m.apps[m.index]
 				m.confirmRun = &app
+				m.confirmRunFocused = false // Cancel is focused until explicitly changed.
+				m.confirmRunScroll = 0
 				m.note = ""
 			} else {
 				m.note = "Highlight a CronJob to run it on demand."
@@ -232,6 +228,16 @@ const (
 )
 
 func (m pickerModel) View() string {
+	background := m.pickerView()
+	if m.confirmRun == nil {
+		return background
+	}
+	width, height := m.modalViewport()
+	dialog, _ := m.cronJobModalLayout(width, height)
+	return overlayModal(background, dialog, width, height)
+}
+
+func (m pickerModel) pickerView() string {
 	var lines = []string{
 		headerStyle.Render("Select an application"),
 		fmt.Sprintf("Context: %s  |  Namespace: %s", m.kubeContext, m.namespace),
@@ -270,13 +276,6 @@ func (m pickerModel) View() string {
 	}
 	if m.note != "" {
 		lines = append(lines, m.note, "")
-	}
-	if m.confirmRun != nil {
-		job := m.confirmRun.CronJob
-		lines = append(lines, selectedStyle.Render(fmt.Sprintf("Run CronJob %s now in %s / %s? Y to create one Job · N/ESC to cancel", job.Name, m.kubeContext, m.namespace)))
-		if job.Suspended || job.Active > 0 {
-			lines = append(lines, fmt.Sprintf("Suspended: %t · Active Jobs: %d · Manual runs bypass the schedule and concurrency policy.", job.Suspended, job.Active))
-		}
 	}
 	if len(m.apps) == 0 {
 		if m.loadError != "" {

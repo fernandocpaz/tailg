@@ -55,6 +55,7 @@ func TestRunCronJobRequiresConfirmationAndUsesHighlightedRow(t *testing.T) {
 	if cmd != nil || m.confirmRun == nil || m.result.Action == PickerRunCronJob {
 		t.Fatalf("run triggered before confirmation: %+v", m)
 	}
+	m.width, m.height = 100, 30
 	if view := m.View(); !strings.Contains(view, "tkgs-qa / cronjob") || !strings.Contains(view, "concurrency policy") {
 		t.Fatalf("missing confirmation scope: %q", view)
 	}
@@ -63,6 +64,11 @@ func TestRunCronJobRequiresConfirmationAndUsesHighlightedRow(t *testing.T) {
 	if cmd != nil || m.result.Action == PickerRunCronJob {
 		t.Fatal("Enter incorrectly confirmed a create")
 	}
+	if m.confirmRun != nil {
+		t.Fatal("Enter on the default Cancel button did not close the modal")
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m = updated.(pickerModel)
 	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 	m = updated.(pickerModel)
 	if cmd != nil || m.confirmRun != nil || !m.checked["api"] {
