@@ -109,12 +109,12 @@ func (m pickerModel) cronJobModalLayout(width, height int) (string, int) {
 	maxScroll := max(0, len(body)-capacity)
 	start := min(m.confirmRunScroll, maxScroll)
 	end := min(len(body), start+capacity)
-	run, cancel := "[ Run now ]", "[ Cancel ]"
+	run, cancel := "  [ Run now ]", "  [ Cancel ]"
 	buttonStyle := lipgloss.NewStyle().Foreground(modeForeground).Background(modeBackground).Bold(true)
 	if m.confirmRunFocused {
-		run = buttonStyle.Render(run)
+		run = buttonStyle.Render("> [ Run now ]")
 	} else {
-		cancel = buttonStyle.Render(cancel)
+		cancel = buttonStyle.Render("> [ Cancel ]")
 	}
 	lines := []string{headerStyle.Render("Run CronJob now?"), ""}
 	lines = append(lines, body[start:end]...)

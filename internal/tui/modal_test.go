@@ -48,10 +48,16 @@ func TestCronJobModalCapturesKeysAndPreservesSelectionOnCancel(t *testing.T) {
 func TestCronJobModalEnterRunsOnlyAfterSelectingRun(t *testing.T) {
 	for _, key := range []tea.KeyMsg{{Type: tea.KeyTab}, {Type: tea.KeyLeft}, {Type: tea.KeyShiftTab}} {
 		m := modalPicker()
+		if !strings.Contains(core.StripANSI(m.View()), "> [ Cancel ]") {
+			t.Fatal("default focus is invisible without color")
+		}
 		updated, cmd := m.Update(key)
 		m = updated.(pickerModel)
 		if cmd != nil || !m.confirmRunFocused {
 			t.Fatalf("key %q did not focus Run", key.String())
+		}
+		if !strings.Contains(core.StripANSI(m.View()), "> [ Run now ]") {
+			t.Fatal("Run focus is invisible without color")
 		}
 		updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 		result := updated.(pickerModel).result
