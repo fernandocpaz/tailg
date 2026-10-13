@@ -92,6 +92,30 @@ tailg diagnose example-app default --output ndjson
 
 Running `tailg` with no target opens the interactive application picker in the
 current Kubernetes namespace.
+The picker also lists **all CronJobs**, including ones that have never run or
+whose old Jobs/pods have been removed. CronJobs have their own section below
+the newest 20 applications, with schedule, time zone, suspension state, active
+Job count, retained pod count, and last scheduled run (`never` when absent).
+If `.spec.timeZone` is unset, the schedule uses the controller's local time
+zone, shown as `controller local`. Use the arrow keys to scroll to every
+CronJob; highlighting a row shows its full schedule and last scheduled date.
+
+Highlight a CronJob and press **X — Run now**, then **Y** to create one Job
+from its current template in the displayed context and namespace. `N` or
+`Esc` cancels. The schedule and suspension setting stay unchanged. Manual
+runs bypass the schedule and CronJob concurrency policy, so the confirmation
+shows whether the CronJob is suspended or already has active Jobs.
+The picker refreshes after creation; press `R` as the pod starts, then `Enter`
+to open retained pod logs. With no retained pods, `Enter`/`Space` shows guidance
+to run the CronJob instead of opening unrelated namespace logs. `X` runs only
+the highlighted CronJob, regardless of checked applications.
+
+CronJob discovery requires permission to list `cronjobs` and `jobs`; running
+one requires reading that CronJob and creating `jobs`. Discovery failures
+show an inventory warning while the existing applications stay available.
+Failed or timed-out creates are not retried automatically: check the displayed
+Job name before trying again to avoid duplicate execution.
+
 Press `M` in this main application list to toggle log monitoring (off by
 default). It scans all containers in every pod belonging to the displayed
 applications immediately, then polls the previous minute of logs every 60

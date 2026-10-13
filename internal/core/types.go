@@ -39,6 +39,16 @@ type AppChoice struct {
 	StartedAt  time.Time
 	DeployedAt time.Time
 	ImageTag   string
+	CronJob    *CronJobInfo
+}
+
+type CronJobInfo struct {
+	Name            string
+	Schedule        string
+	TimeZone        string
+	Suspended       bool
+	Active          int
+	LastScheduledAt time.Time
 }
 
 type PodChoice struct {

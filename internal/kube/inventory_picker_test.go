@@ -61,6 +61,7 @@ func TestAppsProvideIndividualPodDetailsForPicker(t *testing.T) {
 case "$*" in
   *"get pods -o json"*) echo '{"items":[{"metadata":{"name":"api-123","labels":{"app":"api"}},"spec":{"containers":[{"name":"api"}]},"status":{"phase":"Running","startTime":"2026-09-20T10:06:00Z","containerStatuses":[{"name":"api","ready":true,"state":{"running":{"startedAt":"2026-09-20T10:08:00Z"}}}]}}]}' ;;
   *"get replicasets -o json"*) echo '{"items":[]}' ;;
+  *"get cronjobs -o json"*) echo '{"items":[]}' ;;
   *) exit 1 ;;
 esac
 `

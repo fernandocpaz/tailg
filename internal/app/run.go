@@ -163,6 +163,7 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 		runner.Namespace = effectiveNamespace
 	}
 	var markedApps []string
+	var pickerNotice string
 	autoSplitSelection := false
 
 pickAgain:
@@ -171,7 +172,8 @@ pickAgain:
 	if !namespaceMode {
 		if pickerMode {
 			apps, appsErr := runner.Apps(ctx)
-			selection, selectErr := tui.PickApp(apps, effectiveContext, effectiveNamespace, appsErr, markedApps)
+			selection, selectErr := tui.PickApp(apps, effectiveContext, effectiveNamespace, appsErr, markedApps, pickerNotice)
+			pickerNotice = ""
 			if selectErr != nil {
 				fmt.Fprintln(stderr, selectErr)
 				return 1
@@ -180,6 +182,10 @@ pickAgain:
 			case tui.PickerQuit:
 				return 0
 			case tui.PickerRefresh:
+				goto pickAgain
+			case tui.PickerRunCronJob:
+				markedApps = selection.Marked
+				pickerNotice = runPickerCronJob(ctx, runner, effectiveContext, effectiveNamespace, selection.App)
 				goto pickAgain
 			case tui.PickerSelectPods:
 				pods, ok, pickErr := tui.PickPods(apps, effectiveContext, effectiveNamespace)

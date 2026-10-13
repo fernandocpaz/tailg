@@ -118,6 +118,7 @@ func (r Runner) Apps(ctx context.Context) ([]core.AppChoice, error) {
 			return nil, err
 		}
 	}
+	cronJobs, jobs, cronJobErr := r.pickerCronJobs(ctx)
 	type group struct {
 		pods       []string
 		podChoices []core.PodChoice
@@ -137,6 +138,9 @@ func (r Runner) Apps(ctx context.Context) ([]core.AppChoice, error) {
 			continue
 		}
 		appName, selector := appIdentity(pod)
+		if cronJob := cronJobForPod(pod, jobs, cronJobs); cronJob != nil {
+			appName, selector = "cronjob/"+cronJob.Name, ""
+		}
 		selected := groups[appName]
 		if selected == nil {
 			selected = &group{selector: selector, phases: map[string]int{}, imageTags: map[string]bool{}}
@@ -175,6 +179,20 @@ func (r Runner) Apps(ctx context.Context) ([]core.AppChoice, error) {
 			StartedAt: group.startedAt, DeployedAt: group.deployedAt, ImageTag: imageTagSummary(group.imageTags),
 		})
 	}
+	for name, cronJob := range cronJobs {
+		appName := "cronjob/" + name
+		found := false
+		for i := range apps {
+			if apps[i].Name == appName {
+				apps[i].CronJob = cronJob
+				found = true
+				break
+			}
+		}
+		if !found {
+			apps = append(apps, core.AppChoice{Namespace: effectiveNamespace, Name: appName, Ready: "0/0", Phases: "No pods", CronJob: cronJob})
+		}
+	}
 	sort.Slice(apps, func(i, j int) bool {
 		iRunning := strings.HasPrefix(apps[i].Phases, "Running")
 		jRunning := strings.HasPrefix(apps[j].Phases, "Running")
@@ -183,12 +201,12 @@ func (r Runner) Apps(ctx context.Context) ([]core.AppChoice, error) {
 		}
 		return strings.ToLower(apps[i].Name) < strings.ToLower(apps[j].Name)
 	})
-	return apps, nil
+	return apps, cronJobErr
 }
 
 func (r Runner) MatchApps(ctx context.Context, targets string) ([]string, []string, string, error) {
 	apps, err := r.Apps(ctx)
-	if err != nil {
+	if err != nil && len(apps) == 0 {
 		return nil, nil, "", err
 	}
 	patterns := strings.Split(targets, ",")
@@ -200,9 +218,17 @@ func (r Runner) MatchApps(ctx context.Context, targets string) ([]string, []stri
 		}
 		var matches []core.AppChoice
 		for _, app := range apps {
-			matched := strings.EqualFold(app.Name, patternText)
-			if strings.ContainsAny(patternText, "*?[") {
-				matched, _ = path.Match(strings.ToLower(patternText), strings.ToLower(app.Name))
+			names := []string{app.Name}
+			if app.CronJob != nil {
+				names = append(names, app.CronJob.Name)
+			}
+			matched := false
+			for _, name := range names {
+				match := strings.EqualFold(name, patternText)
+				if strings.ContainsAny(patternText, "*?[") {
+					match, _ = path.Match(strings.ToLower(patternText), strings.ToLower(name))
+				}
+				matched = matched || match
 			}
 			if matched {
 				matches = append(matches, app)
@@ -222,6 +248,9 @@ func (r Runner) MatchApps(ctx context.Context, targets string) ([]string, []stri
 		}
 	}
 	namespace := r.Namespace
+	if len(pods) == 0 && len(selectors) == 0 {
+		return nil, nil, "", fmt.Errorf("matching applications have no retained pods; open the picker to run a CronJob on demand")
+	}
 	if namespace == "" && len(apps) > 0 {
 		namespace = apps[0].Namespace
 	}
