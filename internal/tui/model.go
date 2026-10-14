@@ -152,26 +152,26 @@ func (s *searchController) stop() {
 }
 
 var (
-	accentColor       = lipgloss.AdaptiveColor{Light: "#7A4E00", Dark: "#FFD166"}
-	positiveColor     = lipgloss.AdaptiveColor{Light: "#176B3A", Dark: "#7EE787"}
-	mutedColor        = lipgloss.AdaptiveColor{Light: "#62666D", Dark: "#A8ADB4"}
-	infoColor         = lipgloss.AdaptiveColor{Light: "#70757D", Dark: "#8B949E"}
-	debugColor        = lipgloss.AdaptiveColor{Light: "#858A91", Dark: "#6E7681"}
-	selectionBG       = lipgloss.AdaptiveColor{Light: "#FFF4D6", Dark: "#302A1F"}
-	selectionFG       = lipgloss.AdaptiveColor{Light: "#2A241A", Dark: "#FFF7E6"}
-	modeBackground    = lipgloss.AdaptiveColor{Light: "#7A4E00", Dark: "#FFD166"}
-	modeForeground    = lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#1B1B1B"}
-	matchBackground   = lipgloss.AdaptiveColor{Light: "#FFE8A3", Dark: "#FFE66D"}
-	matchForeground   = lipgloss.AdaptiveColor{Light: "#1B1B1B", Dark: "#1B1B1B"}
-	headerStyle       = lipgloss.NewStyle().Bold(true).Foreground(accentColor)
-	selectedStyle     = lipgloss.NewStyle().Foreground(selectionFG).Background(selectionBG)
-	matchStyle        = lipgloss.NewStyle().Bold(true).Foreground(matchForeground).Background(matchBackground)
-	filterLabelStyle  = lipgloss.NewStyle().Bold(true).Foreground(positiveColor)
-	modeStyle         = lipgloss.NewStyle().Bold(true).Foreground(modeForeground).Background(modeBackground).Padding(0, 1)
-	okStyle           = lipgloss.NewStyle().Bold(true).Foreground(positiveColor)
-	warnStyle         = lipgloss.NewStyle().Bold(true).Foreground(accentColor)
-	infoStyle         = lipgloss.NewStyle().Foreground(infoColor)
-	debugStyle        = lipgloss.NewStyle().Foreground(debugColor)
+	accentColor      = lipgloss.AdaptiveColor{Light: "#7A4E00", Dark: "#FFD166"}
+	positiveColor    = lipgloss.AdaptiveColor{Light: "#176B3A", Dark: "#7EE787"}
+	mutedColor       = lipgloss.AdaptiveColor{Light: "#62666D", Dark: "#A8ADB4"}
+	infoColor        = lipgloss.AdaptiveColor{Light: "#70757D", Dark: "#8B949E"}
+	debugColor       = lipgloss.AdaptiveColor{Light: "#858A91", Dark: "#6E7681"}
+	selectionBG      = lipgloss.AdaptiveColor{Light: "#FFF4D6", Dark: "#302A1F"}
+	selectionFG      = lipgloss.AdaptiveColor{Light: "#2A241A", Dark: "#FFF7E6"}
+	modeBackground   = lipgloss.AdaptiveColor{Light: "#7A4E00", Dark: "#FFD166"}
+	modeForeground   = lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#1B1B1B"}
+	matchBackground  = lipgloss.AdaptiveColor{Light: "#FFE8A3", Dark: "#FFE66D"}
+	matchForeground  = lipgloss.AdaptiveColor{Light: "#1B1B1B", Dark: "#1B1B1B"}
+	headerStyle      = lipgloss.NewStyle().Bold(true).Foreground(accentColor)
+	selectedStyle    = lipgloss.NewStyle().Foreground(selectionFG).Background(selectionBG)
+	matchStyle       = lipgloss.NewStyle().Bold(true).Foreground(matchForeground).Background(matchBackground)
+	filterLabelStyle = lipgloss.NewStyle().Bold(true).Foreground(positiveColor)
+	modeStyle        = lipgloss.NewStyle().Bold(true).Foreground(modeForeground).Background(modeBackground).Padding(0, 1)
+	okStyle          = lipgloss.NewStyle().Bold(true).Foreground(positiveColor)
+	warnStyle        = lipgloss.NewStyle().Bold(true).Foreground(accentColor)
+	infoStyle        = lipgloss.NewStyle().Foreground(infoColor)
+	debugStyle       = lipgloss.NewStyle().Foreground(debugColor)
 	// Use a soft coral rather than a terminal theme's bright-red slot.
 	alertStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.CompleteColor{
 		TrueColor: "#FF6B6B", ANSI256: "203", ANSI: "1",
@@ -1490,183 +1490,27 @@ func sharedTick() tea.Cmd {
 	return tea.Tick(250*time.Millisecond, func(t time.Time) tea.Msg { return sharedFilterTick(t) })
 }
 
-type managedStream struct {
-	item       core.InventoryItem
-	cancel     context.CancelFunc
-	generation uint64
-	attempt    int
-	cursor     *core.LogCursor
-}
-
-type managedStreamDone struct {
-	key        string
-	generation uint64
-	attempt    int
-	lifetime   time.Duration
-}
-
-type managedStreamRetry struct {
-	key        string
-	generation uint64
-}
-
-const (
-	streamRetryBase  = 250 * time.Millisecond
-	streamRetryLimit = 5 * time.Second
-	stableStreamTime = 30 * time.Second
-)
-
-func streamRetryDelay(attempt int) time.Duration {
-	if attempt < 1 {
-		attempt = 1
-	}
-	delay := streamRetryBase
-	for step := 1; step < attempt && delay < streamRetryLimit; step++ {
-		delay *= 2
-	}
-	return min(delay, streamRetryLimit)
-}
-
 func manageStreams(ctx context.Context, config Config, events chan<- core.LogEvent, updates chan inventoryMsg) {
-	defer close(events)
 	if updates != nil {
 		defer close(updates)
 	}
-	if config.Stream == nil {
-		return
-	}
-
-	done := make(chan managedStreamDone)
-	retries := make(chan managedStreamRetry)
-	active := map[string]*managedStream{}
-	wanted := map[string]core.InventoryItem{}
-	var streams sync.WaitGroup
-	var generation uint64
-
-	start := func(item core.InventoryItem, attempt int) {
-		generation++
-		streamCtx, cancel := context.WithCancel(ctx)
-		cursor := &core.LogCursor{}
-		if previous := active[item.Key()]; previous != nil {
-			cursor = previous.cursor
-		}
-		handle := &managedStream{item: item, cancel: cancel, generation: generation, attempt: attempt, cursor: cursor}
-		active[item.Key()] = handle
-		streams.Add(1)
-		go func() {
-			defer streams.Done()
-			started := time.Now()
-			_ = config.Stream(streamCtx, item, handle.cursor, events)
-			completion := managedStreamDone{key: item.Key(), generation: handle.generation, attempt: handle.attempt, lifetime: time.Since(started)}
-			select {
-			case done <- completion:
-			case <-ctx.Done():
+	core.FollowStreams(ctx, core.StreamConfig{
+		Items: config.Items, RefreshInterval: config.RefreshInterval,
+		Stream: config.Stream, Inventory: config.Inventory,
+		Updated: func(items []core.InventoryItem, err error) {
+			if updates == nil {
+				return
 			}
-		}()
-	}
-
-	reconcile := func(items []core.InventoryItem) {
-		current := make(map[string]core.InventoryItem, len(items))
-		for _, item := range items {
-			key := item.Key()
-			current[key] = item
-			if _, ok := active[key]; !ok {
-				start(item, 0)
-			}
-		}
-		wanted = current
-		for key, handle := range active {
-			if _, ok := current[key]; ok {
-				continue
-			}
-			if handle.cancel != nil {
-				handle.cancel()
-			}
-			delete(active, key)
-		}
-		if updates != nil {
 			select {
 			case <-updates:
 			default:
 			}
-			updates <- inventoryMsg{items: append([]core.InventoryItem(nil), items...)}
-		}
-	}
-
-	stopAll := func() {
-		for _, handle := range active {
-			if handle.cancel != nil {
-				handle.cancel()
+			select {
+			case updates <- inventoryMsg{items: append([]core.InventoryItem(nil), items...), err: err}:
+			case <-ctx.Done():
 			}
-		}
-		streams.Wait()
-	}
-
-	reconcile(config.Items)
-	var inventoryTick <-chan time.Time
-	var ticker *time.Ticker
-	if config.Inventory != nil {
-		interval := config.RefreshInterval
-		if interval <= 0 {
-			interval = 2 * time.Second
-		}
-		ticker = time.NewTicker(interval)
-		inventoryTick = ticker.C
-		defer ticker.Stop()
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			stopAll()
-			return
-		case completion := <-done:
-			handle, ok := active[completion.key]
-			if !ok || handle.generation != completion.generation {
-				continue
-			}
-			if _, ok := wanted[completion.key]; !ok {
-				delete(active, completion.key)
-				continue
-			}
-			nextAttempt := completion.attempt + 1
-			if completion.lifetime >= stableStreamTime {
-				nextAttempt = 1
-			}
-			handle.cancel()
-			handle.cancel = nil
-			handle.attempt = nextAttempt
-			delay := streamRetryDelay(nextAttempt)
-			go func(request managedStreamRetry) {
-				timer := time.NewTimer(delay)
-				defer timer.Stop()
-				select {
-				case <-timer.C:
-					select {
-					case retries <- request:
-					case <-ctx.Done():
-					}
-				case <-ctx.Done():
-				}
-			}(managedStreamRetry{key: completion.key, generation: completion.generation})
-		case retry := <-retries:
-			handle, ok := active[retry.key]
-			if !ok || handle.generation != retry.generation || handle.cancel != nil {
-				continue
-			}
-			item, ok := wanted[retry.key]
-			if !ok {
-				delete(active, retry.key)
-				continue
-			}
-			start(item, handle.attempt)
-		case <-inventoryTick:
-			items, err := config.Inventory(ctx)
-			if err == nil {
-				reconcile(items)
-			}
-		}
-	}
+		},
+	}, events)
 }
 
 const (

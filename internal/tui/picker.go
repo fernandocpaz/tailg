@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -15,6 +16,7 @@ import (
 const maxPickerApps = 20
 
 type pickerModel struct {
+	refreshContext    context.Context
 	apps              []core.AppChoice
 	totalApps         int
 	index             int
@@ -54,8 +56,11 @@ type PickerResult struct {
 }
 
 func PickApp(apps []core.AppChoice, kubeContext, namespace string, loadErr error, previous []string, notice ...string) (PickerResult, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	prepared, total := preparePickerApps(apps)
 	model := newPickerModel(prepared, total, kubeContext, namespace, previous)
+	model.refreshContext = ctx
 	if len(notice) > 0 {
 		model.note = notice[0]
 	}
@@ -88,8 +93,30 @@ func newPickerModel(apps []core.AppChoice, total int, kubeContext, namespace str
 	}
 	return model
 }
-func (m pickerModel) Init() tea.Cmd { return nil }
+func (m pickerModel) Init() tea.Cmd {
+	if m.refreshContext == nil {
+		return nil
+	}
+	return pickerRefreshCmd()
+}
 func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := message.(type) {
+	case pickerRefreshTick:
+		if m.refreshContext == nil {
+			return m, nil
+		}
+		// Keep the confirmation tied to the workload shown when it was opened.
+		if m.confirmRun != nil {
+			return m, pickerRefreshCmd()
+		}
+		return m, loadPickerAppsCmd(m.refreshContext, m.kubeContext, m.namespace)
+	case pickerRefreshResult:
+		if m.confirmRun == nil {
+			m.refreshApps(msg)
+		}
+		return m, pickerRefreshCmd()
+	}
+
 	// Aggregate before updating previous pod samples so warning trends compare
 	// the current minute with the preceding scan across the whole application.
 	if msg, ok := message.(podHealthScanMsg); ok && m.monitorEnabled && msg.generation == m.monitorGeneration {

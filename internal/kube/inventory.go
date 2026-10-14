@@ -262,10 +262,19 @@ func inventoryFromPods(pods []any) []core.InventoryItem {
 	for _, raw := range pods {
 		pod := mapValue(raw)
 		name := podName(pod)
+		statuses := map[string]map[string]any{}
+		for _, rawStatus := range sliceValue(mapValue(pod["status"])["containerStatuses"]) {
+			status := mapValue(rawStatus)
+			statuses[stringValue(status["name"])] = status
+		}
 		for _, container := range sliceValue(mapValue(pod["spec"])["containers"]) {
 			containerName := stringValue(mapValue(container)["name"])
 			if name != "" && containerName != "" {
-				result = append(result, core.InventoryItem{Pod: name, Container: containerName})
+				status := statuses[containerName]
+				result = append(result, core.InventoryItem{Pod: name, Container: containerName,
+					PodUID:      stringValue(mapValue(pod["metadata"])["uid"]),
+					ContainerID: stringValue(status["containerID"]), RestartCount: intValue(status["restartCount"]),
+				})
 			}
 		}
 	}

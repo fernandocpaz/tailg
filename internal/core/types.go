@@ -15,11 +15,22 @@ const (
 var DefaultExcludePatterns = []string{"health|ready|live"}
 
 type InventoryItem struct {
-	Pod       string
-	Container string
+	Pod          string
+	Container    string
+	PodUID       string
+	ContainerID  string
+	RestartCount int
 }
 
 func (i InventoryItem) Key() string { return i.Pod + "\x00" + i.Container }
+
+// Replaced compares runtime identity while keeping Key stable for UI sources.
+// An absent container ID during startup is not itself another restart.
+func (i InventoryItem) Replaced(previous InventoryItem) bool {
+	return (i.PodUID != "" && previous.PodUID != "" && i.PodUID != previous.PodUID) ||
+		i.RestartCount != previous.RestartCount ||
+		(i.ContainerID != "" && previous.ContainerID != "" && i.ContainerID != previous.ContainerID)
+}
 
 type MappedResource struct {
 	Kind    string

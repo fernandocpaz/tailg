@@ -159,7 +159,12 @@ to the picker. With nothing checked, `Enter` opens the highlighted application
 as before. Uncheck applications and press `P` to choose individual pod names across applications instead:
 `Space` checks pods, `A` toggles all pods for the highlighted application, and
 `Enter` opens the checked pods, using the same automatic split-pane behavior.
-Exact pod selections stay pinned to those names.
+Both pickers refresh their inventories automatically every five seconds, keeping
+surviving selections and the highlighted row. New deployments and pods appear
+without restarting tailg. Selected pod views (including split panes) keep the
+chosen replica until it terminates or disappears, then follow one replacement
+from its verified Deployment, StatefulSet, DaemonSet, or ReplicaSet. Standalone
+pods and Job pods stay pinned; no unrelated application is substituted.
 Switching context or namespace clears checked applications.
 If credentials have expired, the picker shows the kubectl error so you can
 press `C` to choose another context or log in and press `R` to retry.
@@ -185,7 +190,14 @@ for the chosen time window. The live buffer retains at most 50,000 lines by
 default; use `--buffer-lines` to choose a different positive limit. Interrupted
 pod log streams reconnect automatically with a capped backoff.
 
-In the full-screen view, reconnects resume near the last received Kubernetes
+Both full-screen and plain-text modes refresh live inventory every two seconds
+by default (`--refresh-seconds` changes the interval). Pod UID, container ID, and restart
+count changes restart the log connection even when the pod name stays the same.
+New matching replicas are attached and removed pods are detached automatically.
+A new container incarnation gets a fresh history cursor; existing buffered logs
+and filters stay available.
+
+In both modes, reconnects resume near the last received Kubernetes
 timestamp instead of requesting the initial tail again. The overlap is checked
 against previously delivered occurrences, so replayed lines do not reappear or
 inflate Issue Radar counts. Reconnects read all retained logs after that position,
