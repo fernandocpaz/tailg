@@ -315,23 +315,19 @@ func (m pickerModel) pickerView() string {
 	}
 	now := time.Now()
 	imageWidth := pickerImageWidth(m.width)
-	// Reserve room for both section headers, the footer, and a selected row's
-	// full schedule details. Scroll so CronJobs remain reachable in short terminals.
-	capacity := len(m.apps)
-	if m.height > 0 {
-		capacity = max(1, m.height-len(lines)-8)
+	rows := make([]pickerViewportRow, len(m.apps))
+
+	sectionTitles := [2]string{
+		renderPickerRow("      ", "APPLICATION", "READY", "PHASE", "RESTARTS", "STARTED", "DEPLOYED", "IMAGE", imageWidth),
+		renderCronJobRow("      ", "CRONJOB", "SCHEDULE", "TIME ZONE", "STATE", "ACTIVE", "PODS", "LAST SCHEDULED"),
 	}
-	start := max(0, m.index-capacity+1)
-	end := min(len(m.apps), start+capacity)
-	for index := start; index < end; index++ {
-		app := m.apps[index]
-		if index == start || (app.CronJob != nil) != (m.apps[index-1].CronJob != nil) {
-			header := renderPickerRow("      ", "APPLICATION", "READY", "PHASE", "RESTARTS", "STARTED", "DEPLOYED", "IMAGE", imageWidth)
-			if app.CronJob != nil {
-				header = renderCronJobRow("      ", "CRONJOB", "SCHEDULE", "TIME ZONE", "STATE", "ACTIVE", "PODS", "LAST SCHEDULED")
-			}
-			lines = append(lines, dimStyle.Render(header), dimStyle.Render(strings.Repeat("-", lipgloss.Width(header))))
-		}
+	var headers [2][]string
+	for section, title := range sectionTitles {
+		headers[section] = pickerWrapLines([]string{
+			dimStyle.Render(title), dimStyle.Render(strings.Repeat("-", lipgloss.Width(title))),
+		}, m.width)
+	}
+	for index, app := range m.apps {
 		marker := "  "
 		check := "[ ] "
 		if m.checked[app.Name] {
@@ -378,14 +374,15 @@ func (m pickerModel) pickerView() string {
 			name := fmt.Sprintf("%-*s", pickerAppWidth, truncatePickerCell(displayName, pickerAppWidth))
 			suffix := strings.TrimPrefix(line, prefix+name)
 			name = renderMonitoredPodName(name, m.monitorApps[app.Name], m.monitorFlashOn)
-			lines = append(lines, style.Render(prefix)+name+style.Render(suffix))
+			rows[index].lines = pickerWrapLines([]string{style.Render(prefix) + name + style.Render(suffix)}, m.width)
 		} else {
-			lines = append(lines, style.Render(line))
+			rows[index].lines = pickerWrapLines([]string{style.Render(line)}, m.width)
+		}
+		if app.CronJob != nil {
+			rows[index].section = 1
 		}
 	}
-	if start > 0 || end < len(m.apps) {
-		lines = append(lines, dimStyle.Render(fmt.Sprintf("Rows %d–%d of %d · ↑↓ to scroll", start+1, end, len(m.apps))))
-	}
+	var footer []string
 	if m.index < len(m.apps) && m.apps[m.index].CronJob != nil {
 		job := m.apps[m.index].CronJob
 		zone, last := job.TimeZone, "never"
@@ -395,11 +392,31 @@ func (m pickerModel) pickerView() string {
 		if !job.LastScheduledAt.IsZero() {
 			last = job.LastScheduledAt.Local().Format("2006-01-02 15:04:05 MST")
 		}
-		lines = append(lines, fmt.Sprintf("%s · Schedule: %s (%s) · Last scheduled: %s", job.Name, job.Schedule, zone, last))
+		footer = append(footer, fmt.Sprintf("%s · Schedule: %s (%s) · Last scheduled: %s", job.Name, job.Schedule, zone, last))
 	}
 	if m.monitorEnabled {
-		lines = append(lines, dimStyle.Render(podMonitorLegend()))
+		footer = append(footer, dimStyle.Render(podMonitorLegend()))
 	}
+	lines = pickerWrapLines(lines, m.width)
+	footer = pickerWrapLines(footer, m.width)
+	// Budget actual physical lines, including only the section headers and
+	// footer content that this view renders. Leave no unused row allowance.
+	budget := m.height - len(lines) - len(footer)
+	if m.height <= 0 {
+		budget = 0
+	}
+	scrollHeight := len(pickerWrapLines([]string{fmt.Sprintf("Rows %d–%d of %d · ↑↓ to scroll", len(rows), len(rows), len(rows))}, m.width))
+	start, end := pickerViewportRange(rows, headers, m.index, budget, scrollHeight, m.height > 0)
+	for index := start; index < end; index++ {
+		if index == start || rows[index].section != rows[index-1].section {
+			lines = append(lines, headers[rows[index].section]...)
+		}
+		lines = append(lines, rows[index].lines...)
+	}
+	if start > 0 || end < len(rows) {
+		lines = append(lines, pickerWrapLines([]string{dimStyle.Render(fmt.Sprintf("Rows %d–%d of %d · ↑↓ to scroll", start+1, end, len(rows)))}, m.width)...)
+	}
+	lines = append(lines, footer...)
 	return strings.Join(lines, "\n")
 }
 
