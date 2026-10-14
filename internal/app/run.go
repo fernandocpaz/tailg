@@ -267,12 +267,24 @@ pickAgain:
 			return 1
 		}
 	}
+	followPods := append([]string(nil), selectedPods...)
+	if len(followPods) == 0 && strings.HasPrefix(resolvedTarget, "pod/") && resolvedTarget != "pod/*" {
+		followPods = []string{strings.TrimPrefix(resolvedTarget, "pod/")}
+	}
+	podFollower := runner.FollowPods(followPods)
 	inventoryProvider := func(callCtx context.Context) ([]core.InventoryItem, error) {
 		var items []core.InventoryItem
 		var inventoryErr error
 		switch {
-		case len(selectedPods) > 0 || len(selectedSelectors) > 0:
-			items, inventoryErr = selectedInventory(callCtx, runner, selectedPods, selectedSelectors)
+		case options.NoFollow && len(followPods) > 0:
+			items, inventoryErr = selectedInventory(callCtx, runner, followPods, selectedSelectors)
+		case len(followPods) > 0 || len(selectedSelectors) > 0:
+			podItems, podErr := podFollower.Inventory(callCtx)
+			selectorItems, selectorErr := runner.InventoryForSelectors(callCtx, selectedSelectors)
+			items = mergeInventory(podItems, selectorItems)
+			if len(items) == 0 {
+				inventoryErr = errors.Join(podErr, selectorErr)
+			}
 		default:
 			items, inventoryErr = runner.Inventory(callCtx, resolvedTarget, selector)
 		}
@@ -301,6 +313,10 @@ pickAgain:
 	options.TracePods = uniqueStrings(tracePods)
 	options.TraceSelectors = uniqueStrings(traceSelectors)
 	traceInventoryProvider := func(traceCtx context.Context) ([]core.InventoryItem, error) {
+		if !traceScopeInherited {
+			// Local searches follow the current live sources after a pod swap.
+			return inventoryProvider(traceCtx)
+		}
 		var scoped []core.InventoryItem
 		var scopeErr error
 		if len(options.TracePods) > 0 || len(options.TraceSelectors) > 0 {
@@ -439,7 +455,7 @@ func pickerSelectionOpensPanes(selection tui.PickerResult, goos string) bool {
 }
 
 // App selections follow selectors across rollouts; exact pod selections keep
-// pod names pinned. Inventory and trace lookup share this same scope.
+// initial pod names. Live inventory follows verified replacements for those pods.
 func pickerSelectionScope(selection tui.PickerResult) (pods, selectors []string, target string) {
 	if len(selection.Pods) > 0 {
 		pods = uniqueStrings(selection.Pods)
@@ -545,6 +561,20 @@ func selectedInventory(ctx context.Context, runner kube.Runner, pods, selectors 
 	return result, errors.Join(podErr, selectorErr)
 }
 
+func mergeInventory(groups ...[]core.InventoryItem) []core.InventoryItem {
+	seen := map[string]bool{}
+	var result []core.InventoryItem
+	for _, items := range groups {
+		for _, item := range items {
+			if !seen[item.Key()] {
+				seen[item.Key()] = true
+				result = append(result, item)
+			}
+		}
+	}
+	return result
+}
+
 func uniqueStrings(values []string) []string {
 	seen := map[string]bool{}
 	result := make([]string, 0, len(values))
@@ -603,49 +633,29 @@ func snapshot(ctx context.Context, runner kube.Runner, items []core.InventoryIte
 	return exit
 }
 func followPlain(ctx context.Context, runner kube.Runner, items []core.InventoryItem, inventory func(context.Context) ([]core.InventoryItem, error), options Options, formatter core.Formatter, stdout, stderr io.Writer) int {
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	events := make(chan core.LogEvent, 1024)
-	active := map[string]context.CancelFunc{}
-	reconcile := func(current []core.InventoryItem) {
-		wanted := map[string]bool{}
-		for _, item := range current {
-			wanted[item.Key()] = true
-			if _, ok := active[item.Key()]; !ok {
-				streamCtx, cancel := context.WithCancel(ctx)
-				active[item.Key()] = cancel
-				go runner.Stream(streamCtx, item, kube.LogOptions{Since: options.Since, Tail: options.Tail, Follow: true}, events)
-			}
+	go core.FollowStreams(streamCtx, core.StreamConfig{
+		Items: items, Inventory: inventory, RefreshInterval: options.RefreshInterval,
+		Stream: func(ctx context.Context, item core.InventoryItem, cursor *core.LogCursor, output chan<- core.LogEvent) error {
+			return runner.Stream(ctx, item, kube.LogOptions{Since: options.Since, Tail: options.Tail, Follow: true, Cursor: cursor}, output)
+		},
+	}, events)
+	for event := range events {
+		if event.Closed && event.Err != nil {
+			fmt.Fprintln(stderr, event.Err)
 		}
-		for key, cancel := range active {
-			if !wanted[key] {
-				cancel()
-				delete(active, key)
-			}
+		if event.Started || event.Closed || event.Replayed {
+			continue
 		}
-	}
-	reconcile(items)
-	ticker := time.NewTicker(options.RefreshInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			for _, cancel := range active {
-				cancel()
-			}
-			return 0
-		case event := <-events:
-			if event.Err != nil && event.Closed {
-				fmt.Fprintln(stderr, event.Err)
-			}
-			for _, line := range formatter.Format(event.Pod, event.Container, event.Message, false) {
-				fmt.Fprintln(stdout, line)
-			}
-		case <-ticker.C:
-			if current, err := inventory(ctx); err == nil {
-				reconcile(current)
-			}
+		for _, line := range formatter.Format(event.Pod, event.Container, event.Message, false) {
+			fmt.Fprintln(stdout, line)
 		}
 	}
+	return 0
 }
+
 func logTitle(items []core.InventoryItem, namespace, kubeContext, target string) string {
 	services := core.ServiceNames(items)
 	serviceKey := "service"

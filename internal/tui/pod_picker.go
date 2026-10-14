@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -18,18 +19,21 @@ type podPickerRow struct {
 }
 
 type podPickerModel struct {
-	rows        []podPickerRow
-	checked     map[string]bool
-	index       int
-	selected    []string
-	kubeContext string
-	namespace   string
+	refreshContext context.Context
+	rows           []podPickerRow
+	checked        map[string]bool
+	index          int
+	selected       []string
+	kubeContext    string
+	namespace      string
 	podMonitorState
 }
 
-// PickPods pins exactly the selected pod names. Esc returns to the app picker.
+// PickPods selects initial pod sources. Live views follow controller replacements.
 func PickPods(apps []core.AppChoice, kubeContext, namespace string) (selected []string, ok bool, err error) {
-	model := podPickerModel{rows: preparePodPickerRows(apps), kubeContext: kubeContext, namespace: namespace}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	model := podPickerModel{refreshContext: ctx, rows: preparePodPickerRows(apps), kubeContext: kubeContext, namespace: namespace}
 	result, err := tea.NewProgram(model).Run()
 	if final, ok := result.(podPickerModel); ok {
 		final.podMonitorState.stop()
@@ -63,9 +67,25 @@ func preparePodPickerRows(apps []core.AppChoice) []podPickerRow {
 	return rows
 }
 
-func (m podPickerModel) Init() tea.Cmd { return nil }
+func (m podPickerModel) Init() tea.Cmd {
+	if m.refreshContext == nil {
+		return nil
+	}
+	return pickerRefreshCmd()
+}
 
 func (m podPickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := message.(type) {
+	case pickerRefreshTick:
+		if m.refreshContext == nil {
+			return m, nil
+		}
+		return m, loadPickerAppsCmd(m.refreshContext, m.kubeContext, m.namespace)
+	case pickerRefreshResult:
+		m.refreshPods(msg)
+		return m, pickerRefreshCmd()
+	}
+
 	if handled, cmd := m.podMonitorState.update(message, m.rows, m.kubeContext, m.namespace); handled {
 		return m, cmd
 	}
