@@ -6,6 +6,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/fernandocpaz/tailg/internal/theme"
 )
 
 type statusVisuals struct {
@@ -29,11 +30,11 @@ var asciiTableBorder = lipgloss.Border{
 }
 
 var (
-	statusGreen = lipgloss.AdaptiveColor{Light: "#006B3C", Dark: "#5AF78E"}
-	statusRed   = lipgloss.AdaptiveColor{Light: "#B00020", Dark: "#FF5F5F"}
-	statusGold  = lipgloss.AdaptiveColor{Light: "#7A5200", Dark: "#FFD75F"}
-	statusAccent = lipgloss.AdaptiveColor{Light: "#7A4E00", Dark: "#FFD166"}
-	statusMuted = lipgloss.AdaptiveColor{Light: "#5F6368", Dark: "#A0A0A0"}
+	statusGreen  lipgloss.TerminalColor = lipgloss.AdaptiveColor{Light: "#006B3C", Dark: "#5AF78E"}
+	statusRed    lipgloss.TerminalColor = lipgloss.AdaptiveColor{Light: "#B00020", Dark: "#FF5F5F"}
+	statusGold   lipgloss.TerminalColor = lipgloss.AdaptiveColor{Light: "#7A5200", Dark: "#FFD75F"}
+	statusAccent lipgloss.TerminalColor = lipgloss.AdaptiveColor{Light: "#7A4E00", Dark: "#FFD166"}
+	statusMuted  lipgloss.TerminalColor = lipgloss.AdaptiveColor{Light: "#5F6368", Dark: "#A0A0A0"}
 )
 
 // formatTable preserves the plain ASCII API used by non-interactive callers.
@@ -131,4 +132,13 @@ func statusMetadata(value string, visuals statusVisuals) string {
 
 func narrowStatusLayout(visuals statusVisuals) bool {
 	return visuals.Decorated && visuals.Width > 0 && visuals.Width < 90
+}
+
+// ApplyPalette is called before status rendering begins.
+func ApplyPalette(p theme.Palette) {
+	statusGreen = theme.Color(p.Positive, p.Background, "2")
+	statusRed = theme.Color(p.Error, p.Background, "1")
+	statusGold = theme.Color(p.Accent, p.Background, "3")
+	statusAccent = statusGold
+	statusMuted = theme.Color(p.Muted, p.Background, "7")
 }

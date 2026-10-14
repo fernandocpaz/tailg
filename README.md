@@ -8,6 +8,31 @@ filtering across Windows Terminal panes, pod resource inspection, heartbeat
 diagnostics, namespace health monitoring, troubleshooting bundles, and bounded
 structured diagnostics for scripts and AI agents.
 
+## Adaptive terminal colors
+
+Tailg detects the terminal's foreground and background at startup and adjusts
+highlighting for readable contrast. Selections, search matches, menu shortcuts,
+errors, warnings, INFO text, status tables, and direct log streaming share the
+same palette. Text targets at least 4.5:1 contrast in truecolor and 256-color
+terminals; INFO remains quieter than bold severity labels.
+
+On macOS/Linux, detection uses bounded OSC 10/11 queries. On Windows, it reads
+the current console attributes and color table, including custom color schemes.
+If detection is unavailable, it uses `COLORFGBG` when supplied, then a dark
+fallback. Detection happens before the terminal UI starts. Restart tailg after
+changing your terminal scheme. Sixteen-color terminals use reverse video for
+highlights because their color slots can be customized.
+
+Override detection when needed (also inherited by child panes):
+
+```sh
+tailg --theme light
+tailg --theme dark
+tailg --theme auto
+tailg example-app apollo --no-live-filter --theme light
+tailg example-app apollo --no-color
+```
+
 ## Requirements
 
 - Go 1.25 or a prebuilt release binary

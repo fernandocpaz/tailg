@@ -40,4 +40,5 @@ type Options struct {
 	LiveFilter         bool
 	FilterFile         string
 	NoColor            bool
+	Theme              string
 }
