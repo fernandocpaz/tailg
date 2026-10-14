@@ -152,17 +152,20 @@ func (s *searchController) stop() {
 }
 
 var (
-	accentColor      = lipgloss.AdaptiveColor{Light: "#7A4E00", Dark: "#FFD166"}
-	positiveColor    = lipgloss.AdaptiveColor{Light: "#176B3A", Dark: "#7EE787"}
-	mutedColor       = lipgloss.AdaptiveColor{Light: "#62666D", Dark: "#A8ADB4"}
-	infoColor        = lipgloss.AdaptiveColor{Light: "#70757D", Dark: "#8B949E"}
-	debugColor       = lipgloss.AdaptiveColor{Light: "#858A91", Dark: "#6E7681"}
-	selectionBG      = lipgloss.AdaptiveColor{Light: "#FFF4D6", Dark: "#302A1F"}
-	selectionFG      = lipgloss.AdaptiveColor{Light: "#2A241A", Dark: "#FFF7E6"}
-	modeBackground   = lipgloss.AdaptiveColor{Light: "#7A4E00", Dark: "#FFD166"}
-	modeForeground   = lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#1B1B1B"}
-	matchBackground  = lipgloss.AdaptiveColor{Light: "#FFE8A3", Dark: "#FFE66D"}
-	matchForeground  = lipgloss.AdaptiveColor{Light: "#1B1B1B", Dark: "#1B1B1B"}
+	accentColor     lipgloss.TerminalColor = lipgloss.AdaptiveColor{Light: "#7A4E00", Dark: "#FFD166"}
+	positiveColor   lipgloss.TerminalColor = lipgloss.AdaptiveColor{Light: "#176B3A", Dark: "#7EE787"}
+	mutedColor      lipgloss.TerminalColor = lipgloss.AdaptiveColor{Light: "#62666D", Dark: "#A8ADB4"}
+	infoColor       lipgloss.TerminalColor = lipgloss.AdaptiveColor{Light: "#70757D", Dark: "#8B949E"}
+	debugColor      lipgloss.TerminalColor = lipgloss.AdaptiveColor{Light: "#858A91", Dark: "#6E7681"}
+	selectionBG     lipgloss.TerminalColor = lipgloss.AdaptiveColor{Light: "#FFF4D6", Dark: "#302A1F"}
+	selectionFG     lipgloss.TerminalColor = lipgloss.AdaptiveColor{Light: "#2A241A", Dark: "#FFF7E6"}
+	modeBackground  lipgloss.TerminalColor = lipgloss.AdaptiveColor{Light: "#7A4E00", Dark: "#FFD166"}
+	modeForeground  lipgloss.TerminalColor = lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#1B1B1B"}
+	matchBackground lipgloss.TerminalColor = lipgloss.AdaptiveColor{Light: "#FFE8A3", Dark: "#FFE66D"}
+	matchForeground lipgloss.TerminalColor = lipgloss.AdaptiveColor{Light: "#1B1B1B", Dark: "#1B1B1B"}
+)
+
+var (
 	headerStyle      = lipgloss.NewStyle().Bold(true).Foreground(accentColor)
 	selectedStyle    = lipgloss.NewStyle().Foreground(selectionFG).Background(selectionBG)
 	matchStyle       = lipgloss.NewStyle().Bold(true).Foreground(matchForeground).Background(matchBackground)
@@ -1200,7 +1203,7 @@ func renderLogColumns(columns logColumns, value, query string, selected bool, wi
 	}
 	messageWidth := max(1, width-lipgloss.Width(prefix))
 	message := truncatePlain(columns.message, messageWidth)
-	errorLine := strings.Contains(value, "\x1b[31m") && columns.level == ""
+	errorLine := (strings.Contains(value, "\x1b[31m") || (adaptiveErrorCode != "" && strings.Contains(value, adaptiveErrorCode))) && columns.level == ""
 	if errorLine {
 		lineStyle, hasLineStyle = errorLineStyle, true
 	}

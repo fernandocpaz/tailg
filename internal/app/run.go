@@ -13,15 +13,21 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	xterm "github.com/charmbracelet/x/term"
 	"github.com/fernandocpaz/tailg/internal/bundle"
 	"github.com/fernandocpaz/tailg/internal/core"
 	"github.com/fernandocpaz/tailg/internal/kube"
 	"github.com/fernandocpaz/tailg/internal/platform"
+	"github.com/fernandocpaz/tailg/internal/theme"
 	"github.com/fernandocpaz/tailg/internal/tui"
 )
 
 func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr io.Writer) int {
+	if err := theme.Validate(options.Theme); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
 	if options.BufferLines <= 0 {
 		fmt.Fprintln(stderr, "--buffer-lines must be greater than zero")
 		return 2
@@ -72,6 +78,13 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 	if _, err := exec.LookPath("kubectl"); err != nil {
 		fmt.Fprintln(stderr, "kubectl was not found in PATH.")
 		return 1
+	}
+	if !options.NoColor {
+		if palette, ok := theme.Detect(options.Theme, stdin, stdout); ok {
+			formatter.ColorCodes = palette.LogColors(lipgloss.ColorProfile())
+			tui.ApplyPalette(palette)
+			kube.ApplyPalette(palette)
+		}
 	}
 	runner := kube.NewRunner(options.Namespace, options.Context)
 	if options.Versions {
@@ -744,6 +757,9 @@ func childArgs(options Options, namespace string) func(string) []string {
 		}
 		for _, value := range options.TraceSelectors {
 			args = append(args, "--trace-selector", value)
+		}
+		if options.Theme != "" && options.Theme != "auto" {
+			args = append(args, "--theme", options.Theme)
 		}
 		if options.NoColor {
 			args = append(args, "--no-color")

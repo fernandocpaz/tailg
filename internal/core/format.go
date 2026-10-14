@@ -20,7 +20,9 @@ type Formatter struct {
 	Exclude []*regexp.Regexp
 	ShowPod bool
 	Color   bool
-	Detail  bool
+	// ColorCodes optionally supplies terminal-aware semantic ANSI sequences.
+	ColorCodes map[string]string
+	Detail     bool
 }
 
 func CompilePatterns(values []string) ([]*regexp.Regexp, error) {
@@ -106,7 +108,11 @@ func (f Formatter) colorize(text, name string) string {
 	if !f.Color || name == "" {
 		return text
 	}
-	if code := colors[name]; code != "" {
+	palette := f.ColorCodes
+	if palette == nil {
+		palette = colors
+	}
+	if code := palette[name]; code != "" {
 		return code + text + ansiReset
 	}
 	return text
