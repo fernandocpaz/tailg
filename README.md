@@ -145,6 +145,41 @@ show an inventory warning while the existing applications stay available.
 Failed or timed-out creates are not retried automatically: check the displayed
 Job name before trying again to avoid duplicate execution.
 
+Press **H — Changes** or **E — Events** in the main application picker to
+open a namespace-wide activity modal. Both views preserve the highlighted and
+checked applications. Collection starts when the picker opens, refreshes every
+15 seconds after the preceding scan finishes, and stops when you leave it.
+It includes all workloads in the namespace, beyond the newest-20 application
+list. Requests use the selected context and namespace explicitly.
+
+**Recent changes** shows the last 24 hours of retained creation, ReplicaSet
+rollout revision, container restart, and Job completion/failure timestamps.
+While the picker remains open it also observes image changes, scaling, restart
+requests, CronJob schedule/suspension changes, recreation, and removal. Exact
+Kubernetes timestamps and tailg observation times are identified separately in
+the details. Earlier image/configuration values cannot be reconstructed before
+the first successful scan. The newest 1,000 changes are retained in this picker
+session. With `M` monitoring enabled, the timeline also adds timestamped log
+error-count markers for the displayed applications; those markers do not cover
+unmonitored workloads or establish causation.
+
+**Kubernetes events** shows Normal and Warning events, newest first, with reason,
+affected object, occurrence count, first/last occurrence, source, and the complete
+message. It retains the newest 500 entries returned by the cluster and displays
+the total. Event history is limited by Kubernetes retention.
+
+Use `Up`/`Down`, `PageUp`/`PageDown`, or `Home`/`End` to navigate; `Enter` opens
+full, wrapped details. `/` filters by object, reason, or message (`Enter` applies,
+`Ctrl+U` clears); `W` toggles warnings in Events; `R` refreshes immediately;
+`H`/`E` switches views. `Esc` returns from details to the list, then to the
+namespace picker. The modals resize with the terminal.
+
+Activity discovery uses read-only list requests for deployments, StatefulSets,
+DaemonSets, ReplicaSets, pods, CronJobs, Jobs, and events, with at most four
+requests in flight. Permission failures and collection errors show as incomplete
+sources, with full errors available in Details. Successful sources remain usable;
+failed lists retain their previous data and never count as resource deletions.
+
 Press `M` in this main application list to toggle log monitoring (off by
 default). It scans all containers in every pod belonging to the displayed
 applications immediately, then polls the previous minute of logs every 60
