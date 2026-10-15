@@ -200,7 +200,9 @@ warnings, red for errors, and flashing red for at least five errors per minute
 across the application. Warning trends compare consecutive scans. The cursor
 and selection checkbox remain visible alongside these colors. Monitoring also
 works in the `P` exact-pod picker, where each pod has its own color. Press `M`
-again to stop; leaving either picker cancels its active scan. Scans use at most
+again to stop. The main list and exact-pod modal share monitoring; canceling a
+selection modal keeps it running. Opening logs, quitting, or changing scope
+cancels its active scan. Scans use at most
 four concurrent workers with a 20-second timeout.
 
 Press `C` in the picker to choose another
@@ -208,6 +210,14 @@ kubeconfig context, or `N` to choose a namespace in that context. The namespace
 picker also accepts a typed name with `/` when listing namespaces is blocked by
 cluster permissions. These switches last for this tailg session and do not
 change the context or namespace used by other terminals.
+Context, namespace, and exact-pod selection open as centered modals over the
+dimmed application list in the same full-screen session. `Esc` closes a modal
+without losing the main list's highlighted row, marked applications, or monitor
+state (in **More**, the first `Esc` returns to frequent choices; while typing a
+namespace, it first returns to the list). Loading and failure messages stay in
+the modal; a scope change updates the application list in place. `R` refreshes
+inventory in place and keeps surviving selections. Late replies from a canceled
+selection or a previous context/namespace are ignored.
 The current selection stays at the top of each picker, followed by the most
 used choices (five rows total). Select **More** to browse less used choices. tailg remembers
 usage locally when you open an application, and tracks namespaces separately

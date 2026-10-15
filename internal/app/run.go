@@ -185,70 +185,21 @@ pickAgain:
 	if !namespaceMode {
 		if pickerMode {
 			apps, appsErr := runner.Apps(ctx)
-			selection, selectErr := tui.PickApp(apps, effectiveContext, effectiveNamespace, appsErr, markedApps, pickerNotice)
+			selection, selectErr := tui.PickApp(apps, effectiveContext, effectiveNamespace, appsErr, markedApps, tui.PickerUsage{Contexts: usage.Contexts, Namespaces: usage.Namespaces}, pickerNotice)
 			pickerNotice = ""
 			if selectErr != nil {
 				fmt.Fprintln(stderr, selectErr)
 				return 1
 			}
+			effectiveContext, effectiveNamespace = selection.KubeContext, selection.Namespace
+			runner = kube.NewRunner(effectiveNamespace, effectiveContext)
+			options.Context = effectiveContext
 			switch selection.Action {
 			case tui.PickerQuit:
 				return 0
-			case tui.PickerRefresh:
-				goto pickAgain
 			case tui.PickerRunCronJob:
 				markedApps = selection.Marked
 				pickerNotice = runPickerCronJob(ctx, runner, effectiveContext, effectiveNamespace, selection.App)
-				goto pickAgain
-			case tui.PickerSelectPods:
-				pods, ok, pickErr := tui.PickPods(apps, effectiveContext, effectiveNamespace)
-				if pickErr != nil {
-					fmt.Fprintln(stderr, pickErr)
-					return 1
-				}
-				if !ok {
-					goto pickAgain
-				}
-				selection = tui.PickerResult{Action: tui.PickerOpenApp, Pods: pods}
-			case tui.PickerSwitchNamespace:
-				namespaces, listErr := runner.Namespaces(ctx)
-				selectedNamespace, ok, pickErr := tui.PickNamespace(namespaces, effectiveNamespace, listErr, usage.Namespaces[effectiveContext])
-				if pickErr != nil {
-					fmt.Fprintln(stderr, pickErr)
-					return 1
-				}
-				if ok && selectedNamespace != effectiveNamespace {
-					effectiveNamespace = selectedNamespace
-					runner.Namespace = selectedNamespace
-					markedApps = nil
-				}
-				goto pickAgain
-			case tui.PickerSwitchContext:
-				contexts, contextsErr := runner.Contexts(ctx)
-				if contextsErr != nil {
-					fmt.Fprintln(stderr, contextsErr)
-					return 1
-				}
-				selectedContext, ok, pickErr := tui.PickContext(contexts, effectiveContext, usage.Contexts)
-				if pickErr != nil {
-					fmt.Fprintln(stderr, pickErr)
-					return 1
-				}
-				if !ok || selectedContext == effectiveContext {
-					goto pickAgain
-				}
-				candidate := kube.NewRunner("", selectedContext)
-				_, newNamespace, contextErr := candidate.CurrentContext(ctx)
-				if contextErr != nil {
-					fmt.Fprintln(stderr, contextErr)
-					goto pickAgain
-				}
-				effectiveContext = selectedContext
-				effectiveNamespace = newNamespace
-				candidate.Namespace = newNamespace
-				runner = candidate
-				options.Context = selectedContext
-				markedApps = nil
 				goto pickAgain
 			}
 			markedApps = selection.Marked

@@ -18,6 +18,12 @@ const maxPickerApps = 20
 type pickerModel struct {
 	refreshContext    context.Context
 	apps              []core.AppChoice
+	allApps           []core.AppChoice
+	selection         *pickerSelectionModal
+	selectionRequest  int
+	usage             PickerUsage
+	inventoryRequest  int
+	inventoryBusy     bool
 	totalApps         int
 	index             int
 	checked           map[string]bool
@@ -43,26 +49,31 @@ type PickerAction int
 const (
 	PickerQuit PickerAction = iota
 	PickerOpenApp
-	PickerSwitchContext
-	PickerSwitchNamespace
-	PickerRefresh
-	PickerSelectPods
 	PickerRunCronJob
 )
 
 type PickerResult struct {
-	Action PickerAction
-	App    core.AppChoice
-	Apps   []core.AppChoice
-	Pods   []string
-	Marked []string
+	Action      PickerAction
+	App         core.AppChoice
+	Apps        []core.AppChoice
+	Pods        []string
+	Marked      []string
+	KubeContext string
+	Namespace   string
 }
 
-func PickApp(apps []core.AppChoice, kubeContext, namespace string, loadErr error, previous []string, notice ...string) (PickerResult, error) {
+type PickerUsage struct {
+	Contexts   map[string]ChoiceUsage
+	Namespaces map[string]map[string]ChoiceUsage
+}
+
+func PickApp(apps []core.AppChoice, kubeContext, namespace string, loadErr error, previous []string, usage PickerUsage, notice ...string) (PickerResult, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	prepared, total := preparePickerApps(apps)
 	model := newPickerModel(prepared, total, kubeContext, namespace, previous)
+	model.allApps = apps
+	model.usage = usage
 	model.refreshContext = ctx
 	model.activity.busy = true
 	model.activity.request = 1
@@ -75,15 +86,18 @@ func PickApp(apps []core.AppChoice, kubeContext, namespace string, loadErr error
 	result, err := tea.NewProgram(model, tea.WithAltScreen()).Run()
 	if final, ok := result.(pickerModel); ok {
 		final.podMonitorState.stop()
+		final.closePickerSelection()
 	}
 	if err != nil {
 		return PickerResult{}, err
 	}
-	return result.(pickerModel).result, nil
+	final := result.(pickerModel)
+	final.result.KubeContext, final.result.Namespace = final.kubeContext, final.namespace
+	return final.result, nil
 }
 
 func newPickerModel(apps []core.AppChoice, total int, kubeContext, namespace string, previous []string) pickerModel {
-	model := pickerModel{apps: apps, totalApps: total, kubeContext: kubeContext, namespace: namespace}
+	model := pickerModel{apps: apps, allApps: apps, totalApps: total, kubeContext: kubeContext, namespace: namespace}
 	previousSet := make(map[string]bool, len(previous))
 	for _, name := range previous {
 		previousSet[name] = true
@@ -102,27 +116,37 @@ func (m pickerModel) Init() tea.Cmd {
 	if m.refreshContext == nil {
 		return nil
 	}
-	return tea.Batch(pickerRefreshCmd(), loadNamespaceActivity(m.refreshContext, m.kubeContext, m.namespace, m.activity.request))
+	return tea.Batch(m.pickerRefreshAfter(), loadNamespaceActivity(m.refreshContext, m.kubeContext, m.namespace, m.activity.request))
 }
 func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	if handled, cmd := m.updatePickerSelectionMessage(message); handled {
+		return m, cmd
+	}
 	if handled, cmd := m.updateNamespaceActivity(message); handled {
 		return m, cmd
 	}
 	switch msg := message.(type) {
 	case pickerRefreshTick:
-		if m.refreshContext == nil {
+		if m.refreshContext == nil || msg.scope != activityScope(m.kubeContext, m.namespace) || msg.request != m.inventoryRequest {
 			return m, nil
 		}
 		// Keep the confirmation tied to the workload shown when it was opened.
 		if m.confirmRun != nil {
-			return m, pickerRefreshCmd()
+			return m, m.pickerRefreshAfter()
 		}
-		return m, loadPickerAppsCmd(m.refreshContext, m.kubeContext, m.namespace)
+		return m, m.refreshPickerInventory()
 	case pickerRefreshResult:
+		if msg.scope != activityScope(m.kubeContext, m.namespace) || msg.request != m.inventoryRequest || !m.inventoryBusy {
+			return m, nil
+		}
+		m.inventoryBusy = false
 		if m.confirmRun == nil {
 			m.refreshApps(msg)
+			if m.selection != nil && m.selection.pods != nil {
+				m.selection.pods.refreshPods(msg)
+			}
 		}
-		return m, pickerRefreshCmd()
+		return m, m.pickerRefreshAfter()
 	}
 
 	// Aggregate before updating previous pod samples so warning trends compare
@@ -140,12 +164,13 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
-	if handled, cmd := m.podMonitorState.update(message, preparePodPickerRows(m.apps), m.kubeContext, m.namespace); handled {
+	if handled, cmd := m.podMonitorState.update(message, m.pickerMonitorRows(), m.kubeContext, m.namespace); handled {
 		return m, cmd
 	}
 	if size, ok := message.(tea.WindowSizeMsg); ok {
 		m.width = size.Width
 		m.height = size.Height
+		m.resizePickerSelectionInput()
 		if m.confirmRun != nil && size.Width >= minCronJobModalWidth && size.Height >= minCronJobModalHeight {
 			_, maxScroll := m.cronJobModalLayout(size.Width, size.Height)
 			m.confirmRunScroll = min(m.confirmRunScroll, maxScroll)
@@ -153,6 +178,9 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if key, ok := message.(tea.KeyMsg); ok {
+		if m.selection != nil {
+			return m.updatePickerSelectionKey(key)
+		}
 		if m.confirmRun != nil {
 			return m.updateCronJobModal(key)
 		}
@@ -178,17 +206,11 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.result.Action = PickerQuit
 			return m, tea.Quit
 		case keyMatches(key, pickerKeys.context):
-			m.podMonitorState.stop()
-			m.result.Action = PickerSwitchContext
-			return m, tea.Quit
+			return m, m.openPickerSelection("context")
 		case keyMatches(key, pickerKeys.namespace):
-			m.podMonitorState.stop()
-			m.result.Action = PickerSwitchNamespace
-			return m, tea.Quit
+			return m, m.openPickerSelection("namespace")
 		case keyMatches(key, pickerKeys.refresh):
-			m.podMonitorState.stop()
-			m.result.Action = PickerRefresh
-			return m, tea.Quit
+			return m, m.refreshPickerInventory()
 		case keyMatches(key, pickerKeys.run):
 			if len(m.apps) > 0 && m.apps[m.index].CronJob != nil {
 				app := m.apps[m.index]
@@ -204,9 +226,7 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.note = "Uncheck applications before choosing exact pods."
 				return m, nil
 			}
-			m.podMonitorState.stop()
-			m.result.Action = PickerSelectPods
-			return m, tea.Quit
+			return m, m.openPickerSelection("pods")
 		case keyMatches(key, pickerKeys.monitor):
 			m.monitorApps = nil
 			return m, m.podMonitorState.toggle(preparePodPickerRows(m.apps), m.kubeContext, m.namespace)
@@ -292,6 +312,10 @@ const pickerAppWidth = 36
 
 func (m pickerModel) View() string {
 	background := m.pickerView()
+	if m.selection != nil {
+		width, height := m.modalViewport()
+		return overlayModal(background, m.pickerSelectionView(), width, height)
+	}
 	if m.helpVisible {
 		width, height := m.modalViewport()
 		dialog, _ := m.pickerHelpModal()

@@ -122,7 +122,7 @@ func TestAppMonitorStopsAndRejectsOldMessages(t *testing.T) {
 }
 
 func TestAppMonitorCancelsOnEveryPickerExit(t *testing.T) {
-	for _, key := range []tea.KeyMsg{monitorKey('q'), monitorKey('c'), monitorKey('n'), monitorKey('r'), monitorKey('p'), {Type: tea.KeyEnter}, {Type: tea.KeyEsc}, {Type: tea.KeyCtrlC}} {
+	for _, key := range []tea.KeyMsg{monitorKey('q'), {Type: tea.KeyEnter}, {Type: tea.KeyEsc}, {Type: tea.KeyCtrlC}} {
 		t.Run(key.String(), func(t *testing.T) {
 			m, _ := enableAppMonitor(t, pickerModel{apps: []core.AppChoice{{Name: "api", Pods: []string{"one"}}}})
 			ctx := m.monitorContext

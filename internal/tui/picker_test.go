@@ -37,8 +37,8 @@ func TestAppPickerSwitchesContextEvenWithoutApplications(t *testing.T) {
 	m := pickerModel{kubeContext: "tkgs-dev", namespace: "apollo"}
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	picker := updated.(pickerModel)
-	if picker.result.Action != PickerSwitchContext {
-		t.Fatalf("action = %v, want switch context", picker.result.Action)
+	if picker.selection == nil || picker.selection.kind != "context" {
+		t.Fatal("context modal did not open")
 	}
 	if !strings.Contains(picker.View(), "tkgs-dev") || !strings.Contains(picker.View(), "apollo") {
 		t.Fatalf("missing context or namespace: %q", picker.View())
@@ -48,8 +48,8 @@ func TestAppPickerSwitchesContextEvenWithoutApplications(t *testing.T) {
 func TestAppPickerSwitchesNamespaceEvenWithoutApplications(t *testing.T) {
 	m := pickerModel{kubeContext: "tkgs-dev", namespace: "apollo"}
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	if got := updated.(pickerModel).result.Action; got != PickerSwitchNamespace {
-		t.Fatalf("action = %v, want switch namespace", got)
+	if got := updated.(pickerModel); got.selection == nil || got.selection.kind != "namespace" {
+		t.Fatal("namespace modal did not open")
 	}
 }
 
@@ -60,13 +60,11 @@ func TestAppPickerCanRecoverFromExpiredCredentials(t *testing.T) {
 	if !strings.Contains(view, "You must be logged in") || strings.Contains(view, "memcache.go") {
 		t.Fatalf("picker should show the actionable error: %q", view)
 	}
-	for _, key := range []struct {
-		rune   rune
-		action PickerAction
-	}{{'c', PickerSwitchContext}, {'r', PickerRefresh}} {
-		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key.rune}})
-		if got := updated.(pickerModel).result.Action; got != key.action {
-			t.Fatalf("%c action = %v, want %v", key.rune, got, key.action)
+	for _, key := range []rune{'c', 'r'} {
+		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		got := updated.(pickerModel)
+		if cmd == nil || (key == 'c' && got.selection == nil) || (key == 'r' && !got.inventoryBusy) {
+			t.Fatalf("%c recovery did not start", key)
 		}
 	}
 }
@@ -105,13 +103,13 @@ func TestAppPickerEntersPodModeOnlyWithoutCheckedApps(t *testing.T) {
 	m := pickerModel{apps: []core.AppChoice{{Name: "api"}}}
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
 	updated, _ = updated.(pickerModel).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
-	if got := updated.(pickerModel); got.result.Action == PickerSelectPods || got.note == "" {
+	if got := updated.(pickerModel); got.selection != nil || got.note == "" {
 		t.Fatalf("checked apps should be retained: %+v", got)
 	}
 	updated, _ = updated.(pickerModel).Update(tea.KeyMsg{Type: tea.KeySpace})
 	updated, _ = updated.(pickerModel).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
-	if got := updated.(pickerModel).result.Action; got != PickerSelectPods {
-		t.Fatalf("pod action = %v", got)
+	if got := updated.(pickerModel); got.selection == nil || got.selection.pods == nil {
+		t.Fatal("exact-pod modal did not open")
 	}
 }
 
