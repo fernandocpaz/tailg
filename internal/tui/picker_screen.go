@@ -176,7 +176,7 @@ func (m pickerModel) pickerScreenFooter(width int) []string {
 }
 
 func pickerLimitedLines(text string, width, limit int) []string {
-	lines := pickerWrapLines([]string{text}, width)
+	lines := strings.Split(ansi.Wrap(text, width, ""), "\n")
 	if len(lines) > limit {
 		lines = lines[:limit]
 		lines[limit-1] = ansi.Truncate(lines[limit-1], width-1, "") + "…"
