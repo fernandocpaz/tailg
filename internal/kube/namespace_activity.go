@@ -207,7 +207,13 @@ func namespaceEvent(item map[string]any) core.NamespaceEvent {
 		event.Message = stringValue(item["note"])
 	}
 	if event.Source == "" {
+		event.Source = stringValue(item["reportingComponent"])
+	}
+	if event.Source == "" {
 		event.Source = stringValue(mapValue(item["source"])["component"])
+	}
+	if event.Source == "" {
+		event.Source = stringValue(mapValue(item["deprecatedSource"])["component"])
 	}
 	event.FirstAt = firstActivityTime(item["firstTimestamp"], item["deprecatedFirstTimestamp"], item["eventTime"], meta["creationTimestamp"])
 	event.LastAt = firstActivityTime(series["lastObservedTime"], item["lastTimestamp"], item["deprecatedLastTimestamp"], item["eventTime"], meta["creationTimestamp"])

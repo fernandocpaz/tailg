@@ -13,11 +13,11 @@ import (
 
 func TestNamespaceEventTimestampsAndSeriesAcrossAPIs(t *testing.T) {
 	for _, item := range []map[string]any{
-		{"metadata": map[string]any{"uid": "e", "creationTimestamp": "2026-10-15T12:00:00Z"}, "involvedObject": map[string]any{"kind": "Pod", "name": "api"}, "type": "Warning", "reason": "BackOff", "message": "retry", "count": float64(3), "eventTime": "2026-10-15T12:01:00Z", "lastTimestamp": "2026-10-15T12:02:00Z", "series": map[string]any{"count": float64(8), "lastObservedTime": "2026-10-15T12:03:00Z"}},
-		{"metadata": map[string]any{"uid": "e", "creationTimestamp": "2026-10-15T12:00:00Z"}, "regarding": map[string]any{"kind": "Pod", "name": "api"}, "type": "Warning", "reason": "BackOff", "note": "retry", "deprecatedCount": float64(3), "eventTime": "2026-10-15T12:01:00Z", "deprecatedLastTimestamp": "2026-10-15T12:02:00Z", "series": map[string]any{"count": float64(8), "lastObservedTime": "2026-10-15T12:03:00Z"}},
+		{"metadata": map[string]any{"uid": "e", "creationTimestamp": "2026-10-15T12:00:00Z"}, "involvedObject": map[string]any{"kind": "Pod", "name": "api"}, "type": "Warning", "reason": "BackOff", "reportingComponent": "kubelet", "message": "retry", "count": float64(3), "eventTime": "2026-10-15T12:01:00Z", "lastTimestamp": "2026-10-15T12:02:00Z", "series": map[string]any{"count": float64(8), "lastObservedTime": "2026-10-15T12:03:00Z"}},
+		{"metadata": map[string]any{"uid": "e", "creationTimestamp": "2026-10-15T12:00:00Z"}, "regarding": map[string]any{"kind": "Pod", "name": "api"}, "type": "Warning", "reason": "BackOff", "reportingController": "kubelet", "note": "retry", "deprecatedCount": float64(3), "eventTime": "2026-10-15T12:01:00Z", "deprecatedLastTimestamp": "2026-10-15T12:02:00Z", "series": map[string]any{"count": float64(8), "lastObservedTime": "2026-10-15T12:03:00Z"}},
 	} {
 		event := namespaceEvent(item)
-		if event.ID != "e" || event.Message != "retry" || event.Object != "Pod/api" || event.Count != 8 || event.LastAt.Format(time.RFC3339) != "2026-10-15T12:03:00Z" {
+		if event.ID != "e" || event.Source != "kubelet" || event.Message != "retry" || event.Object != "Pod/api" || event.Count != 8 || event.LastAt.Format(time.RFC3339) != "2026-10-15T12:03:00Z" {
 			t.Fatalf("wrong event: %+v", event)
 		}
 	}
