@@ -135,6 +135,9 @@ func (m pickerModel) pickerScreenFooter(width int) []string {
 	var footer []string
 	if m.index >= 0 && m.index < len(m.apps) {
 		app := m.apps[m.index]
+		if m.monitorEnabled && m.monitorApps[app.Name].reason != "" {
+			footer = append(footer, pickerLimitedLines(m.monitorApps[app.Name].reason, width, 2)...)
+		}
 		values := pickerRowValues(app, time.Now())
 		detail := values["name"] + " · Image: " + values["image"] + " · Restarts: " + values["restarts"] + " · Started: " + values["started"] + " · Deployed: " + values["deployed"]
 		if app.CronJob != nil {

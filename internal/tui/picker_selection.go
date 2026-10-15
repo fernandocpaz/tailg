@@ -275,6 +275,7 @@ func (m pickerModel) pickerSelectionView() string {
 	var rows []string
 	index, count := 0, 0
 	selected := ""
+	healthReason := ""
 	controls := "↑↓ Move · Enter Choose · Esc Back · R Retry"
 	if state.loading {
 		rows = []string{truncatePickerCell("Loading… "+state.target, inner)}
@@ -339,12 +340,19 @@ func (m pickerModel) pickerSelectionView() string {
 		if count > 0 {
 			row := child.rows[index]
 			selected = row.app + " / " + row.pod.Name + " · " + valueOrDash(row.pod.Ready) + " · " + valueOrDash(row.pod.Phase)
+			if m.monitorEnabled {
+				healthReason = m.monitorHealth[row.pod.Name].reason
+			}
 		}
 	}
 	if state.err != "" {
 		header = append(header, pickerLimitedLines(state.err, inner, 2)...)
 	}
-	footer := pickerLimitedLines(selected, inner, 1)
+	var footer []string
+	if healthReason != "" {
+		footer = append(footer, pickerLimitedLines(healthReason, inner, 2)...)
+	}
+	footer = append(footer, pickerLimitedLines(selected, inner, 1)...)
 	footer = append(footer, strings.Split(ansi.Wrap(controls, inner, ""), "\n")...)
 	// Reserve the border, headings and controls, then scroll around the cursor.
 	capacity := max(1, height-4-len(header)-len(footer))
