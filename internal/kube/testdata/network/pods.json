@@ -1,0 +1,38 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "metadata": {
+        "name": "api-abc",
+        "namespace": "apollo",
+        "uid": "pod-1",
+        "labels": {
+          "app": "api"
+        }
+      },
+      "status": {
+        "podIP": "10.42.0.5",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ]
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "api",
+            "ports": [
+              {
+                "name": "http",
+                "containerPort": 8080
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

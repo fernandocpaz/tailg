@@ -1,0 +1,53 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "metadata": {
+        "name": "web",
+        "namespace": "apollo"
+      },
+      "spec": {
+        "ingressClassName": "contour",
+        "tls": [
+          {
+            "hosts": [
+              "api.test"
+            ],
+            "secretName": "web-tls"
+          }
+        ],
+        "rules": [
+          {
+            "host": "api.test",
+            "http": {
+              "paths": [
+                {
+                  "path": "/api",
+                  "pathType": "Prefix",
+                  "backend": {
+                    "service": {
+                      "name": "api",
+                      "port": {
+                        "name": "http"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "status": {
+        "loadBalancer": {
+          "ingress": [
+            {
+              "ip": "192.0.2.10"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

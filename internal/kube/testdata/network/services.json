@@ -1,0 +1,30 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "metadata": {
+        "name": "api",
+        "namespace": "apollo"
+      },
+      "spec": {
+        "selector": {
+          "app": "api"
+        },
+        "ports": [
+          {
+            "name": "http",
+            "port": 80,
+            "targetPort": "http"
+          },
+          {
+            "name": "admin",
+            "port": 9000,
+            "targetPort": 9000
+          }
+        ],
+        "clusterIP": "10.96.0.10"
+      }
+    }
+  ]
+}

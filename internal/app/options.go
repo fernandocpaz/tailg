@@ -10,6 +10,7 @@ type Options struct {
 	VersionContexts []string
 	Status          bool
 	Versions        bool
+	Network         bool
 	StatusLookback  time.Duration
 	StatusInterval  time.Duration
 	StatusTimeout   time.Duration

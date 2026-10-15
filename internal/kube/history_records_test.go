@@ -15,6 +15,7 @@ const historyTraceID = "0123456789abcdef0123456789abcdef"
 
 // Re-execute this test binary as kubectl, avoiding POSIX shell fixtures on Windows.
 func TestMain(m *testing.M) {
+	networkFixtureHelper()
 	if os.Getenv("TAILG_HISTORY_HELPER") == "1" {
 		args := strings.Join(os.Args[1:], " ")
 		emit := func(timestamp, message, trace string) {

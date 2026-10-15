@@ -1,0 +1,70 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "metadata": {
+        "name": "api-v4",
+        "namespace": "apollo",
+        "labels": {
+          "kubernetes.io/service-name": "api"
+        }
+      },
+      "ports": [
+        {
+          "name": "http",
+          "port": 8080,
+          "protocol": "TCP"
+        }
+      ],
+      "endpoints": [
+        {
+          "addresses": [
+            "10.42.0.5"
+          ],
+          "conditions": {
+            "ready": true
+          },
+          "targetRef": {
+            "kind": "Pod",
+            "name": "api-abc",
+            "namespace": "apollo",
+            "uid": "pod-1"
+          }
+        }
+      ]
+    },
+    {
+      "metadata": {
+        "name": "api-v6",
+        "namespace": "apollo",
+        "labels": {
+          "kubernetes.io/service-name": "api"
+        }
+      },
+      "ports": [
+        {
+          "name": "http",
+          "port": 8080,
+          "protocol": "TCP"
+        }
+      ],
+      "endpoints": [
+        {
+          "addresses": [
+            "2001:db8::5"
+          ],
+          "conditions": {
+            "ready": true
+          },
+          "targetRef": {
+            "kind": "Pod",
+            "name": "api-abc",
+            "namespace": "apollo",
+            "uid": "pod-1"
+          }
+        }
+      ]
+    }
+  ]
+}
