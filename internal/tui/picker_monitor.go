@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -16,6 +17,7 @@ type podMonitorState struct {
 	monitorGeneration int
 	monitorHealth     map[string]podHealthDisplay
 	monitorPrevious   map[string]podHealthSample
+	monitorActivity   map[string]podLogActivity
 	monitorLastScan   time.Time
 	monitorFlashOn    bool
 	monitorError      string
@@ -47,6 +49,7 @@ func (m *podMonitorState) toggle(rows []podPickerRow, kubeContext, namespace str
 	m.monitorLastScan = time.Time{}
 	m.monitorHealth = nil
 	m.monitorPrevious = nil
+	m.monitorActivity = nil
 	m.monitorContext, m.monitorCancel = context.WithCancel(context.Background())
 	return tea.Batch(
 		scanPodHealthCmd(m.monitorContext, rows, kubeContext, namespace, m.monitorGeneration),
@@ -62,9 +65,35 @@ func (m *podMonitorState) update(message tea.Msg, rows []podPickerRow, kubeConte
 			return true, nil
 		}
 		m.monitorHealth = make(map[string]podHealthDisplay, len(msg.samples))
+		if m.monitorActivity == nil {
+			m.monitorActivity = make(map[string]podLogActivity)
+		}
+		now := msg.scannedAt
+		if now.IsZero() {
+			now = time.Now()
+		}
+		live := make(map[string]time.Time, len(rows))
+		for _, row := range rows {
+			live[row.pod.Name] = row.pod.StartedAt
+		}
+		for pod := range m.monitorActivity {
+			if _, ok := live[pod]; !ok {
+				delete(m.monitorActivity, pod)
+			}
+		}
 		failures := 0
+		unknown := 0
 		for pod, sample := range msg.samples {
-			m.monitorHealth[pod] = classifyPodHealth(sample, m.monitorPrevious[pod])
+			startedAt, ok := live[pod]
+			if !ok {
+				continue
+			}
+			activity := m.monitorActivity[pod]
+			m.monitorHealth[pod] = activity.observe(sample, m.monitorPrevious[pod], now, startedAt)
+			m.monitorActivity[pod] = activity
+			if m.monitorHealth[pod].kind == podHealthUnknown {
+				unknown++
+			}
 			if sample.err != nil {
 				failures++
 			}
@@ -72,10 +101,14 @@ func (m *podMonitorState) update(message tea.Msg, rows []podPickerRow, kubeConte
 		m.monitorPrevious = msg.samples
 		m.monitorBusy = false
 		m.monitorLastScan = msg.scannedAt
-		m.monitorError = ""
+		var notices []string
 		if failures > 0 {
-			m.monitorError = fmt.Sprintf("%d pod scans failed", failures)
+			notices = append(notices, fmt.Sprintf("%d pod scans failed", failures))
 		}
+		if unknown > 0 {
+			notices = append(notices, fmt.Sprintf("%d unknown / possibly unhealthy", unknown))
+		}
+		m.monitorError = strings.Join(notices, " · ")
 		return true, nil
 	case podMonitorPollMsg:
 		if !m.monitorEnabled || msg.generation != m.monitorGeneration {

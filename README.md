@@ -199,6 +199,17 @@ clean activity, gray for little activity or incomplete clean scans, orange for
 warnings, red for errors, and flashing red for at least five errors per minute
 across the application. Warning trends compare consecutive scans. The cursor
 and selection checkbox remain visible alongside these colors. Monitoring also
+remembers each pod's most recent log entry. If that entry is an error/fatal
+and no later entry arrives, the pod stays red during a three-minute waiting
+period, then changes to **? Unknown / possibly unhealthy** (underlined amber).
+The selected row explains the silence; a busy replica cannot hide a silent
+replica's state. Later non-error log activity clears that pending state and
+normal classification resumes; this indicates resumed logging, not proof of
+recovery. Exception stack frames do not count as a new log entry. Failed log
+reads preserve the last observation and remain visible as scan failures.
+This history resets when monitoring is restarted, the scope changes, or the
+pod is replaced; ordinarily quiet pods with no preceding error stay gray.
+Monitoring also
 works in the `P` exact-pod picker, where each pod has its own color. Press `M`
 again to stop. The main list and exact-pod modal share monitoring; canceling a
 selection modal keeps it running. Opening logs, quitting, or changing scope

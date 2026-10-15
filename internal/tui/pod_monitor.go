@@ -8,18 +8,20 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/fernandocpaz/tailg/internal/core"
 	"github.com/fernandocpaz/tailg/internal/kube"
 )
 
 const (
-	podMonitorInterval        = time.Minute
-	podMonitorFlashInterval   = 550 * time.Millisecond
-	podMonitorActivityMinimum = 3
-	podMonitorFlashErrors     = 5
-	podMonitorTimeout         = 20 * time.Second
-	podMonitorWorkers         = 4
+	podMonitorInterval         = time.Minute
+	podMonitorFlashInterval    = 550 * time.Millisecond
+	podMonitorActivityMinimum  = 3
+	podMonitorFlashErrors      = 5
+	podMonitorTimeout          = 20 * time.Second
+	podMonitorWorkers          = 4
+	podMonitorSilentAfterError = 3 * time.Minute
 )
 
 type podHealthKind int
@@ -30,19 +32,25 @@ const (
 	podHealthWarning
 	podHealthError
 	podHealthCritical
+	podHealthUnknown
 )
 
 type podHealthSample struct {
-	lines    int
-	warnings int
-	errors   int
-	err      error
+	lines           int
+	warnings        int
+	errors          int
+	err             error
+	lastLogAt       time.Time
+	lastRecordAt    time.Time
+	hasRecord       bool
+	lastRecordError bool
 }
 
 type podHealthDisplay struct {
 	sample             podHealthSample
 	kind               podHealthKind
 	warningsIncreasing bool
+	reason             string
 }
 
 type podHealthScanMsg struct {
@@ -135,19 +143,33 @@ func scanOnePod(ctx context.Context, runner kube.Runner, pod string) podHealthSa
 		"--all-containers=true",
 		"--since=1m",
 		"--tail=-1",
+		"--timestamps=true",
 	)
 	if err != nil {
 		return podHealthSample{err: err}
 	}
 
+	return parsePodHealthSample(pod, output)
+}
+
+func parsePodHealthSample(pod, output string) podHealthSample {
 	var sample podHealthSample
 	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
+		if strings.TrimSpace(line) == "" {
 			continue
 		}
+		message, at := kube.SplitTimestamp(line)
 		sample.lines++
-		fields := core.ParseLogFields(core.LogEvent{Pod: pod, Message: line})
+		if at.After(sample.lastLogAt) {
+			sample.lastLogAt = at
+		}
+		fields := core.ParseLogFields(core.LogEvent{Pod: pod, Message: message})
+		// Exception continuations belong to the preceding error; they are not
+		// evidence of a new, non-error log entry. Timestamp order also handles
+		// kubectl concatenating container streams in a different order.
+		if !core.IsLogContinuation(message) && (!sample.hasRecord || at.IsZero() || at.After(sample.lastRecordAt) || (at.Equal(sample.lastRecordAt) && fields.Level == "ERR")) {
+			sample.hasRecord, sample.lastRecordAt, sample.lastRecordError = true, at, fields.Level == "ERR"
+		}
 		switch fields.Level {
 		case "ERR":
 			sample.errors++
@@ -187,6 +209,16 @@ func classifyPodHealth(current podHealthSample, previous podHealthSample) podHea
 
 func renderMonitoredPodName(name string, health podHealthDisplay, flashOn bool) string {
 	switch health.kind {
+	case podHealthUnknown:
+		width := lipgloss.Width(name)
+		if width <= 0 {
+			return name
+		}
+		marked := "?"
+		if width > 1 {
+			marked = "? " + truncatePickerCell(strings.TrimRight(name, " "), width-2)
+		}
+		return warnStyle.Underline(true).Render(pickerCell(marked, width))
 	case podHealthCritical:
 		if !flashOn {
 			return dimStyle.Render(name)
@@ -220,5 +252,5 @@ func podMonitorSummary(enabled, busy bool, last time.Time, monitorErr string) st
 }
 
 func podMonitorLegend() string {
-	return fmt.Sprintf("green healthy · gray quiet · orange warnings · red errors · flashing red >= %d errors/min", podMonitorFlashErrors)
+	return fmt.Sprintf("green healthy · gray quiet · orange warnings · red errors · flashing red >= %d errors/min · ? underlined amber unknown / possibly unhealthy after 3m silence following an error", podMonitorFlashErrors)
 }

@@ -149,12 +149,14 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.pickerRefreshAfter()
 	}
 
-	// Aggregate before updating previous pod samples so warning trends compare
-	// the current minute with the preceding scan across the whole application.
+	// Preserve the prior counters for warning trends, then apply each pod's
+	// activity history before aggregating the application's health.
 	if msg, ok := message.(podHealthScanMsg); ok && m.monitorEnabled && msg.generation == m.monitorGeneration {
+		previous := m.monitorPrevious
+		_, cmd := m.podMonitorState.update(message, m.pickerMonitorRows(), m.kubeContext, m.namespace)
 		m.monitorApps = make(map[string]podHealthDisplay, len(m.apps))
 		for _, app := range m.apps {
-			m.monitorApps[app.Name] = classifyAppHealth(app, msg.samples, m.monitorPrevious)
+			m.monitorApps[app.Name] = appMonitorHistory(app, classifyAppHealth(app, msg.samples, previous), m.monitorHealth)
 			if count := m.monitorApps[app.Name].sample.errors; count > 0 {
 				at := msg.scannedAt
 				if at.IsZero() {
@@ -163,6 +165,7 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.activity.tracker.Record(core.NamespaceChange{ID: fmt.Sprintf("log-errors/%s/%d", app.Name, at.UnixNano()), At: at, Object: app.Name, Action: "Log errors observed", Detail: fmt.Sprintf("%d errors in the preceding minute across monitored pods of this displayed application; this observation does not establish when the issue began", count), Observed: true})
 			}
 		}
+		return m, cmd
 	}
 	if handled, cmd := m.podMonitorState.update(message, m.pickerMonitorRows(), m.kubeContext, m.namespace); handled {
 		return m, cmd
