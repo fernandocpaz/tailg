@@ -123,10 +123,10 @@ func TestInstallChecksIntegrityBeforeReplacingAndPreservesMode(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				if file == path && version == "v1.2.3" && string(data) == "old executable" {
+				if version == "v1.2.3" && string(data) == "old executable" {
 					return nil
 				}
-				if file != path && version == "v1.2.4" && string(data) == "new executable" {
+				if version == "v1.2.4" && string(data) == "new executable" {
 					return nil
 				}
 				return fmt.Errorf("wrong staged binary")

@@ -12,6 +12,7 @@ import (
 )
 
 var ErrRestart = errors.New("restart tailg after update")
+var ErrUpdateQuit = errors.New("quit tailg from the update prompt")
 
 type updateOfferMsg struct {
 	release   update.Release
@@ -20,6 +21,7 @@ type updateOfferMsg struct {
 type updateInstalledMsg struct{ err error }
 
 type updateState struct {
+	quit                            bool
 	client                          *update.Client
 	release                         update.Release
 	pending, busy, focused, restart bool

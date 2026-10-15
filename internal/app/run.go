@@ -400,6 +400,9 @@ pickAgain:
 	if errors.Is(err, tui.ErrRestart) {
 		return RestartExitCode
 	}
+	if errors.Is(err, tui.ErrUpdateQuit) {
+		return 0
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1

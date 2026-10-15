@@ -234,6 +234,9 @@ func Run(parent context.Context, config Config) error {
 	if result, ok := final.(model); ok && result.updates.restart {
 		return ErrRestart
 	}
+	if result, ok := final.(model); ok && result.updates.quit {
+		return ErrUpdateQuit
+	}
 	return err
 }
 
@@ -257,6 +260,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if msg, ok := message.(tea.KeyMsg); ok && m.showUpdate() {
 		if msg.String() == "ctrl+c" {
+			m.updates.quit = true
 			return m, tea.Quit
 		}
 		if m.width < 40 || m.height < 12 {

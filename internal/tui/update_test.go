@@ -100,3 +100,14 @@ func TestLogUpdateDoesNotStealExistingPanelAndWaitsForExplicitChoice(t *testing.
 		t.Fatal("Enter did not continue existing log session")
 	}
 }
+
+func TestCtrlCFromLogUpdateExitsInsteadOfReopeningPicker(t *testing.T) {
+	for _, busy := range []bool{false, true} {
+		m := model{ctx: context.Background(), width: 80, height: 24, updates: updatePickerFixture().updates}
+		m.updates.busy = busy
+		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+		if cmd == nil || !updated.(model).updates.quit {
+			t.Fatal("Ctrl+C did not request a complete exit")
+		}
+	}
+}
