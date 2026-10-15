@@ -124,17 +124,10 @@ func TestAppPickerRestoresOnlyVisibleSelections(t *testing.T) {
 }
 
 func TestRenderPickerRowUsesColumnsWithoutRepeatedLabels(t *testing.T) {
-	row := renderPickerRow(
-		"> ",
-		"vitas-emr-api-patient",
-		"2/2",
-		"Running",
-		"0",
-		"3h ago",
-		"2d ago",
-		"13571",
-		16,
-	)
+	row := pickerTableLine("> [ ] ", pickerColumns(130, false), map[string]string{
+		"name": "vitas-emr-api-patient", "ready": "2/2", "phase": "Running", "restarts": "0",
+		"started": "3h ago", "deployed": "2d ago", "image": "13571",
+	})
 	for _, unwanted := range []string{"ready=", "phase=", "restarts=", "started=", "deployed=", "image="} {
 		if strings.Contains(row, unwanted) {
 			t.Fatalf("row contains repeated label %q: %q", unwanted, row)
@@ -147,10 +140,13 @@ func TestRenderPickerRowUsesColumnsWithoutRepeatedLabels(t *testing.T) {
 	}
 }
 
-func TestPickerImageWidthKeepsImageColumnVisible(t *testing.T) {
-	if got := pickerImageWidth(80); got < pickerImageMinWidth {
-		t.Fatalf("pickerImageWidth(80) = %d, want at least %d", got, pickerImageMinWidth)
+func TestPickerNarrowColumnsKeepImageVisible(t *testing.T) {
+	for _, column := range pickerColumns(80, false) {
+		if column.id == "image" && column.width >= 12 {
+			return
+		}
 	}
+	t.Fatal("80-column picker must show an image tag column")
 }
 
 func TestTruncatePickerCell(t *testing.T) {

@@ -28,6 +28,8 @@ type pickerModel struct {
 	loadError         string
 	width             int
 	height            int
+	helpVisible       bool
+	helpScroll        int
 	confirmRun        *core.AppChoice
 	confirmRunFocused bool
 	confirmRunScroll  int
@@ -70,7 +72,7 @@ func PickApp(apps []core.AppChoice, kubeContext, namespace string, loadErr error
 	if loadErr != nil {
 		model.loadError = pickerErrorSummary(loadErr)
 	}
-	result, err := tea.NewProgram(model).Run()
+	result, err := tea.NewProgram(model, tea.WithAltScreen()).Run()
 	if final, ok := result.(pickerModel); ok {
 		final.podMonitorState.stop()
 	}
@@ -157,8 +159,13 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.activity.view != "" {
 			return m.updateNamespaceActivityKey(key)
 		}
-		switch key.String() {
-		case "h", "H", "e", "E":
+		if m.helpVisible {
+			return m.updatePickerHelp(key)
+		}
+		switch {
+		case keyMatches(key, pickerKeys.help):
+			m.helpVisible, m.helpScroll = true, 0
+		case keyMatches(key, pickerKeys.changes, pickerKeys.events):
 			m.activity.view = "changes"
 			if strings.EqualFold(key.String(), "e") {
 				m.activity.view = "events"
@@ -166,23 +173,23 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.activity.selected = 0
 			cmd := m.refreshNamespaceActivity()
 			return m, cmd
-		case "ctrl+c", "q", "esc":
+		case keyMatches(key, pickerKeys.quit):
 			m.podMonitorState.stop()
 			m.result.Action = PickerQuit
 			return m, tea.Quit
-		case "c":
+		case keyMatches(key, pickerKeys.context):
 			m.podMonitorState.stop()
 			m.result.Action = PickerSwitchContext
 			return m, tea.Quit
-		case "n":
+		case keyMatches(key, pickerKeys.namespace):
 			m.podMonitorState.stop()
 			m.result.Action = PickerSwitchNamespace
 			return m, tea.Quit
-		case "r":
+		case keyMatches(key, pickerKeys.refresh):
 			m.podMonitorState.stop()
 			m.result.Action = PickerRefresh
 			return m, tea.Quit
-		case "x", "X":
+		case keyMatches(key, pickerKeys.run):
 			if len(m.apps) > 0 && m.apps[m.index].CronJob != nil {
 				app := m.apps[m.index]
 				m.confirmRun = &app
@@ -192,7 +199,7 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.note = "Highlight a CronJob to run it on demand."
 			}
-		case "p":
+		case keyMatches(key, pickerKeys.pods):
 			if len(m.checked) > 0 {
 				m.note = "Uncheck applications before choosing exact pods."
 				return m, nil
@@ -200,10 +207,10 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.podMonitorState.stop()
 			m.result.Action = PickerSelectPods
 			return m, tea.Quit
-		case "m", "M":
+		case keyMatches(key, pickerKeys.monitor):
 			m.monitorApps = nil
 			return m, m.podMonitorState.toggle(preparePodPickerRows(m.apps), m.kubeContext, m.namespace)
-		case " ":
+		case keyMatches(key, pickerKeys.mark):
 			if len(m.apps) > 0 {
 				if m.apps[m.index].CronJob != nil && len(m.apps[m.index].Pods) == 0 {
 					m.note = "This CronJob has no retained pods. Press X to run it now."
@@ -220,15 +227,27 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.note = ""
 			}
-		case "up", "k":
+		case keyMatches(key, pickerKeys.up):
 			if len(m.apps) > 0 {
 				m.index = max(0, m.index-1)
 			}
-		case "down", "j":
+		case keyMatches(key, pickerKeys.down):
 			if len(m.apps) > 0 {
 				m.index = min(len(m.apps)-1, m.index+1)
 			}
-		case "enter":
+		case keyMatches(key, pickerKeys.pageUp, pickerKeys.pageDown, pickerKeys.home, pickerKeys.end):
+			step := max(1, m.height/2)
+			switch {
+			case keyMatches(key, pickerKeys.pageUp):
+				m.index = max(0, m.index-step)
+			case keyMatches(key, pickerKeys.pageDown):
+				m.index = min(max(0, len(m.apps)-1), m.index+step)
+			case keyMatches(key, pickerKeys.home):
+				m.index = 0
+			case keyMatches(key, pickerKeys.end):
+				m.index = max(0, len(m.apps)-1)
+			}
+		case keyMatches(key, pickerKeys.open):
 			if len(m.apps) > 0 {
 				selected := m.checkedChoices()
 				marked := make([]string, 0, len(selected))
@@ -269,17 +288,15 @@ func (m pickerModel) checkedChoices() []core.AppChoice {
 	return selected
 }
 
-const (
-	pickerAppWidth      = 36
-	pickerReadyWidth    = 7
-	pickerPhaseWidth    = 18
-	pickerRestartsWidth = 8
-	pickerAgeWidth      = 10
-	pickerImageMinWidth = 12
-)
+const pickerAppWidth = 36
 
 func (m pickerModel) View() string {
 	background := m.pickerView()
+	if m.helpVisible {
+		width, height := m.modalViewport()
+		dialog, _ := m.pickerHelpModal()
+		return overlayModal(background, dialog, width, height)
+	}
 	if m.activity.view != "" {
 		width, height := m.modalViewport()
 		dialog, _ := m.namespaceActivityModal()
@@ -294,161 +311,7 @@ func (m pickerModel) View() string {
 }
 
 func (m pickerModel) pickerView() string {
-	var lines = []string{
-		headerStyle.Render("Select an application"),
-		fmt.Sprintf("Context: %s  |  Namespace: %s", m.kubeContext, m.namespace),
-		renderPickerShortcuts(
-			shortcut("↑↓", "Move"),
-			shortcut("SPACE", "Select"),
-			shortcut("ENTER", "Open"),
-			shortcut("P", "Exact pods"),
-			shortcut("M", "Monitor"),
-		),
-		renderPickerShortcuts(
-			shortcut("C", "Context"),
-			shortcut("N", "Namespace"),
-			shortcut("R", "Retry"),
-			shortcut("X", "Run now"),
-			shortcut("Q", "Quit"),
-			shortcut("H", "Changes"),
-			shortcut("E", "Events"),
-		),
-		podMonitorSummary(m.monitorEnabled, m.monitorBusy, m.monitorLastScan, m.monitorError),
-		"",
-	}
-	if m.totalApps > len(m.apps) {
-		cronJobs := 0
-		for _, app := range m.apps {
-			if app.CronJob != nil {
-				cronJobs++
-			}
-		}
-		lines = append(lines, dimStyle.Render(fmt.Sprintf("Showing newest %d of %d applications and all %d CronJobs", len(m.apps)-cronJobs, m.totalApps-cronJobs, cronJobs)), "")
-	}
-	if len(m.checked) > 0 {
-		podCount := 0
-		for _, app := range m.checkedChoices() {
-			podCount += len(app.Pods)
-		}
-		lines = append(lines, fmt.Sprintf("Selected: %d applications · %d current pods", len(m.checked), podCount), "")
-	}
-	if m.note != "" {
-		lines = append(lines, m.note, "")
-	}
-	if len(m.apps) == 0 {
-		if m.loadError != "" {
-			return strings.Join(append(lines, "Could not load applications: "+m.loadError, "Press C to switch context, N to choose namespace, or R to retry."), "\n")
-		}
-		return strings.Join(append(lines, "No applications found in this namespace. Press C to switch context or N to choose namespace."), "\n")
-	}
-	if m.loadError != "" {
-		lines = append(lines, "Inventory warning: "+m.loadError, "")
-	}
-	now := time.Now()
-	imageWidth := pickerImageWidth(m.width)
-	rows := make([]pickerViewportRow, len(m.apps))
-
-	sectionTitles := [2]string{
-		renderPickerRow("      ", "APPLICATION", "READY", "PHASE", "RESTARTS", "STARTED", "DEPLOYED", "IMAGE", imageWidth),
-		renderCronJobRow("      ", "CRONJOB", "SCHEDULE", "TIME ZONE", "STATE", "ACTIVE", "PODS", "LAST SCHEDULED"),
-	}
-	var headers [2][]string
-	for section, title := range sectionTitles {
-		headers[section] = pickerWrapLines([]string{
-			dimStyle.Render(title), dimStyle.Render(strings.Repeat("-", lipgloss.Width(title))),
-		}, m.width)
-	}
-	for index, app := range m.apps {
-		marker := "  "
-		check := "[ ] "
-		if m.checked[app.Name] {
-			check = "[x] "
-		}
-		style := lipgloss.NewStyle()
-		if index == m.index {
-			marker = "> "
-			style = selectedStyle
-		}
-		line := renderPickerRow(
-			marker+check,
-			app.Name,
-			app.Ready,
-			app.Phases,
-			fmt.Sprint(app.Restarts),
-			formatPickerAge(now, app.StartedAt),
-			formatPickerAge(now, app.DeployedAt),
-			valueOrDash(app.ImageTag),
-			imageWidth,
-		)
-		if app.CronJob != nil {
-			job := app.CronJob
-			state, zone, last := "Scheduled", job.TimeZone, "never"
-			if job.Suspended {
-				state = "Suspended"
-			}
-			if zone == "" {
-				zone = "controller local"
-			}
-			if !job.LastScheduledAt.IsZero() {
-				last = formatPickerAge(now, job.LastScheduledAt)
-			}
-			line = renderCronJobRow(marker+check, job.Name, job.Schedule, zone, state, fmt.Sprint(job.Active), fmt.Sprint(len(app.Pods)), last)
-		}
-		if m.monitorEnabled {
-			// Style cells separately so cursor highlighting cannot replace the
-			// application's health color. Keep the existing fixed column widths.
-			prefix := marker + check
-			displayName := app.Name
-			if app.CronJob != nil {
-				displayName = app.CronJob.Name
-			}
-			name := fmt.Sprintf("%-*s", pickerAppWidth, truncatePickerCell(displayName, pickerAppWidth))
-			suffix := strings.TrimPrefix(line, prefix+name)
-			name = renderMonitoredPodName(name, m.monitorApps[app.Name], m.monitorFlashOn)
-			rows[index].lines = pickerWrapLines([]string{style.Render(prefix) + name + style.Render(suffix)}, m.width)
-		} else {
-			rows[index].lines = pickerWrapLines([]string{style.Render(line)}, m.width)
-		}
-		if app.CronJob != nil {
-			rows[index].section = 1
-		}
-	}
-	var footer []string
-	if m.index < len(m.apps) && m.apps[m.index].CronJob != nil {
-		job := m.apps[m.index].CronJob
-		zone, last := job.TimeZone, "never"
-		if zone == "" {
-			zone = "controller local"
-		}
-		if !job.LastScheduledAt.IsZero() {
-			last = job.LastScheduledAt.Local().Format("2006-01-02 15:04:05 MST")
-		}
-		footer = append(footer, fmt.Sprintf("%s · Schedule: %s (%s) · Last scheduled: %s", job.Name, job.Schedule, zone, last))
-	}
-	if m.monitorEnabled {
-		footer = append(footer, dimStyle.Render(podMonitorLegend()))
-	}
-	lines = pickerWrapLines(lines, m.width)
-	footer = pickerWrapLines(footer, m.width)
-	// Budget actual physical lines, including only the section headers and
-	// footer content that this view renders. Leave no unused row allowance.
-	budget := m.height - len(lines) - len(footer)
-	if m.height <= 0 {
-		budget = 0
-	}
-	scrollHeight := len(pickerWrapLines([]string{fmt.Sprintf("Rows %d–%d of %d · ↑↓ to scroll", len(rows), len(rows), len(rows))}, m.width))
-	start, end := pickerViewportRange(rows, headers, m.index, budget, scrollHeight, m.height > 0)
-	for index := start; index < end; index++ {
-		if index == start || rows[index].section != rows[index-1].section {
-			lines = append(lines, headers[rows[index].section]...)
-		}
-		lines = append(lines, rows[index].lines...)
-	}
-	if start > 0 || end < len(rows) {
-		lines = append(lines, pickerWrapLines([]string{dimStyle.Render(fmt.Sprintf("Rows %d–%d of %d · ↑↓ to scroll", start+1, end, len(rows)))}, m.width)...)
-	}
-	lines = append(lines, footer...)
-	return strings.Join(lines, "\n")
+	return m.pickerScreen()
 }
 
 // kubectl may emit repeated discovery cache errors before its useful final
@@ -489,38 +352,6 @@ func preparePickerApps(apps []core.AppChoice) ([]core.AppChoice, int) {
 		}
 	}
 	return visible, total
-}
-
-func renderCronJobRow(marker, name, schedule, zone, state, active, pods, last string) string {
-	return fmt.Sprintf("%s%-36s %-22s %-26s %-10s %6s %6s %-18s", marker,
-		truncatePickerCell(name, 36), truncatePickerCell(schedule, 22), truncatePickerCell(zone, 26), state, active, pods, last)
-}
-
-func pickerImageWidth(terminalWidth int) int {
-	// marker, selection checkbox, fixed columns, and six inter-column spaces.
-	fixed := 6 + pickerAppWidth + pickerReadyWidth + pickerPhaseWidth + pickerRestartsWidth + 2*pickerAgeWidth + 6
-	if terminalWidth <= 0 {
-		return 24
-	}
-	available := terminalWidth - fixed
-	if available < pickerImageMinWidth {
-		return pickerImageMinWidth
-	}
-	return available
-}
-
-func renderPickerRow(marker, app, ready, phase, restarts, started, deployed, image string, imageWidth int) string {
-	return fmt.Sprintf(
-		"%s%-*s %-*s %-*s %*s %-*s %-*s %-*s",
-		marker,
-		pickerAppWidth, truncatePickerCell(app, pickerAppWidth),
-		pickerReadyWidth, truncatePickerCell(ready, pickerReadyWidth),
-		pickerPhaseWidth, truncatePickerCell(phase, pickerPhaseWidth),
-		pickerRestartsWidth, truncatePickerCell(restarts, pickerRestartsWidth),
-		pickerAgeWidth, truncatePickerCell(started, pickerAgeWidth),
-		pickerAgeWidth, truncatePickerCell(deployed, pickerAgeWidth),
-		imageWidth, truncatePickerCell(image, imageWidth),
-	)
 }
 
 func truncatePickerCell(value string, width int) string {
