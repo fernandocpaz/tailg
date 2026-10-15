@@ -172,6 +172,12 @@ func (c Collector) Collect(ctx context.Context, items []core.InventoryItem, opti
 	})
 	report.Summary.LogLines = len(events)
 	analysisNow := now
+	// Logs can be emitted after collection starts. Evaluate the live window at
+	// completion so a later second isn't mistaken for a future log bucket.
+	if options.Now == nil {
+		analysisNow = time.Now().UTC()
+		report.GeneratedAt = timestamp(analysisNow)
+	}
 	var latestObserved time.Time
 	for _, item := range events {
 		if item.event.ObservedAt.After(latestObserved) {

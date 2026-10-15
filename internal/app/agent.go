@@ -43,6 +43,7 @@ type agentOptions struct {
 	ContextLines     int
 	MaxBytes         int
 	IssueID          string
+	Network          bool
 	WorkloadScope    bool
 }
 
@@ -52,6 +53,7 @@ func defaultAgentOptions() agentOptions {
 
 func newAgentCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, mode agent.Mode) *cobra.Command {
 	options := defaultAgentOptions()
+	options.Network = mode == agent.ModeDiagnose
 	command := &cobra.Command{
 		Use: string(mode) + " [target] [namespace]", Args: cobra.MaximumNArgs(2), SilenceUsage: true, SilenceErrors: true,
 		Short: map[agent.Mode]string{agent.ModeIssues: "Emit grouped log issues for scripts and AI agents", agent.ModeDiagnose: "Emit a bounded Kubernetes diagnostic report"}[mode],
@@ -70,6 +72,7 @@ func newAgentCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Wri
 	}
 	if mode == agent.ModeDiagnose {
 		command.Aliases = []string{"troubleshoot"}
+		command.Flags().BoolVar(&options.Network, "network", true, "include namespace network evidence and shared-pod log correlations")
 	}
 	addAgentFlags(command, &options)
 	command.SetIn(stdin)
@@ -115,7 +118,10 @@ func newMCPCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Write
 				switch name {
 				case "tailg_list_issues":
 					return collectAgentReport(callCtx, options, agent.ModeIssues)
+				case "tailg_network_diagnose":
+					return collectNetworkAgent(callCtx, options)
 				case "tailg_diagnose":
+					options.Network = arguments.IncludeNetwork == nil || *arguments.IncludeNetwork
 					return collectAgentReport(callCtx, options, agent.ModeDiagnose)
 				case "tailg_get_issue_context":
 					if options.IssueID == "" {
@@ -363,6 +369,7 @@ func collectAgentReport(parent context.Context, options agentOptions, mode agent
 		effectiveNamespace = options.Namespace
 	}
 	runner.Namespace = effectiveNamespace
+	runner.Context = fallback(effectiveContext, options.Context)
 
 	resolvedTarget := "pod/*"
 	var selectedPods, selectedSelectors []string
@@ -411,7 +418,9 @@ func collectAgentReport(parent context.Context, options agentOptions, mode agent
 				Pods: []agent.Pod{}, Issues: []agent.Issue{}, KubernetesEvents: []agent.KubernetesEvent{}, CollectionErrors: []agent.CollectionError{}}
 			return agent.LimitReport(report, options.Output)
 		}
-		return agent.Report{}, fmt.Errorf("no matching pods or containers found")
+		if !options.Network || mode != agent.ModeDiagnose {
+			return agent.Report{}, fmt.Errorf("no matching pods or containers found")
+		}
 	}
 	workloads := map[string]string{}
 	var workloadErr error
@@ -419,6 +428,11 @@ func collectAgentReport(parent context.Context, options agentOptions, mode agent
 		workloads, workloadErr = runner.WorkloadIdentities(ctx, items)
 	}
 
+	var networkResult chan core.NetworkReport
+	if options.Network && mode == agent.ModeDiagnose {
+		networkResult = make(chan core.NetworkReport, 1)
+		go func() { networkResult <- runner.NetworkReview(ctx) }()
+	}
 	collector := agent.Collector{Client: runner}
 	report, err := collector.Collect(ctx, items, agent.CollectOptions{
 		Mode: mode, Namespace: effectiveNamespace, Context: fallback(effectiveContext, options.Context), Target: fallback(options.Target, "pod/*"), Since: options.Since, IssueID: options.IssueID,
@@ -426,6 +440,10 @@ func collectAgentReport(parent context.Context, options agentOptions, mode agent
 		Limits:       agent.Limits{Tail: options.Tail, MaxLines: options.MaxLines, MaxIssues: options.MaxIssues, ContextLines: options.ContextLines, MaxBytes: options.MaxBytes},
 		IncludeEvent: func(message string) bool { return len(formatter.Format("", "", message, false)) > 0 },
 	})
+	if networkResult != nil {
+		network := agent.BuildNetworkReport(<-networkResult, report.Issues, options.MaxBytes)
+		agent.AttachNetwork(&report, network)
+	}
 	if workloadErr != nil {
 		report.CollectionErrors = append(report.CollectionErrors, agent.CollectionError{Source: "workload_identity", Message: agent.Redact(workloadErr.Error())})
 		report.Coverage.Status = "partial"

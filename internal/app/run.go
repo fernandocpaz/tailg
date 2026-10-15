@@ -85,7 +85,7 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 		fmt.Fprintln(stderr, "kubectl was not found in PATH.")
 		return 1
 	}
-	if !options.NoColor {
+	if !options.NoColor && !(options.Network && options.NetworkOutput != "") {
 		if palette, ok := theme.Detect(options.Theme, stdin, stdout); ok {
 			formatter.ColorCodes = palette.LogColors(lipgloss.ColorProfile())
 			tui.ApplyPalette(palette)

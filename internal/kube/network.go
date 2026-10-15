@@ -52,6 +52,7 @@ func (r Runner) NetworkReview(ctx context.Context) core.NetworkReport {
 	wg.Wait()
 	snapshot := networkSnapshot{items: map[string][]map[string]any{}, complete: map[string]bool{}}
 	for i, resource := range networkResources {
+		snapshot.complete[resource] = false
 		response := responses[i]
 		if response.err != nil {
 			snapshot.errors = append(snapshot.errors, resource+": "+response.err.Error())
@@ -123,7 +124,7 @@ type networkAnalysis struct {
 
 func analyzeNetwork(snapshot networkSnapshot, kubeContext, namespace string, now time.Time) core.NetworkReport {
 	a := networkAnalysis{snapshot: snapshot, namespace: namespace, services: map[string]map[string]any{}, serviceRows: map[string]core.NetworkRow{}, proxies: map[string]map[string]any{}}
-	report := core.NetworkReport{Context: kubeContext, Namespace: namespace, At: now, Errors: snapshot.errors}
+	report := core.NetworkReport{Context: kubeContext, Namespace: namespace, At: now, Errors: snapshot.errors, Sources: snapshot.complete}
 	for _, svc := range snapshot.items["services"] {
 		a.services[networkName(svc)] = svc
 	}

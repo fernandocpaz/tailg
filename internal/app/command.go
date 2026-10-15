@@ -26,6 +26,9 @@ func NewCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) 
 		Example: strings.Join([]string{"tailg", "tailg example-app default", "tailg 'example-*' default --tile-windows", "tailg example-app default --since 4d", "tailg --status --namespace default", "tailg --status 20 --namespace default", "tailg --versions", "tailg --versions --context tkgs-qa --context tkgs-dev", "tailg --network --namespace apollo --context tkgs-qa"}, "\n"),
 		Version: BuildDescription(),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !options.Network && (cmd.Flags().Changed("output") || cmd.Flags().Changed("max-bytes")) {
+				return fmt.Errorf("root --output and --max-bytes require --network; diagnostic subcommands have their own output flags")
+			}
 			if options.Status {
 				lookback, remaining, err := statusLookbackFromArgs(args, options.StatusLookback)
 				if err != nil {
@@ -92,6 +95,8 @@ func NewCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) 
 	flags.BoolVar(&options.Status, "status", false, "scan health and recent errors; optional positional argument is lookback minutes (default 120)")
 	flags.BoolVar(&options.Versions, "versions", false, "list pod image versions; compare by Image ID when any matching pod uses latest")
 	flags.BoolVar(&options.Network, "network", false, "review namespace Ingress/HTTPProxy routes, Services, endpoints, policies, and related events")
+	flags.StringVarP(&options.NetworkOutput, "output", "o", "", "with --network: json, ndjson, or text; default is interactive in a terminal")
+	flags.IntVar(&options.NetworkMaxBytes, "max-bytes", defaultAgentMaxBytes, "maximum encoded size for structured --network output")
 	flags.DurationVar(&options.StatusInterval, "status-interval", core.DefaultStatusInterval, "delay between status scans")
 	flags.DurationVar(&options.StatusTimeout, "status-timeout", core.DefaultStatusTimeout, "maximum status recovery wait")
 	flags.StringVar(&options.Selector, "selector", "", "label selector override")
