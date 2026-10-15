@@ -43,7 +43,7 @@ func renderLogTimelineRows(records []core.LogRecord, query string, selected, hei
 		}
 		recordPositions[index] = len(timeline)
 		timeline = append(timeline, logTimelineRow{
-			text:        renderRecordRow(record, query, index == selected, width, showPod, color),
+			text:        renderRecordRowAt(record, query, index == selected, width, showPod, color, now),
 			recordIndex: index,
 			groupLabel:  groupLabel,
 		})
@@ -136,6 +136,19 @@ func localDateKey(value time.Time, location *time.Location) string {
 func calendarDate(value time.Time, location *time.Location) time.Time {
 	local := value.In(location)
 	return time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+// Use the same local calendar boundary as the date separators. Unknown and
+// future timestamps are not evidence of an older log.
+func logFromEarlierDay(at, now time.Time) bool {
+	return !at.IsZero() && calendarDate(at, now.Location()).Before(calendarDate(now, now.Location()))
+}
+
+func fadeHistoricalLog(text string, at, now time.Time, color bool) string {
+	if color && logFromEarlierDay(at, now) {
+		return lipgloss.NewStyle().Faint(true).Render(text)
+	}
+	return text
 }
 
 func renderLogDateGroupRow(label string, width int, color bool) string {

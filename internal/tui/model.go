@@ -1215,6 +1215,10 @@ func renderLogRow(value, query string, selected bool, width int, showPod, color 
 }
 
 func renderLogColumns(columns logColumns, value, query string, selected bool, width int, showPod, color bool) string {
+	return renderLogColumnsAged(columns, value, query, selected, width, showPod, color, false)
+}
+
+func renderLogColumnsAged(columns logColumns, value, query string, selected bool, width int, showPod, color, historical bool) string {
 	gutter := "  "
 	if selected {
 		gutter = "> "
@@ -1225,8 +1229,8 @@ func renderLogColumns(columns logColumns, value, query string, selected bool, wi
 	lineStyle, hasLineStyle := logLineStyle(columns.level)
 	prefix := gutter
 	if width >= 60 {
-		prefix += renderCell(columns.time, 13, dimStyle, color && !selected)
-		prefix += renderCell(columns.level, 5, levelRenderStyle(columns.level), color && !selected)
+		prefix += renderCell(columns.time, 13, dimStyle.Faint(historical), color && !selected)
+		prefix += renderCell(columns.level, 5, levelRenderStyle(columns.level).Faint(historical), color && !selected)
 	}
 	if showPod && width >= 48 {
 		columnWidth := min(48, max(12, width/3))
@@ -1234,13 +1238,16 @@ func renderLogColumns(columns logColumns, value, query string, selected bool, wi
 		if hasLineStyle {
 			podStyle = lineStyle
 		}
-		prefix += renderCell(compactPodLabel(columns.pod, columnWidth-1), columnWidth, podStyle, color && !selected)
+		prefix += renderCell(compactPodLabel(columns.pod, columnWidth-1), columnWidth, podStyle.Faint(historical), color && !selected)
 	}
 	messageWidth := max(1, width-lipgloss.Width(prefix))
 	message := truncatePlain(columns.message, messageWidth)
 	errorLine := (strings.Contains(value, "\x1b[31m") || (adaptiveErrorCode != "" && strings.Contains(value, adaptiveErrorCode))) && columns.level == ""
 	if errorLine {
 		lineStyle, hasLineStyle = errorLineStyle, true
+	}
+	if historical {
+		lineStyle, hasLineStyle = lineStyle.Faint(true), true
 	}
 	renderedMessage := highlightTextStyled(message, query, color && !selected, lineStyle, hasLineStyle)
 	row := prefix + renderedMessage

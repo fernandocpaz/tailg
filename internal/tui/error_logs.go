@@ -184,7 +184,7 @@ func (m model) errorLogRows(now time.Time) []logTimelineRow {
 			}
 			text := errorBlockText(block)
 			for _, line := range wrapDetailText(nil, text, "", width) {
-				rows = append(rows, logTimelineRow{text: line, groupLabel: label})
+				rows = append(rows, logTimelineRow{text: fadeHistoricalLog(line, root.ObservedAt, now, color), groupLabel: label})
 			}
 			rows = append(rows, logTimelineRow{groupLabel: label})
 		}

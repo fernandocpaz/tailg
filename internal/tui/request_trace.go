@@ -158,6 +158,7 @@ func (m model) renderTrace() string {
 	selected := max(0, min(m.traceIndex, len(rows)-1))
 	start := max(0, selected-height+1)
 	lines := []string{truncatePlain(status, m.width)}
+	now := time.Now()
 	for i := start; i < min(len(rows), start+height); i++ {
 		record := rows[i]
 		marker := "  "
@@ -179,7 +180,7 @@ func (m model) renderTrace() string {
 		if core.IsSlowRequest(record.Fields) {
 			line += fmt.Sprintf(" (%s)", record.Fields.Duration)
 		}
-		lines = append(lines, truncatePlain(line, m.width))
+		lines = append(lines, fadeHistoricalLog(truncatePlain(line, m.width), record.Event.ObservedAt, now, m.config.Formatter.Color && i != selected))
 	}
 	if len(rows) == 0 {
 		lines = append(lines, "No matching logs available yet")
@@ -232,6 +233,10 @@ func recordDetails(record core.LogRecord) string {
 }
 
 func renderRecordRow(record core.LogRecord, query string, selected bool, width int, showPod, color bool) string {
+	return renderRecordRowAt(record, query, selected, width, showPod, color, time.Now())
+}
+
+func renderRecordRowAt(record core.LogRecord, query string, selected bool, width int, showPod, color bool, now time.Time) string {
 	columns := parseLogColumns(record.Text, showPod)
 	if record.Event.Pod != "" {
 		columns.pod = record.Event.Pod
@@ -241,9 +246,10 @@ func renderRecordRow(record core.LogRecord, query string, selected bool, width i
 	if slow {
 		rowWidth -= 6
 	}
-	row := renderLogColumns(columns, record.Text, query, selected, rowWidth, showPod, color)
+	historical := !selected && logFromEarlierDay(record.Event.ObservedAt, now)
+	row := renderLogColumnsAged(columns, record.Text, query, selected, rowWidth, showPod, color, historical)
 	if slow {
-		row += renderWithColor(warnStyle, " SLOW", color)
+		row += renderWithColor(warnStyle.Faint(historical), " SLOW", color)
 	}
 	return truncate(row, width)
 }
