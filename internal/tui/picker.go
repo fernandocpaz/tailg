@@ -33,6 +33,7 @@ type pickerModel struct {
 	confirmRunScroll  int
 	podMonitorState
 	monitorApps map[string]podHealthDisplay
+	activity    namespaceActivityState
 }
 
 type PickerAction int
@@ -61,6 +62,8 @@ func PickApp(apps []core.AppChoice, kubeContext, namespace string, loadErr error
 	prepared, total := preparePickerApps(apps)
 	model := newPickerModel(prepared, total, kubeContext, namespace, previous)
 	model.refreshContext = ctx
+	model.activity.busy = true
+	model.activity.request = 1
 	if len(notice) > 0 {
 		model.note = notice[0]
 	}
@@ -97,9 +100,12 @@ func (m pickerModel) Init() tea.Cmd {
 	if m.refreshContext == nil {
 		return nil
 	}
-	return pickerRefreshCmd()
+	return tea.Batch(pickerRefreshCmd(), loadNamespaceActivity(m.refreshContext, m.kubeContext, m.namespace, m.activity.request))
 }
 func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	if handled, cmd := m.updateNamespaceActivity(message); handled {
+		return m, cmd
+	}
 	switch msg := message.(type) {
 	case pickerRefreshTick:
 		if m.refreshContext == nil {
@@ -123,6 +129,13 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.monitorApps = make(map[string]podHealthDisplay, len(m.apps))
 		for _, app := range m.apps {
 			m.monitorApps[app.Name] = classifyAppHealth(app, msg.samples, m.monitorPrevious)
+			if count := m.monitorApps[app.Name].sample.errors; count > 0 {
+				at := msg.scannedAt
+				if at.IsZero() {
+					at = time.Now()
+				}
+				m.activity.tracker.Record(core.NamespaceChange{ID: fmt.Sprintf("log-errors/%s/%d", app.Name, at.UnixNano()), At: at, Object: app.Name, Action: "Log errors observed", Detail: fmt.Sprintf("%d errors in the preceding minute across monitored pods of this displayed application; this observation does not establish when the issue began", count), Observed: true})
+			}
 		}
 	}
 	if handled, cmd := m.podMonitorState.update(message, preparePodPickerRows(m.apps), m.kubeContext, m.namespace); handled {
@@ -141,7 +154,18 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.confirmRun != nil {
 			return m.updateCronJobModal(key)
 		}
+		if m.activity.view != "" {
+			return m.updateNamespaceActivityKey(key)
+		}
 		switch key.String() {
+		case "h", "H", "e", "E":
+			m.activity.view = "changes"
+			if strings.EqualFold(key.String(), "e") {
+				m.activity.view = "events"
+			}
+			m.activity.selected = 0
+			cmd := m.refreshNamespaceActivity()
+			return m, cmd
 		case "ctrl+c", "q", "esc":
 			m.podMonitorState.stop()
 			m.result.Action = PickerQuit
@@ -256,6 +280,11 @@ const (
 
 func (m pickerModel) View() string {
 	background := m.pickerView()
+	if m.activity.view != "" {
+		width, height := m.modalViewport()
+		dialog, _ := m.namespaceActivityModal()
+		return overlayModal(background, dialog, width, height)
+	}
 	if m.confirmRun == nil {
 		return background
 	}
@@ -281,6 +310,8 @@ func (m pickerModel) pickerView() string {
 			shortcut("R", "Retry"),
 			shortcut("X", "Run now"),
 			shortcut("Q", "Quit"),
+			shortcut("H", "Changes"),
+			shortcut("E", "Events"),
 		),
 		podMonitorSummary(m.monitorEnabled, m.monitorBusy, m.monitorLastScan, m.monitorError),
 		"",
