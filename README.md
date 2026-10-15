@@ -23,6 +23,12 @@ fallback. Detection happens before the terminal UI starts. Restart tailg after
 changing your terminal scheme. Sixteen-color terminals use reverse video for
 highlights because their color slots can be customized.
 
+Logs from earlier local calendar days appear faded in the live/search timeline,
+retained error view (F3), and request trace. Today's logs keep their normal
+intensity. Severity colors and search highlights remain visible, and selecting
+an older row restores its normal intensity. Unknown or future dates are not
+faded; `--no-color` disables the effect.
+
 Override detection when needed (also inherited by child panes):
 
 ```sh
