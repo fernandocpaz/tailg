@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -19,30 +18,14 @@ type podPickerRow struct {
 }
 
 type podPickerModel struct {
-	refreshContext context.Context
-	rows           []podPickerRow
-	checked        map[string]bool
-	index          int
-	selected       []string
-	kubeContext    string
-	namespace      string
+	rows        []podPickerRow
+	checked     map[string]bool
+	index       int
+	done        bool
+	selected    []string
+	kubeContext string
+	namespace   string
 	podMonitorState
-}
-
-// PickPods selects initial pod sources. Live views follow controller replacements.
-func PickPods(apps []core.AppChoice, kubeContext, namespace string) (selected []string, ok bool, err error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	model := podPickerModel{refreshContext: ctx, rows: preparePodPickerRows(apps), kubeContext: kubeContext, namespace: namespace}
-	result, err := tea.NewProgram(model).Run()
-	if final, ok := result.(podPickerModel); ok {
-		final.podMonitorState.stop()
-	}
-	if err != nil {
-		return nil, false, err
-	}
-	selected = result.(podPickerModel).selected
-	return selected, len(selected) > 0, nil
 }
 
 func preparePodPickerRows(apps []core.AppChoice) []podPickerRow {
@@ -67,25 +50,9 @@ func preparePodPickerRows(apps []core.AppChoice) []podPickerRow {
 	return rows
 }
 
-func (m podPickerModel) Init() tea.Cmd {
-	if m.refreshContext == nil {
-		return nil
-	}
-	return pickerRefreshCmd()
-}
+func (m podPickerModel) Init() tea.Cmd { return nil }
 
 func (m podPickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := message.(type) {
-	case pickerRefreshTick:
-		if m.refreshContext == nil {
-			return m, nil
-		}
-		return m, loadPickerAppsCmd(m.refreshContext, m.kubeContext, m.namespace)
-	case pickerRefreshResult:
-		m.refreshPods(msg)
-		return m, pickerRefreshCmd()
-	}
-
 	if handled, cmd := m.podMonitorState.update(message, m.rows, m.kubeContext, m.namespace); handled {
 		return m, cmd
 	}
@@ -94,7 +61,8 @@ func (m podPickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		switch key.String() {
 		case "ctrl+c", "q", "esc":
 			m.podMonitorState.stop()
-			return m, tea.Quit
+			m.done = true
+			return m, nil
 		case "up", "k":
 			m.index = max(0, m.index-1)
 		case "down", "j":
@@ -152,7 +120,8 @@ func (m podPickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					m.selected = []string{m.rows[m.index].pod.Name}
 				}
 				m.podMonitorState.stop()
-				return m, tea.Quit
+				m.done = true
+				return m, nil
 			}
 		}
 	}

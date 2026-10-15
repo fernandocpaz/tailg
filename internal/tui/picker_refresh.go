@@ -11,22 +11,38 @@ import (
 
 const pickerRefreshInterval = 5 * time.Second
 
-type pickerRefreshTick struct{}
+type pickerRefreshTick struct {
+	scope   string
+	request int
+}
 type pickerRefreshResult struct {
-	apps []core.AppChoice
-	err  error
+	scope   string
+	request int
+	apps    []core.AppChoice
+	err     error
 }
 
-func pickerRefreshCmd() tea.Cmd {
-	return tea.Tick(pickerRefreshInterval, func(time.Time) tea.Msg { return pickerRefreshTick{} })
+func (m pickerModel) pickerRefreshAfter() tea.Cmd {
+	scope, request := activityScope(m.kubeContext, m.namespace), m.inventoryRequest
+	return tea.Tick(pickerRefreshInterval, func(time.Time) tea.Msg { return pickerRefreshTick{scope: scope, request: request} })
 }
 
-func loadPickerAppsCmd(ctx context.Context, kubeContext, namespace string) tea.Cmd {
+func (m *pickerModel) refreshPickerInventory() tea.Cmd {
+	if m.inventoryBusy {
+		return nil
+	}
+	m.inventoryBusy = true
+	m.inventoryRequest++
+	ctx := m.refreshContext
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	kubeContext, namespace, request := m.kubeContext, m.namespace, m.inventoryRequest
 	return func() tea.Msg {
 		limited, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
 		apps, err := kube.NewRunner(namespace, kubeContext).Apps(limited)
-		return pickerRefreshResult{apps: apps, err: err}
+		return pickerRefreshResult{scope: activityScope(kubeContext, namespace), request: request, apps: apps, err: err}
 	}
 }
 
@@ -40,6 +56,7 @@ func (m *pickerModel) refreshApps(msg pickerRefreshResult) {
 		name = m.apps[m.index].Name
 	}
 	m.apps, m.totalApps = preparePickerApps(msg.apps)
+	m.allApps = append([]core.AppChoice(nil), msg.apps...)
 	m.loadError = ""
 	if msg.err != nil {
 		m.loadError = pickerErrorSummary(msg.err)

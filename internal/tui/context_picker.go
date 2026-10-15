@@ -14,14 +14,10 @@ type contextPickerModel struct {
 	index    int
 	selected string
 	expanded bool
+	done     bool
 }
 
-// PickContext returns ok=false when the user cancels. The highlighted entry
-// follows tailg's current session context, which may differ from kubectl's.
-func PickContext(contexts []kube.ContextInfo, current string, usage map[string]ChoiceUsage) (selected string, ok bool, err error) {
-	if len(contexts) == 0 {
-		return "", false, fmt.Errorf("no Kubernetes contexts were found in kubeconfig")
-	}
+func newContextPickerModel(contexts []kube.ContextInfo, current string, usage map[string]ChoiceUsage) contextPickerModel {
 	names := make([]string, 0, len(contexts))
 	byName := make(map[string]kube.ContextInfo, len(contexts))
 	for _, entry := range contexts {
@@ -32,12 +28,7 @@ func PickContext(contexts []kube.ContextInfo, current string, usage map[string]C
 	for _, name := range rankPickerNames(names, current, usage) {
 		model.contexts = append(model.contexts, byName[name])
 	}
-	result, err := tea.NewProgram(model).Run()
-	if err != nil {
-		return "", false, err
-	}
-	selected = result.(contextPickerModel).selected
-	return selected, selected != "", nil
+	return model
 }
 
 func (m contextPickerModel) Init() tea.Cmd { return nil }
@@ -46,26 +37,32 @@ func (m contextPickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := message.(tea.KeyMsg); ok {
 		switch key.String() {
 		case "ctrl+c", "q":
-			return m, tea.Quit
+			m.done = true
+			return m, nil
 		case "esc", "b":
 			if m.expanded {
 				m.expanded = false
 				m.index = 0
 				return m, nil
 			}
-			return m, tea.Quit
+			m.done = true
+			return m, nil
 		case "up", "k":
 			m.index = max(0, m.index-1)
 		case "down", "j":
-			m.index = min(visibleChoiceCount(len(m.contexts), m.expanded)-1, m.index+1)
+			m.index = max(0, min(visibleChoiceCount(len(m.contexts), m.expanded)-1, m.index+1))
 		case "enter":
 			if isMoreChoice(m.index, len(m.contexts), m.expanded) {
 				m.expanded = true
 				m.index = frequentChoices
 				return m, nil
 			}
+			if len(m.contexts) == 0 {
+				return m, nil
+			}
 			m.selected = m.contexts[m.index].Name
-			return m, tea.Quit
+			m.done = true
+			return m, nil
 		}
 	}
 	return m, nil

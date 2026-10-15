@@ -19,12 +19,12 @@ type namespacePickerModel struct {
 	loadError  string
 	entering   bool
 	expanded   bool
+	done       bool
 	input      textinput.Model
 }
 
-// PickNamespace allows entering a name even when RBAC denies listing all
-// namespaces. Actual access is checked when the app picker loads pods.
-func PickNamespace(namespaces []string, current string, listErr error, usage map[string]ChoiceUsage) (selected string, ok bool, err error) {
+// A manually entered namespace remains available when RBAC denies listing.
+func newNamespacePickerModel(namespaces []string, current string, listErr error, usage map[string]ChoiceUsage) namespacePickerModel {
 	input := textinput.New()
 	input.Prompt = "Namespace: "
 	input.Placeholder = "type a namespace name"
@@ -38,12 +38,7 @@ func PickNamespace(namespaces []string, current string, listErr error, usage map
 			break
 		}
 	}
-	result, err := tea.NewProgram(model).Run()
-	if err != nil {
-		return "", false, err
-	}
-	selected = result.(namespacePickerModel).selected
-	return selected, selected != "", nil
+	return model
 }
 
 func namespacePickerChoices(namespaces []string, current string, listErr error, usage map[string]ChoiceUsage) []string {
@@ -79,7 +74,8 @@ func (m namespacePickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.entering {
 			switch key.String() {
 			case "ctrl+c":
-				return m, tea.Quit
+				m.done = true
+				return m, nil
 			case "esc":
 				m.entering = false
 				m.input.Blur()
@@ -87,7 +83,8 @@ func (m namespacePickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter":
 				if name := strings.TrimSpace(m.input.Value()); name != "" {
 					m.selected = name
-					return m, tea.Quit
+					m.done = true
+					return m, nil
 				}
 				return m, nil
 			}
@@ -97,14 +94,16 @@ func (m namespacePickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch key.String() {
 		case "ctrl+c", "q":
-			return m, tea.Quit
+			m.done = true
+			return m, nil
 		case "esc", "b":
 			if m.expanded {
 				m.expanded = false
 				m.index = 0
 				return m, nil
 			}
-			return m, tea.Quit
+			m.done = true
+			return m, nil
 		case "/":
 			m.entering = true
 			return m, m.input.Focus()
@@ -122,9 +121,15 @@ func (m namespacePickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if len(m.namespaces) > 0 {
 				m.selected = m.namespaces[m.index]
-				return m, tea.Quit
+				m.done = true
+				return m, nil
 			}
 		}
+	}
+	if m.entering {
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(message)
+		return m, cmd
 	}
 	return m, nil
 }
