@@ -134,6 +134,7 @@ type Report struct {
 	Recommendations  []string          `json:"recommendations,omitempty"`
 	CollectionErrors []CollectionError `json:"collectionErrors"`
 	Truncated        bool              `json:"truncated"`
+	Network          *NetworkReport    `json:"network,omitempty"`
 }
 
 type CollectOptions struct {

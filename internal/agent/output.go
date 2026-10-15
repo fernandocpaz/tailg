@@ -43,6 +43,12 @@ func fitReport(report Report, format string) ([]byte, error) {
 }
 
 func LimitReport(report Report, format string) (Report, error) {
+	if report.Network != nil {
+		network := *report.Network
+		network.Resources = append([]NetworkResource(nil), network.Resources...)
+		network.Coverage.Reasons = append([]string(nil), network.Coverage.Reasons...)
+		report.Network = &network
+	}
 	for {
 		data, err := encodeReport(report, format)
 		if err != nil {
@@ -54,6 +60,7 @@ func LimitReport(report Report, format string) (Report, error) {
 		report.Truncated = true
 		markOutputTruncation(&report)
 		switch {
+		case report.Network != nil && trimNetwork(report.Network):
 		case len(report.KubernetesEvents) > 0:
 			report.KubernetesEvents = report.KubernetesEvents[:len(report.KubernetesEvents)-1]
 		case trimOneContext(&report):
@@ -152,6 +159,11 @@ func encodeReport(report Report, format string) ([]byte, error) {
 			return nil, err
 		}
 	}
+	if report.Network != nil {
+		if err := write("network", report.Network); err != nil {
+			return nil, err
+		}
+	}
 	return output.Bytes(), nil
 }
 
@@ -242,6 +254,25 @@ func encodeTextReport(report Report) []byte {
 		}
 	}
 
+	if report.Network != nil {
+		n := report.Network
+		fmt.Fprintf(&output, "\nNETWORK | status=%s | coverage=%s | resources=%d | REVIEW=%d | UNKNOWN=%d | truncated=%t\n", n.Summary.Status, n.Coverage.Status, n.Summary.Resources, n.Summary.Review, n.Summary.Unknown, n.Truncated)
+		for _, r := range n.Resources {
+			fmt.Fprintf(&output, "%s %s | %s\n", strings.ToUpper(r.Status), r.ID, r.Summary)
+		}
+		for _, e := range n.Events {
+			fmt.Fprintf(&output, "%s | %s | %s | %s\n", e.Type, e.Object, e.Reason, e.Message)
+		}
+		for _, c := range n.Correlations {
+			fmt.Fprintf(&output, "Association | issue=%s | resource=%s | pods=%s (not proof of cause)\n", c.IssueID, c.Resource, strings.Join(c.Pods, ","))
+		}
+		for _, e := range n.CollectionErrors {
+			fmt.Fprintf(&output, "INCOMPLETE | %s\n", e.Message)
+		}
+		for _, l := range n.Limitations {
+			fmt.Fprintf(&output, "Note: %s\n", l)
+		}
+	}
 	if len(report.Recommendations) > 0 {
 		output.WriteString("\nNEXT ACTIONS\n")
 		for index, recommendation := range report.Recommendations {

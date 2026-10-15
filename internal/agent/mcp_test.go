@@ -40,8 +40,8 @@ func TestMCPSupportsModernDiscoveryAndTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	tools := list["result"].(map[string]any)["tools"].([]any)
-	if len(tools) != 9 {
-		t.Fatalf("got %d tools, want three diagnostic, three monitor, two evidence, and one work-item tool", len(tools))
+	if len(tools) != 10 {
+		t.Fatalf("got %d tools, want four diagnostic, three monitor, two evidence, and one work-item tool", len(tools))
 	}
 	firstSchema := tools[0].(map[string]any)["inputSchema"].(map[string]any)
 	if _, present := firstSchema["required"]; present {
@@ -85,5 +85,28 @@ func TestMCPAnyHandlerReturnsStructuredMonitorResult(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), `"structuredContent":{"incidents":[],"status":"healthy"}`) {
 		t.Fatalf("custom result was not returned as structured content: %s", output.String())
+	}
+}
+
+func TestMCPNetworkSchemaAndArgumentScope(t *testing.T) {
+	var schema map[string]any
+	for _, tool := range mcpTools() {
+		if tool["name"] == "tailg_network_diagnose" {
+			schema = tool["inputSchema"].(map[string]any)
+			annotations := tool["annotations"].(map[string]any)
+			if annotations["readOnlyHint"] != true || annotations["destructiveHint"] != false {
+				t.Fatal("network tool must be read-only")
+			}
+		}
+	}
+	if schema == nil || schema["additionalProperties"] != false || len(schema["properties"].(map[string]any)) != 3 {
+		t.Fatal("network schema must be namespace-only with an explicit byte budget")
+	}
+	input := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"tailg_network_diagnose","arguments":{"target":"api"}}}` + "\n"
+	called := false
+	var out strings.Builder
+	err := ServeMCPAny(context.Background(), strings.NewReader(input), &out, func(context.Context, string, ToolArguments) (any, error) { called = true; return nil, nil })
+	if err != nil || called || !strings.Contains(out.String(), "-32602") {
+		t.Fatal("invalid target silently broadened to a whole-namespace query")
 	}
 }

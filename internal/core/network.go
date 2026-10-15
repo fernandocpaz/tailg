@@ -20,6 +20,7 @@ type NetworkReport struct {
 	Rows               []NetworkRow
 	Events             []NamespaceEvent
 	Errors             []string
+	Sources            map[string]bool
 }
 
 func (r NetworkReport) Text() string {

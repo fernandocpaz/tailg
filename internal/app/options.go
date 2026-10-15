@@ -11,6 +11,8 @@ type Options struct {
 	Status          bool
 	Versions        bool
 	Network         bool
+	NetworkOutput   string
+	NetworkMaxBytes int
 	StatusLookback  time.Duration
 	StatusInterval  time.Duration
 	StatusTimeout   time.Duration
