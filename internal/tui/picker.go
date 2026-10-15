@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/fernandocpaz/tailg/internal/core"
+	"github.com/fernandocpaz/tailg/internal/update"
 )
 
 const maxPickerApps = 20
@@ -42,6 +43,7 @@ type pickerModel struct {
 	podMonitorState
 	monitorApps map[string]podHealthDisplay
 	activity    namespaceActivityState
+	updates     updateState
 }
 
 type PickerAction int
@@ -50,6 +52,7 @@ const (
 	PickerQuit PickerAction = iota
 	PickerOpenApp
 	PickerRunCronJob
+	PickerRestart
 )
 
 type PickerResult struct {
@@ -67,13 +70,14 @@ type PickerUsage struct {
 	Namespaces map[string]map[string]ChoiceUsage
 }
 
-func PickApp(apps []core.AppChoice, kubeContext, namespace string, loadErr error, previous []string, usage PickerUsage, notice ...string) (PickerResult, error) {
+func PickApp(apps []core.AppChoice, kubeContext, namespace string, loadErr error, previous []string, usage PickerUsage, updates *update.Client, notice ...string) (PickerResult, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	prepared, total := preparePickerApps(apps)
 	model := newPickerModel(prepared, total, kubeContext, namespace, previous)
 	model.allApps = apps
 	model.usage = usage
+	model.updates.client = updates
 	model.refreshContext = ctx
 	model.activity.busy = true
 	model.activity.request = 1
@@ -116,9 +120,33 @@ func (m pickerModel) Init() tea.Cmd {
 	if m.refreshContext == nil {
 		return nil
 	}
-	return tea.Batch(m.pickerRefreshAfter(), loadNamespaceActivity(m.refreshContext, m.kubeContext, m.namespace, m.activity.request))
+	return tea.Batch(m.pickerRefreshAfter(), loadNamespaceActivity(m.refreshContext, m.kubeContext, m.namespace, m.activity.request), m.updates.check(m.refreshContext))
 }
 func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	if m.updates.receive(message) {
+		if m.updates.restart {
+			m.podMonitorState.stop()
+			m.result.Action = PickerRestart
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+	if msg, ok := message.(tea.KeyMsg); ok && m.showUpdate() {
+		if msg.String() == "ctrl+c" {
+			m.podMonitorState.stop()
+			m.result.Action = PickerQuit
+			return m, tea.Quit
+		}
+		width, height := m.modalViewport()
+		if width < 40 || height < 12 {
+			if !m.updates.busy && (msg.String() == "esc" || msg.String() == "q") {
+				m.updates.pending = false
+				m.updates.client.Dismiss()
+			}
+			return m, nil
+		}
+		return m, m.updates.key(m.refreshContext, msg)
+	}
 	if handled, cmd := m.updatePickerSelectionMessage(message); handled {
 		return m, cmd
 	}
@@ -315,6 +343,10 @@ const pickerAppWidth = 36
 
 func (m pickerModel) View() string {
 	background := m.pickerView()
+	if m.showUpdate() {
+		width, height := m.modalViewport()
+		return overlayModal(background, m.updates.view(width, height), width, height)
+	}
 	if m.selection != nil {
 		width, height := m.modalViewport()
 		return overlayModal(background, m.pickerSelectionView(), width, height)
@@ -335,6 +367,10 @@ func (m pickerModel) View() string {
 	width, height := m.modalViewport()
 	dialog, _ := m.cronJobModalLayout(width, height)
 	return overlayModal(background, dialog, width, height)
+}
+
+func (m pickerModel) showUpdate() bool {
+	return m.updates.pending && m.selection == nil && !m.helpVisible && m.activity.view == "" && m.confirmRun == nil
 }
 
 func (m pickerModel) pickerView() string {

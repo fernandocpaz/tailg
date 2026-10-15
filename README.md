@@ -56,6 +56,37 @@ automatically publishes a new stable release, so `@latest` follows released
 features. Go's module proxy can briefly cache an older version immediately
 after publication; rerun the command after it refreshes.
 
+### Startup update check and self-update
+
+Interactive application pickers and live log views check GitHub's latest stable
+release in the background once per session. When a newer version is available,
+a modal offers **Later** (focused by default) or **Update & restart**. Press `U`
+to update, or `Esc`/`Enter` to continue with your installed version. A pending
+update waits for an existing selection/detail modal to close. Offline, timed-out,
+or rate-limited checks do not block startup; help, version commands, scripts,
+structured output, and child panes do not open update prompts.
+
+Manual checks and updates do not require Go or kubectl:
+
+```sh
+tailg update --check
+tailg update
+```
+
+The updater downloads the binary matching the running OS/architecture, checks
+its GitHub SHA-256 digest and reported version, then replaces the executable at
+its current location. It preserves executable permissions and restores the
+original if replacement fails. Startup updates restart with the original
+arguments; `tailg update` installs and exits so the next launch uses the new
+version. The install directory must be writable. A failed update leaves the
+current session available and shows the version-pinned `go install` fallback.
+Windows may retain the previous locked image until the session exits; updater
+backups older than one day are removed on a later check.
+
+Disable startup checks with `tailg --no-update-check` or set
+`TAILG_NO_UPDATE_CHECK=1`. Untagged development builds skip automatic offers;
+`tailg update` can still explicitly install the latest stable release.
+
 If `tailg` is not found after installation, add Go's installed-binary directory
 to your `PATH`. On Linux or macOS, run this in your terminal and add the same
 line to your shell startup file (`~/.bashrc` or `~/.zshrc`) to make it permanent:
