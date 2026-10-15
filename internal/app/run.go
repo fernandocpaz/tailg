@@ -87,6 +87,7 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 		}
 	}
 	runner := kube.NewRunner(options.Namespace, options.Context)
+	updates := startupUpdates(ctx, options, stdin, stdout)
 	if options.Versions {
 		if options.Status {
 			fmt.Fprintln(stderr, "use either --versions or --status, not both")
@@ -185,7 +186,7 @@ pickAgain:
 	if !namespaceMode {
 		if pickerMode {
 			apps, appsErr := runner.Apps(ctx)
-			selection, selectErr := tui.PickApp(apps, effectiveContext, effectiveNamespace, appsErr, markedApps, tui.PickerUsage{Contexts: usage.Contexts, Namespaces: usage.Namespaces}, pickerNotice)
+			selection, selectErr := tui.PickApp(apps, effectiveContext, effectiveNamespace, appsErr, markedApps, tui.PickerUsage{Contexts: usage.Contexts, Namespaces: usage.Namespaces}, updates, pickerNotice)
 			pickerNotice = ""
 			if selectErr != nil {
 				fmt.Fprintln(stderr, selectErr)
@@ -195,6 +196,8 @@ pickAgain:
 			runner = kube.NewRunner(effectiveNamespace, effectiveContext)
 			options.Context = effectiveContext
 			switch selection.Action {
+			case tui.PickerRestart:
+				return RestartExitCode
 			case tui.PickerQuit:
 				return 0
 			case tui.PickerRunCronJob:
@@ -366,7 +369,7 @@ pickAgain:
 		return followPlain(ctx, runner, items, inventoryProvider, options, formatter, stdout, stderr)
 	}
 	title := logTitle(items, effectiveNamespace, effectiveContext, resolvedTarget)
-	err = tui.Run(ctx, tui.Config{Title: title, Namespace: effectiveNamespace, KubeContext: effectiveContext, Target: resolvedTarget, Items: items, Formatter: formatter, HeartbeatWindow: options.HeartbeatWindow, RefreshInterval: options.RefreshInterval, BufferLines: options.BufferLines, FilterFile: options.FilterFile, Version: BuildDescription(),
+	err = tui.Run(ctx, tui.Config{Updates: updates, Title: title, Namespace: effectiveNamespace, KubeContext: effectiveContext, Target: resolvedTarget, Items: items, Formatter: formatter, HeartbeatWindow: options.HeartbeatWindow, RefreshInterval: options.RefreshInterval, BufferLines: options.BufferLines, FilterFile: options.FilterFile, Version: BuildDescription(),
 		Stream: func(streamCtx context.Context, item core.InventoryItem, cursor *core.LogCursor, events chan<- core.LogEvent) error {
 			visible := func(message string) bool {
 				return len(formatter.Format(item.Pod, item.Container, message, true)) > 0
@@ -394,6 +397,9 @@ pickAgain:
 			records, traceErr := runner.CompleteTrace(traceCtx, current, options.Since, formatter, traceID, options.BufferLines)
 			return records, errors.Join(inventoryErr, traceErr)
 		}, ErrorLogs: runner.PodErrorLogs, LogDetails: runner.LogDetails, ExplainReplicas: runner.ExplainReplicas, MappedResources: runner.MappedResources, ResourceDetail: runner.ResourceDetail})
+	if errors.Is(err, tui.ErrRestart) {
+		return RestartExitCode
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -657,6 +663,7 @@ func childArgs(options Options, namespace string) func(string) []string {
 		if namespace != "" {
 			args = append(args, namespace)
 		}
+		args = append(args, "--no-update-check")
 		if options.Context != "" {
 			args = append(args, "--context", options.Context)
 		}

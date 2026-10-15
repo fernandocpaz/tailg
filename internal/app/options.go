@@ -41,4 +41,5 @@ type Options struct {
 	FilterFile         string
 	NoColor            bool
 	Theme              string
+	NoUpdateCheck      bool
 }

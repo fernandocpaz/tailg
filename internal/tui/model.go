@@ -19,9 +19,11 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/fernandocpaz/tailg/internal/core"
+	"github.com/fernandocpaz/tailg/internal/update"
 )
 
 type Config struct {
+	Updates         *update.Client
 	ErrorLogs       func(context.Context, string) ([][]core.LogEvent, error)
 	LogDetails      func(context.Context, core.LogEvent) ([]core.LogEvent, error)
 	ExplainReplicas func(context.Context, string) (core.ReplicaExplanation, error)
@@ -69,6 +71,7 @@ type resourceDetailMsg struct {
 type sharedFilterTick time.Time
 
 type model struct {
+	updates         updateState
 	errorLogs       errorLogsState
 	replicas        replicaViewState
 	ctx             context.Context
@@ -216,7 +219,8 @@ func Run(parent context.Context, config Config) error {
 	}
 	state.SetMatchesOnly(shared.modeValid && shared.mode)
 	m := model{
-		ctx: ctx, cancel: cancel, config: config, events: events, inventory: inventory, state: state,
+		updates: updateState{client: config.Updates},
+		ctx:     ctx, cancel: cancel, config: config, events: events, inventory: inventory, state: state,
 		heartbeat: &core.HeartbeatAnalyzer{}, input: input, items: items,
 		selected: -1, followsLive: true,
 		lastSharedText: shared.text, lastSharedMode: shared.mode,
@@ -226,12 +230,15 @@ func Run(parent context.Context, config Config) error {
 		issues:    core.NewIssueRadar(200),
 	}
 	program := tea.NewProgram(m, tea.WithAltScreen())
-	_, err := program.Run()
+	final, err := program.Run()
+	if result, ok := final.(model); ok && result.updates.restart {
+		return ErrRestart
+	}
 	return err
 }
 
 func (m model) Init() tea.Cmd {
-	commands := []tea.Cmd{waitForEvent(m.events), waitForInventory(m.inventory), sharedTick()}
+	commands := []tea.Cmd{waitForEvent(m.events), waitForInventory(m.inventory), sharedTick(), m.updates.check(m.ctx)}
 	if strings.TrimSpace(m.config.Title) != "" {
 		commands = append(commands, tea.SetWindowTitle(m.config.Title))
 	}
@@ -242,6 +249,25 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	if m.updates.receive(message) {
+		if m.updates.restart {
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+	if msg, ok := message.(tea.KeyMsg); ok && m.showUpdate() {
+		if msg.String() == "ctrl+c" {
+			return m, tea.Quit
+		}
+		if m.width < 40 || m.height < 12 {
+			if !m.updates.busy && (msg.String() == "esc" || msg.String() == "q") {
+				m.updates.pending = false
+				m.updates.client.Dismiss()
+			}
+			return m, nil
+		}
+		return m, m.updates.key(m.ctx, msg)
+	}
 	switch msg := message.(type) {
 	case errorLogsMsg:
 		return m.updateErrorLogs(msg)
@@ -596,6 +622,11 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
+	if m.showUpdate() && m.width > 0 && m.height > 0 {
+		background := m
+		background.updates.pending = false
+		return overlayModal(background.View(), m.updates.view(m.width, m.height), m.width, m.height)
+	}
 	if m.width <= 0 || m.height <= 0 {
 		return "starting tailg..."
 	}
