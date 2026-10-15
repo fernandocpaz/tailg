@@ -39,6 +39,12 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 	if options.Namespace == "" {
 		options.Namespace = options.LegacyNamespace
 	}
+	if options.Network {
+		if err := validateNetworkOptions(options); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 2
+		}
+	}
 	if options.Since != "" {
 		options.Since = core.NormalizeSince(options.Since)
 		if !options.TailSet {
@@ -87,6 +93,9 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 		}
 	}
 	runner := kube.NewRunner(options.Namespace, options.Context)
+	if options.Network {
+		return runNetwork(ctx, runner, options, stdin, stdout, stderr)
+	}
 	updates := startupUpdates(ctx, options, stdin, stdout)
 	if options.Versions {
 		if options.Status {

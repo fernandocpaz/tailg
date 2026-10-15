@@ -39,6 +39,58 @@ tailg example-app apollo --no-live-filter --theme light
 tailg example-app apollo --no-color
 ```
 
+## Namespace network review
+
+```sh
+tailg --network
+tailg --network --namespace apollo --context tkgs-qa
+tailg --network --namespace apollo --no-live-filter
+tailg --network --namespace apollo --no-live-filter > network-review.txt
+```
+
+`--network` reviews the entire selected namespace. With no namespace/context
+flags it uses your active kubeconfig context and namespace. It never changes
+cluster resources or runs traffic probes. In a terminal it opens a full-screen
+review that refreshes every 15 seconds; redirected output, `--no-follow`, or
+`--no-live-filter` produces one plain-text snapshot.
+
+| Key | View or action |
+| --- | --- |
+| `1` / `2` / `3` / `4` | Routes / Services / Policies / Events |
+| `Tab` / `E` | Next view / Events |
+| `Enter` | Details and related events in a modal |
+| `↑↓`, `PgUp/PgDn`, `Home/End` | Navigate or scroll full details |
+| `/` / `W` | Text filter / show REVIEW and UNKNOWN entries |
+| `R` / `Esc` / `Q` | Refresh / close details or quit / quit |
+
+Ingress and Contour HTTPProxy rows connect host/path conditions and delegated
+include chains to Service ports and backend pods. Details include controller
+status, ingress class, published addresses, TLS secret references, endpoint
+addresses, and Service selectors. Checks identify missing Services/ports,
+selectors matching no pods, and ports with no ready, non-terminating endpoints.
+Endpoint readiness is checked per Service port, with pod endpoints deduplicated
+across IPv4/IPv6. Selectorless/ExternalName Services and
+`publishNotReadyAddresses` receive separate handling.
+
+The events view shows retained events for namespace Pods, Services, Ingresses,
+HTTPProxies, EndpointSlices, and NetworkPolicies, including pod sandbox/CNI
+failures. A resource's detail modal narrows events to that route and its related
+backends. Policies show their selected pods and full rules for review; effective
+allow/deny is not inferred. HTTPProxy includes outside the selected namespace
+are listed as UNKNOWN and are not fetched.
+
+`OK` means the displayed configuration checks passed; it does not verify DNS,
+certificate validity, a TLS handshake, actual HTTP responses, CNI policy
+enforcement, or controller/node events in other namespaces. Secret contents are
+not read. Missing optional APIs (including Contour), RBAC restrictions, invalid
+responses, and timeouts are shown as INCOMPLETE while other sources remain
+available. A plain snapshot exits with status 1 if any source was unavailable;
+otherwise it exits 0 even when REVIEW findings exist.
+
+Implementation references: [Kubernetes EndpointSlices](https://kubernetes.io/docs/concepts/services-networking/endpoint-slices/),
+[Contour HTTPProxy API](https://projectcontour.io/docs/main/config/api/), and
+[Kubernetes NetworkPolicies](https://kubernetes.io/docs/concepts/services-networking/network-policies/).
+
 ## Requirements
 
 - Go 1.25 or a prebuilt release binary

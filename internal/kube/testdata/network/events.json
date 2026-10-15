@@ -1,0 +1,51 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "metadata": {
+        "name": "cni",
+        "namespace": "apollo"
+      },
+      "type": "Warning",
+      "reason": "FailedCreatePodSandBox",
+      "message": "CNI setup failed",
+      "involvedObject": {
+        "kind": "Pod",
+        "name": "api-abc"
+      },
+      "lastTimestamp": "2026-10-15T15:00:00Z",
+      "count": 3
+    },
+    {
+      "metadata": {
+        "name": "ing",
+        "namespace": "apollo"
+      },
+      "type": "Warning",
+      "reason": "SyncFailed",
+      "message": "upstream unavailable",
+      "involvedObject": {
+        "kind": "Ingress",
+        "name": "web"
+      },
+      "lastTimestamp": "2026-10-15T15:01:00Z",
+      "count": 3
+    },
+    {
+      "metadata": {
+        "name": "unrelated",
+        "namespace": "apollo"
+      },
+      "type": "Warning",
+      "reason": "BackOff",
+      "message": "not a network resource",
+      "involvedObject": {
+        "kind": "Job",
+        "name": "cleanup"
+      },
+      "lastTimestamp": "2026-10-15T15:02:00Z",
+      "count": 3
+    }
+  ]
+}

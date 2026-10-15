@@ -23,7 +23,7 @@ func NewCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) 
 	command := &cobra.Command{
 		Use: "tailg [target] [namespace]", Short: "Human-friendly Kubernetes log tailer built in Go", SilenceUsage: true, SilenceErrors: true, Args: cobra.MaximumNArgs(2),
 		Long:    "tailg follows Kubernetes logs across pods. Run it with no target to open the application picker; explicit targets and wildcard patterns remain supported. It provides synchronized live filtering, heartbeat diagnostics, resource inspection, status recovery monitoring, and Windows Terminal layouts.",
-		Example: strings.Join([]string{"tailg", "tailg example-app default", "tailg 'example-*' default --tile-windows", "tailg example-app default --since 4d", "tailg --status --namespace default", "tailg --status 20 --namespace default", "tailg --versions", "tailg --versions --context tkgs-qa --context tkgs-dev"}, "\n"),
+		Example: strings.Join([]string{"tailg", "tailg example-app default", "tailg 'example-*' default --tile-windows", "tailg example-app default --since 4d", "tailg --status --namespace default", "tailg --status 20 --namespace default", "tailg --versions", "tailg --versions --context tkgs-qa --context tkgs-dev", "tailg --network --namespace apollo --context tkgs-qa"}, "\n"),
 		Version: BuildDescription(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if options.Status {
@@ -91,6 +91,7 @@ func NewCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) 
 	flags.StringArrayVar(&contexts, "context", nil, "kubectl context name; repeat with --versions to compare environments")
 	flags.BoolVar(&options.Status, "status", false, "scan health and recent errors; optional positional argument is lookback minutes (default 120)")
 	flags.BoolVar(&options.Versions, "versions", false, "list pod image versions; compare by Image ID when any matching pod uses latest")
+	flags.BoolVar(&options.Network, "network", false, "review namespace Ingress/HTTPProxy routes, Services, endpoints, policies, and related events")
 	flags.DurationVar(&options.StatusInterval, "status-interval", core.DefaultStatusInterval, "delay between status scans")
 	flags.DurationVar(&options.StatusTimeout, "status-timeout", core.DefaultStatusTimeout, "maximum status recovery wait")
 	flags.StringVar(&options.Selector, "selector", "", "label selector override")
