@@ -116,7 +116,14 @@ tailg diagnose example-app default --output ndjson
 ```
 
 Running `tailg` with no target opens the interactive application picker in the
-current Kubernetes namespace.
+current Kubernetes namespace. The picker uses the full terminal screen and
+restores the shell when you leave. Context (`C`) and namespace (`N`) stay at
+the top; **Inspect** groups Changes (`H`) and Events (`E`), beside **Watch**
+and the monitor (`M`). Row actions stay at the bottom, with Run now (`X`)
+shown when a CronJob is highlighted. Press `?` for scrollable keyboard help.
+Columns adapt to the terminal width; the highlighted workload's summary appears
+above the footer. `PgUp`/`PgDn` move through the list and `Home`/`End` jump to
+the first/last row. The picker resizes with the terminal.
 The picker also lists **all CronJobs**, including ones that have never run or
 whose old Jobs/pods have been removed. CronJobs have their own section below
 the newest 20 applications, with schedule, time zone, suspension state, active
