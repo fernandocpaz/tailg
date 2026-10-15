@@ -130,3 +130,16 @@ func TestNamespaceRestartWithoutTimestampUsesObservedTime(t *testing.T) {
 		t.Fatalf("restart fallback: %+v", rows)
 	}
 }
+
+func TestMissingPriorRestartCountIsNotTreatedAsZero(t *testing.T) {
+	now := time.Now()
+	var tracker NamespaceActivityTracker
+	snapshot := NamespaceActivitySnapshot{At: now, Complete: map[string]bool{"pods": true}, Objects: []NamespaceObject{{Resource: "pods", Kind: "Pod", Name: "api", UID: "p"}}}
+	tracker.Apply(snapshot)
+	snapshot.At = now.Add(time.Minute)
+	snapshot.Objects[0].Restarts = map[string]int{"api": 4}
+	tracker.Apply(snapshot)
+	if len(tracker.Changes()) != 0 {
+		t.Fatal("unknown prior counter created a fabricated restart")
+	}
+}

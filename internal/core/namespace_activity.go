@@ -89,7 +89,8 @@ func (t *NamespaceActivityTracker) Apply(snapshot NamespaceActivitySnapshot) {
 		}
 		if same {
 			for container, count := range object.Restarts {
-				if count > old.Restarts[container] && object.RestartTimes[container].IsZero() {
+				previousCount, known := old.Restarts[container]
+				if known && count > previousCount && object.RestartTimes[container].IsZero() {
 					add("Container restart observed", fmt.Sprintf("%s restart count: %d → %d; Kubernetes did not provide a restart timestamp", container, old.Restarts[container], count))
 				}
 			}
@@ -106,7 +107,7 @@ func (t *NamespaceActivityTracker) Apply(snapshot NamespaceActivitySnapshot) {
 				add("Configuration changed", old.Configuration+" → "+object.Configuration)
 				changed = true
 			}
-			if old.Generation != object.Generation && !changed {
+			if old.Generation > 0 && object.Generation > 0 && old.Generation != object.Generation && !changed {
 				add("Spec updated", fmt.Sprintf("Generation %d → %d; field history is unavailable", old.Generation, object.Generation))
 			}
 		} else if !found && t.initialized[object.Resource] && (object.CreatedAt.IsZero() || object.CreatedAt.Before(snapshot.At.Add(-NamespaceChangeWindow))) {

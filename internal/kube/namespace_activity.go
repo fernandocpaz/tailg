@@ -158,6 +158,10 @@ func namespaceObject(item map[string]any, resource, kind string) core.NamespaceO
 			for _, raw := range sliceValue(status[field]) {
 				container := mapValue(raw)
 				count := intValue(container["restartCount"])
+				name := stringValue(container["name"])
+				if container["restartCount"] != nil {
+					object.Restarts[field+"/"+name] = count
+				}
 				if count <= 0 {
 					continue
 				}
@@ -165,8 +169,6 @@ func namespaceObject(item map[string]any, resource, kind string) core.NamespaceO
 				if at.IsZero() {
 					at = parseKubeTimestamp(mapValue(mapValue(container["lastState"])["terminated"])["finishedAt"])
 				}
-				name := stringValue(container["name"])
-				object.Restarts[field+"/"+name] = count
 				object.RestartTimes[field+"/"+name] = at
 				add(fmt.Sprintf("%s/%s/restart/%d", field, name, count), "Container restarted", fmt.Sprintf("%s · restart count %d · last termination: %s", name, count, stringValue(mapValue(mapValue(container["lastState"])["terminated"])["reason"])), at)
 			}

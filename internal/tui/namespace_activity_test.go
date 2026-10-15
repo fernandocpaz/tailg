@@ -97,7 +97,6 @@ func TestNamespaceActivityModalFitsAndResizes(t *testing.T) {
 	for _, size := range []tea.WindowSizeMsg{{Width: 40, Height: 12}, {Width: 80, Height: 24}, {Width: 140, Height: 40}, {Width: 24, Height: 8}} {
 		for _, mode := range []string{"h", "e"} {
 			m := activityKey(namespaceActivityPicker(), mode)
-			m.activity.filter = strings.Repeat("api", 100)
 			updated, _ := m.Update(size)
 			m = updated.(pickerModel)
 			for _, detail := range []bool{false, true} {
@@ -225,5 +224,16 @@ func TestNamespaceActivityOpeningPersistsLoadingStateAndRefreshToken(t *testing.
 	m = updated.(pickerModel)
 	if cmd == nil || !m.activity.busy || m.activity.request != 2 {
 		t.Fatal("manual refresh token not retained")
+	}
+}
+
+func TestNamespaceActivityLongFilterKeepsCloseControlVisible(t *testing.T) {
+	m := activityKey(namespaceActivityPicker(), "e")
+	m.width = 40
+	m.height = 12
+	m.activity.filter = strings.Repeat("api", 100)
+	view := ansi.Strip(m.View())
+	if len(strings.Split(view, "\n")) != 12 || !strings.Contains(view, "Esc") {
+		t.Fatal("long filter pushed controls out of viewport")
 	}
 }
