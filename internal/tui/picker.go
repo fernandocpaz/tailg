@@ -41,7 +41,10 @@ type pickerModel struct {
 	confirmRunFocused bool
 	confirmRunScroll  int
 	podMonitorState
-	monitorApps map[string]podHealthDisplay
+	monitorApps           map[string]podHealthDisplay
+	deploymentInventory   map[string]deploymentVersion
+	deploymentToasts      []deploymentToast
+	nextDeploymentToastID int
 	activity    namespaceActivityState
 	updates     updateState
 }
@@ -154,6 +157,9 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	switch msg := message.(type) {
+	case deploymentToastExpiredMsg:
+		m.expireDeploymentToast(msg)
+		return m, nil
 	case pickerRefreshTick:
 		if m.refreshContext == nil || msg.scope != activityScope(m.kubeContext, m.namespace) || msg.request != m.inventoryRequest {
 			return m, nil
@@ -168,13 +174,15 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.inventoryBusy = false
+		var toastCmd tea.Cmd
 		if m.confirmRun == nil {
+			toastCmd = m.detectDeployments(msg.apps, msg.err)
 			m.refreshApps(msg)
 			if m.selection != nil && m.selection.pods != nil {
 				m.selection.pods.refreshPods(msg)
 			}
 		}
-		return m, m.pickerRefreshAfter()
+		return m, tea.Batch(m.pickerRefreshAfter(), toastCmd)
 	}
 
 	// Preserve the prior counters for warning trends, then apply each pod's
@@ -260,6 +268,11 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.openPickerSelection("pods")
 		case keyMatches(key, pickerKeys.monitor):
 			m.monitorApps = nil
+			if m.monitorEnabled {
+				m.clearDeploymentNotifications()
+			} else {
+				m.beginDeploymentNotifications()
+			}
 			return m, m.podMonitorState.toggle(preparePodPickerRows(m.apps), m.kubeContext, m.namespace)
 		case keyMatches(key, pickerKeys.mark):
 			if len(m.apps) > 0 {
@@ -342,7 +355,7 @@ func (m pickerModel) checkedChoices() []core.AppChoice {
 const pickerAppWidth = 36
 
 func (m pickerModel) View() string {
-	background := m.pickerView()
+	background := m.overlayDeploymentToasts(m.pickerView())
 	if m.showUpdate() {
 		width, height := m.modalViewport()
 		return overlayModal(background, m.updates.view(width, height), width, height)
