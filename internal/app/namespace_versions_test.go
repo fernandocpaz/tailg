@@ -63,7 +63,7 @@ func TestRepeatedNamespacesUseCurrentContextForVersionComparison(t *testing.T) {
 		t.Fatalf("version compare failed: %v\n%s", err, output)
 	}
 	for _, want := range []string{"IMAGE VERSION COMPARISON", "context=tkgs-qa", "namespaces=apollo,emr2train",
-		"comparable=1", "differing=1", "api", "10", "11", "DIFF"} {
+		"comparable=1", "differing=1", "api", "IMAGE ID", "sha256:old", "sha256:new", "DIFF"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("missing %q:\n%s", want, output)
 		}
