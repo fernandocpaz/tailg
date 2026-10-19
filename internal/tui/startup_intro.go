@@ -58,7 +58,7 @@ func (m pickerModel) startupIntroView() string {
 	}
 
 	var lines []string
-	lines = append(lines, headerStyle.Render("tailg")+"  "+dimStyle.Render("Kubernetes log explorer"))
+	lines = append(lines, headerStyle.Render("tailg") + "   " + dimStyle.Render("ROAD RUNNER  /  Kubernetes log explorer"))
 	lines = append(lines, "")
 	lines = append(lines, "")
 	for _, line := range bird {
@@ -73,7 +73,6 @@ func (m pickerModel) startupIntroView() string {
 	}
 	lines = append(lines, dimStyle.Render("Press any key to skip"))
 	
-	contentWidth := 58
 	firstRow := max(0, (height-len(lines))/2)
 	body := make([]string, firstRow, firstRow+len(lines))
 	// Keep header centered; the runner is shifted independently.
@@ -83,6 +82,5 @@ func (m pickerModel) startupIntroView() string {
 		}
 		body = append(body, ansi.Truncate(line, width, ""))
 	}
-	_ = contentWidth
 	return pickerScreenFrame(body, nil, width, height)
 }
