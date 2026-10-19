@@ -138,6 +138,9 @@ func ImageVersionsReport(payload map[string]any, namespace string) string {
 	return report.String()
 }
 
+// ImageVersionDifferencesReport compares the running image IDs reported by
+// Kubernetes, never tags. Identical tags do not prove identical image content.
+// Rows with missing runtime image IDs are UNKNOWN, not matches.
 func ImageVersionDifferencesReport(snapshots []ImageVersionSnapshot) string {
 	contexts := make([]string, 0, len(snapshots))
 	versionsByKey := map[imageComparisonKey]map[string][]ImageVersion{}
@@ -152,25 +155,47 @@ func ImageVersionDifferencesReport(snapshots []ImageVersionSnapshot) string {
 		}
 	}
 
-	keys := make([]imageComparisonKey, 0, len(versionsByKey))
-	for key := range versionsByKey {
-		useImageID := comparisonUsesImageID(versionsByKey[key])
+	type comparisonRow struct {
+		key    imageComparisonKey
+		values []string
+		status string
+	}
+	var rows []comparisonRow
+	mismatches, unknown := 0, 0
+	for key, versions := range versionsByKey {
 		values := make([]string, len(contexts))
+		missing := false
 		for i, contextName := range contexts {
-			values[i] = joinedComparisonValues(versionsByKey[key][contextName], useImageID)
+			values[i] = joinedComparisonImageIDs(versions[contextName])
+			if len(versions[contextName]) == 0 {
+				missing = true
+			}
 		}
-		if differingValues(values) {
-			keys = append(keys, key)
+		status := ""
+		switch {
+		case missing:
+			status = "MISSING"
+			mismatches++
+		case hasUnavailableImageID(values):
+			status = "UNKNOWN"
+			unknown++
+		case differingValues(values):
+			status = "DIFF"
+			mismatches++
+		}
+		if status != "" {
+			rows = append(rows, comparisonRow{key: key, values: values, status: status})
 		}
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].Workload != keys[j].Workload {
-			return keys[i].Workload < keys[j].Workload
+	sort.Slice(rows, func(i, j int) bool {
+		left, right := rows[i].key, rows[j].key
+		if left.Workload != right.Workload {
+			return left.Workload < right.Workload
 		}
-		if imageTypeOrder(keys[i].Type) != imageTypeOrder(keys[j].Type) {
-			return imageTypeOrder(keys[i].Type) < imageTypeOrder(keys[j].Type)
+		if imageTypeOrder(left.Type) != imageTypeOrder(right.Type) {
+			return imageTypeOrder(left.Type) < imageTypeOrder(right.Type)
 		}
-		return keys[i].Container < keys[j].Container
+		return left.Container < right.Container
 	})
 
 	var report strings.Builder
@@ -178,53 +203,34 @@ func ImageVersionDifferencesReport(snapshots []ImageVersionSnapshot) string {
 	for _, snapshot := range snapshots {
 		fmt.Fprintf(&report, " | %s=%s", snapshot.Context, valueOrUnknown(snapshot.Namespace))
 	}
-	fmt.Fprintf(&report, " | mismatches=%d\n", len(keys))
-	if len(keys) == 0 {
-		report.WriteString("\nAll compared workload container image versions match.\n")
+	fmt.Fprintf(&report, " | mismatches=%d | unknown=%d\n", mismatches, unknown)
+	if len(rows) == 0 {
+		report.WriteString("\nAll compared workload container image IDs match.\n")
 		return report.String()
 	}
 
 	headings := append([]string{"WORKLOAD", "CONTAINER", "COMPARE"}, contexts...)
-	rows := make([][]string, 0, len(keys))
-	for _, key := range keys {
-		useImageID := comparisonUsesImageID(versionsByKey[key])
-		basis := "TAG"
-		if useImageID {
-			basis = "IMAGE ID"
-		}
-		row := []string{key.Workload, key.Container, basis}
-		for _, contextName := range contexts {
-			row = append(row, joinedComparisonValues(versionsByKey[key][contextName], useImageID))
-		}
-		rows = append(rows, row)
+	headings = append(headings, "RESULT")
+	gridRows := make([][]string, 0, len(rows))
+	for _, entry := range rows {
+		row := append([]string{entry.key.Workload, entry.key.Container, "IMAGE ID"}, entry.values...)
+		gridRows = append(gridRows, append(row, entry.status))
 	}
 	report.WriteString("\n")
-	writeImageGrid(&report, headings, rows)
+	writeImageGrid(&report, headings, gridRows)
 	return report.String()
 }
 
-func comparisonUsesImageID(versionsByContext map[string][]ImageVersion) bool {
-	for _, versions := range versionsByContext {
-		for _, version := range versions {
-			if strings.EqualFold(version.Tag, "latest") {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func joinedComparisonValues(versions []ImageVersion, useImageID bool) string {
+// joinedComparisonImageIDs retains all replica image IDs so an in-progress
+// rollout is a mismatch even when the deployment's configured tag is unchanged.
+// Missing IDs stay explicit and never fall back to the tag.
+func joinedComparisonImageIDs(versions []ImageVersion) string {
 	if len(versions) == 0 {
 		return "missing"
 	}
 	unique := map[string]bool{}
 	for _, version := range versions {
-		value := version.Tag
-		if useImageID {
-			value = version.ImageID
-		}
-		unique[value] = true
+		unique[valueOrUnavailable(strings.TrimSpace(version.ImageID))] = true
 	}
 	values := make([]string, 0, len(unique))
 	for value := range unique {
