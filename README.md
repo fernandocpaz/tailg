@@ -8,6 +8,13 @@ filtering across Windows Terminal panes, pod resource inspection, heartbeat
 diagnostics, namespace health monitoring, troubleshooting bundles, and bounded
 structured diagnostics for scripts and AI agents.
 
+## Road Runner startup animation
+
+Running `tailg` in an interactive terminal plays a brief, skippable ASCII Road
+Runner animation before the application picker opens. Press any key to skip;
+Ctrl+C still quits. It runs only on the first picker entry, never for scripts,
+subcommands, or redirected output. Use `tailg --no-intro` to disable it.
+
 ## Adaptive terminal colors
 
 Tailg detects the terminal's foreground and background at startup and adjusts
