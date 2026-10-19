@@ -31,9 +31,9 @@ func TestNamespaceComparisonMatchesByWorkloadAndContainerNotPodName(t *testing.T
 	report := ImageNamespaceComparisonReport([]ImageVersionSnapshot{apollo, train})
 	for _, want := range []string{
 		"context=tkgs-qa", "namespaces=apollo,emr2train",
-		"comparable=3", "matching=2", "differing=1", "unknown=0", "unmatched=2",
-		"WORKLOAD", "CONTAINER", "COMPARE", "RESULT", "encounter", "101", "102", "DIFF",
-		"patient", "IMAGE ID", "sha256:same", "stable", "230", "MATCH",
+		"comparable=3", "matching=1", "differing=2", "unknown=0", "unmatched=2",
+		"WORKLOAD", "CONTAINER", "COMPARE", "RESULT", "encounter", "sha256:a", "sha256:b", "DIFF",
+		"patient", "IMAGE ID", "sha256:same", "stable", "sha256:one", "sha256:different", "MATCH",
 		"NOT COMPARABLE", "apollo-only", "train-only", "missing",
 	} {
 		if !strings.Contains(report, want) {
@@ -43,12 +43,12 @@ func TestNamespaceComparisonMatchesByWorkloadAndContainerNotPodName(t *testing.T
 	if strings.Index(report, "encounter") > strings.Index(report, "patient") {
 		t.Fatal("differences must sort above matching versions")
 	}
-	if strings.Contains(report, "sha256:different") {
-		t.Fatal("numbered tags should compare by tags, not image IDs")
+	if !strings.Contains(report, "sha256:different") {
+		t.Fatal("a numbered tag must not hide different image IDs")
 	}
 }
 
-func TestNamespaceComparisonUsesImageIDIfEitherNamespaceUsesLatest(t *testing.T) {
+func TestNamespaceComparisonUsesImageIDsForMixedTags(t *testing.T) {
 	report := ImageNamespaceComparisonReport([]ImageVersionSnapshot{
 		namespaceSnapshot("apollo",
 			versionForCompare("same", "api", "105", "sha256:yes"),
@@ -85,7 +85,7 @@ func TestNamespaceComparisonDetectsMixedReplicaVersions(t *testing.T) {
 		namespaceSnapshot("apollo", versionForCompare("api", "main", "200", "a"), versionForCompare("api", "main", "201", "b")),
 		namespaceSnapshot("emr2train", versionForCompare("api", "main", "201", "c")),
 	})
-	for _, want := range []string{"200, 201", "201", "DIFF"} {
+	for _, want := range []string{"a, b", "c", "DIFF"} {
 		if !strings.Contains(report, want) {
 			t.Fatalf("unexpected mixed rollout report:\n%s", report)
 		}
@@ -97,5 +97,44 @@ func TestNamespaceVersionComparisonRejectsDuplicateBeforeKubernetes(t *testing.T
 	code := RunNamespaceVersionComparison(context.Background(), "tkgs-qa", []string{"apollo", "apollo"}, &output)
 	if code != 2 || !strings.Contains(output.String(), "more than once") {
 		t.Fatalf("expected duplicate argument error, code=%d output=%q", code, output.String())
+	}
+}
+
+func TestNamespaceComparisonSameTagDifferentIDsAlwaysDiff(t *testing.T) {
+	report := ImageNamespaceComparisonReport([]ImageVersionSnapshot{
+		namespaceSnapshot("apollo",
+			versionForCompare("service", "main", "200", "sha256:old"),
+			versionForCompare("same-binary", "main", "100", "sha256:same"),
+		),
+		namespaceSnapshot("emr2train",
+			versionForCompare("service", "main", "200", "sha256:new"),
+			versionForCompare("same-binary", "main", "101", "sha256:same"),
+		),
+	})
+	for _, expected := range []string{"matching=1", "differing=1", "IMAGE ID", "sha256:old", "sha256:new", "DIFF", "MATCH"} {
+		if !strings.Contains(report, expected) {
+			t.Fatalf("Image ID must be authoritative regardless of tag (%q): %s", expected, report)
+		}
+	}
+}
+
+func TestNamespaceComparisonMissingIDsNeverMatch(t *testing.T) {
+	report := ImageNamespaceComparisonReport([]ImageVersionSnapshot{
+		namespaceSnapshot("apollo",
+			versionForCompare("missing-both", "api", "200", "unavailable"),
+			versionForCompare("missing-one", "api", "201", "unavailable"),
+			versionForCompare("mixed-replicas", "api", "202", "sha256:known"),
+			versionForCompare("mixed-replicas", "api", "202", "unavailable"),
+		),
+		namespaceSnapshot("emr2train",
+			versionForCompare("missing-both", "api", "200", "unavailable"),
+			versionForCompare("missing-one", "api", "201", "sha256:yes"),
+			versionForCompare("mixed-replicas", "api", "202", "sha256:known"),
+		),
+	})
+	for _, expected := range []string{"matching=0", "differing=0", "unknown=3", "UNKNOWN", "IMAGE ID", "unavailable"} {
+		if !strings.Contains(report, expected) {
+			t.Fatalf("missing image ID cannot be reported as a match (%q): %s", expected, report)
+		}
 	}
 }
