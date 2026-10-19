@@ -146,6 +146,7 @@ func (m *pickerModel) updatePickerSelectionMessage(message tea.Msg) (bool, tea.C
 		m.closePickerSelection()
 		m.podMonitorState.stop()
 		m.monitorApps = nil
+		m.clearDeploymentNotifications()
 		m.kubeContext, m.namespace = msg.kubeContext, msg.namespace
 		m.index, m.checked, m.note, m.loadError = 0, nil, "", ""
 		m.apps, m.totalApps = preparePickerApps(msg.apps)
