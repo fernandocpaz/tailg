@@ -226,6 +226,9 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if size, ok := message.(tea.WindowSizeMsg); ok {
 		m.width = size.Width
 		m.height = size.Height
+		if m.introActive && (size.Width < 45 || size.Height < 14) {
+			m.introActive = false // Do not consume keys for an animation that cannot be displayed.
+		}
 		m.resizePickerSelectionInput()
 		if m.confirmRun != nil && size.Width >= minCronJobModalWidth && size.Height >= minCronJobModalHeight {
 			_, maxScroll := m.cronJobModalLayout(size.Width, size.Height)
