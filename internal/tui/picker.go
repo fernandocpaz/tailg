@@ -36,6 +36,8 @@ type pickerModel struct {
 	width             int
 	height            int
 	helpVisible       bool
+	introActive       bool
+	introFrame        int
 	helpScroll        int
 	confirmRun        *core.AppChoice
 	confirmRunFocused bool
@@ -73,12 +75,13 @@ type PickerUsage struct {
 	Namespaces map[string]map[string]ChoiceUsage
 }
 
-func PickApp(apps []core.AppChoice, kubeContext, namespace string, loadErr error, previous []string, usage PickerUsage, updates *update.Client, notice ...string) (PickerResult, error) {
+func PickApp(apps []core.AppChoice, kubeContext, namespace string, loadErr error, previous []string, usage PickerUsage, updates *update.Client, animateIntro bool, notice ...string) (PickerResult, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	prepared, total := preparePickerApps(apps)
 	model := newPickerModel(prepared, total, kubeContext, namespace, previous)
 	model.allApps = apps
+	model.introActive = animateIntro
 	model.usage = usage
 	model.updates.client = updates
 	model.refreshContext = ctx
@@ -123,7 +126,11 @@ func (m pickerModel) Init() tea.Cmd {
 	if m.refreshContext == nil {
 		return nil
 	}
-	return tea.Batch(m.pickerRefreshAfter(), loadNamespaceActivity(m.refreshContext, m.kubeContext, m.namespace, m.activity.request), m.updates.check(m.refreshContext))
+	commands := []tea.Cmd{m.pickerRefreshAfter(), loadNamespaceActivity(m.refreshContext, m.kubeContext, m.namespace, m.activity.request), m.updates.check(m.refreshContext)}
+	if m.introActive {
+		commands = append(commands, startupIntroCmd(0))
+	}
+	return tea.Batch(commands...)
 }
 func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if m.updates.receive(message) {
@@ -157,6 +164,16 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	switch msg := message.(type) {
+	case startupIntroTick:
+		if !m.introActive || msg.frame != m.introFrame {
+			return m, nil
+		}
+		m.introFrame++
+		if m.introFrame >= startupIntroFrameCount {
+			m.introActive = false
+			return m, nil
+		}
+		return m, startupIntroCmd(m.introFrame)
 	case deploymentToastExpiredMsg:
 		m.expireDeploymentToast(msg)
 		return m, nil
@@ -217,6 +234,12 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if key, ok := message.(tea.KeyMsg); ok {
+		if m.introActive {
+			m.introActive = false
+			if key.String() != "ctrl+c" {
+				return m, nil // Any key dismisses the intro without triggering a picker action.
+			}
+		}
 		if m.selection != nil {
 			return m.updatePickerSelectionKey(key)
 		}
@@ -356,6 +379,9 @@ const pickerAppWidth = 36
 
 func (m pickerModel) View() string {
 	background := m.overlayDeploymentToasts(m.pickerView())
+	if m.introActive && !m.showUpdate() {
+		background = m.startupIntroView()
+	}
 	if m.showUpdate() {
 		width, height := m.modalViewport()
 		return overlayModal(background, m.updates.view(width, height), width, height)
