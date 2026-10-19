@@ -39,6 +39,14 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 	if options.Namespace == "" {
 		options.Namespace = options.LegacyNamespace
 	}
+	if len(options.VersionNamespaces) > 1 && !options.Versions {
+		fmt.Fprintln(stderr, "--namespace may be repeated only with --versions")
+		return 2
+	}
+	if len(options.VersionNamespaces) > 1 && len(options.VersionContexts) > 1 {
+		fmt.Fprintln(stderr, "compare multiple namespaces in one context, or multiple contexts in one namespace; do not repeat both flags")
+		return 2
+	}
 	if options.Network {
 		if err := validateNetworkOptions(options); err != nil {
 			fmt.Fprintln(stderr, err)
@@ -108,6 +116,9 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 		}
 		if len(options.VersionContexts) > 1 {
 			return kube.RunVersionComparison(ctx, options.VersionContexts, options.Namespace, stdout)
+		}
+		if len(options.VersionNamespaces) > 1 {
+			return kube.RunNamespaceVersionComparison(ctx, options.Context, options.VersionNamespaces, stdout)
 		}
 		namespace := options.Namespace
 		if namespace == "" {

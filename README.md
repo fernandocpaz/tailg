@@ -560,6 +560,23 @@ or containers missing from a context:
 tailg --versions --context tkgs-qa --context tkgs-dev
 ```
 
+Repeat `--namespace` to compare workloads in **the same Kubernetes context**.
+Only workload/container pairs that exist in every selected namespace are
+comparable. The table lists those pairs with `MATCH`, `DIFF`, or `UNKNOWN`
+results (when a required version or image ID is unavailable), and separately
+lists workloads or containers missing from one or more namespaces. Replica pods
+are consolidated; `latest` is compared by running Image ID, otherwise by tag.
+The comparison uses your current kubeconfig context unless `--context` is
+provided:
+
+```sh
+tailg --versions --namespace apollo --namespace emr2train
+tailg --versions --context tkgs-qa -n apollo -n emr2train
+```
+
+You can repeat either `--namespace` or `--context`, but not both in the
+same invocation. Other commands continue to accept one namespace.
+
 ## Status and diagnostics
 
 `tailg --status` scans pod health, reports grouped errors from the previous two
