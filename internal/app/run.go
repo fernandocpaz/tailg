@@ -174,6 +174,8 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 	}
 
 	pickerMode := usesAppPicker(options)
+	decorated, _ := terminalPresentation(stdout)
+	playIntro := pickerMode && !options.NoIntro && interactive(stdin) && decorated
 	namespaceMode := options.Target == "" && options.Namespace != ""
 	pickerLoop := pickerMode && options.LiveFilter && !options.NoFollow && !options.SplitPanes && !options.TileWindows
 	var usage pickerUsage
@@ -195,7 +197,8 @@ pickAgain:
 	if !namespaceMode {
 		if pickerMode {
 			apps, appsErr := runner.Apps(ctx)
-			selection, selectErr := tui.PickApp(apps, effectiveContext, effectiveNamespace, appsErr, markedApps, tui.PickerUsage{Contexts: usage.Contexts, Namespaces: usage.Namespaces}, updates, pickerNotice)
+			selection, selectErr := tui.PickApp(apps, effectiveContext, effectiveNamespace, appsErr, markedApps, tui.PickerUsage{Contexts: usage.Contexts, Namespaces: usage.Namespaces}, updates, playIntro, pickerNotice)
+			playIntro = false
 			pickerNotice = ""
 			if selectErr != nil {
 				fmt.Fprintln(stderr, selectErr)
