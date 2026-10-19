@@ -129,7 +129,7 @@ func TestImageVersionDifferencesReportUsesIDsWhenTagsAreLatest(t *testing.T) {
 	}
 }
 
-func TestImageVersionDifferencesReportUsesTagsUnlessLatest(t *testing.T) {
+func TestImageVersionDifferencesReportDetectsSameTagDifferentImageIDs(t *testing.T) {
 	snapshots := []ImageVersionSnapshot{
 		{
 			Context: "qa", Namespace: "api",
@@ -147,8 +147,14 @@ func TestImageVersionDifferencesReportUsesTagsUnlessLatest(t *testing.T) {
 		},
 	}
 	report := ImageVersionDifferencesReport(snapshots)
-	if !strings.Contains(report, "mismatches=0") || !strings.Contains(report, "All compared workload container image versions match.") {
-		t.Fatalf("unexpected matching report: %s", report)
+	if !strings.Contains(report, "mismatches=1") || !strings.Contains(report, "unknown=0") ||
+		!strings.Contains(report, "patient") || !strings.Contains(report, "sha256:qa-patient") ||
+		!strings.Contains(report, "sha256:dev-patient") || !strings.Contains(report, "IMAGE ID") ||
+		!strings.Contains(report, "DIFF") {
+		t.Fatalf("identical tags with different running images must differ: %s", report)
+	}
+	if strings.Contains(report, "encounter") {
+		t.Fatalf("same running Image IDs should match and be omitted: %s", report)
 	}
 }
 
@@ -177,5 +183,56 @@ func TestAnyLatestForcesImageIDComparisonAcrossContexts(t *testing.T) {
 	}
 	if strings.Contains(report, "same-build") {
 		t.Fatalf("mixed tags with matching Image IDs should be omitted:\n%s", report)
+	}
+}
+
+func TestImageVersionDifferencesReportSameImageIDDifferentTagsIsMatch(t *testing.T) {
+	report := ImageVersionDifferencesReport([]ImageVersionSnapshot{
+		{Context: "qa", Namespace: "apollo", Versions: []ImageVersion{
+			{Workload: "patient", Type: "app", Container: "api", Tag: "105", ImageID: "sha256:same"},
+		}},
+		{Context: "dev", Namespace: "apollo", Versions: []ImageVersion{
+			{Workload: "patient", Type: "app", Container: "api", Tag: "106", ImageID: "sha256:same"},
+		}},
+	})
+	if !strings.Contains(report, "mismatches=0") || !strings.Contains(report, "unknown=0") ||
+		!strings.Contains(report, "image IDs match") {
+		t.Fatalf("different tags with the same Image ID must match: %s", report)
+	}
+}
+
+func TestImageVersionDifferencesReportMissingImageIDsAreUnknown(t *testing.T) {
+	report := ImageVersionDifferencesReport([]ImageVersionSnapshot{
+		{Context: "qa", Namespace: "apollo", Versions: []ImageVersion{
+			{Workload: "unresolved", Type: "app", Container: "api", Tag: "42", ImageID: "unavailable"},
+			{Workload: "mixed", Type: "app", Container: "api", Tag: "42", ImageID: "sha256:known"},
+			{Workload: "mixed", Type: "app", Container: "api", Tag: "42", ImageID: "unavailable"},
+		}},
+		{Context: "dev", Namespace: "apollo", Versions: []ImageVersion{
+			{Workload: "unresolved", Type: "app", Container: "api", Tag: "42", ImageID: "unavailable"},
+			{Workload: "mixed", Type: "app", Container: "api", Tag: "42", ImageID: "sha256:known"},
+		}},
+	})
+	for _, expected := range []string{"mismatches=0", "unknown=2", "UNKNOWN", "IMAGE ID", "unresolved", "mixed", "unavailable"} {
+		if !strings.Contains(report, expected) {
+			t.Fatalf("missing Image ID cannot produce a verified match (%q): %s", expected, report)
+		}
+	}
+}
+
+func TestImageVersionDifferencesReportIdenticalTagsWithMixedReplicaIDs(t *testing.T) {
+	report := ImageVersionDifferencesReport([]ImageVersionSnapshot{
+		{Context: "qa", Versions: []ImageVersion{
+			{Workload: "api", Type: "app", Container: "main", Tag: "stable", ImageID: "sha256:a"},
+			{Workload: "api", Type: "app", Container: "main", Tag: "stable", ImageID: "sha256:b"},
+		}},
+		{Context: "dev", Versions: []ImageVersion{
+			{Workload: "api", Type: "app", Container: "main", Tag: "stable", ImageID: "sha256:b"},
+		}},
+	})
+	for _, expected := range []string{"mismatches=1", "sha256:a, sha256:b", "DIFF"} {
+		if !strings.Contains(report, expected) {
+			t.Fatalf("mixed replica IDs must be detected even with the same tag (%q): %s", expected, report)
+		}
 	}
 }

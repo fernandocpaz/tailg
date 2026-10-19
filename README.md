@@ -548,13 +548,12 @@ normalized to its immutable digest when the runtime provides one. Use
 `--namespace` or `--context` to select another namespace or cluster.
 
 Repeat `--context` to compare environments. The comparison groups replica pods
-by workload and container. If none of the matching pods uses `latest`, tags
-are compared and displayed directly. If any matching pod in any context uses
-`latest` (including an omitted tag), all pods in that row are compared by
-running Image ID. This keeps normal rows readable while correctly comparing a
-numbered tag against `latest`. The grid includes a `COMPARE` column and
-prints only differing versions, mixed rollout versions, unavailable Image IDs,
-or containers missing from a context:
+by workload and container and **always compares the running Image ID**,
+regardless of whether the configured tags are equal, different, or `latest`.
+This detects a reused tag that points to different image contents. A missing
+Image ID cannot establish a match: it is reported as `UNKNOWN`, not silently
+compared by tag. The comparison also surfaces mixed-version replicas and
+workloads absent from a context:
 
 ```sh
 tailg --versions --context tkgs-qa --context tkgs-dev
@@ -563,9 +562,9 @@ tailg --versions --context tkgs-qa --context tkgs-dev
 Repeat `--namespace` to compare workloads in **the same Kubernetes context**.
 Only workload/container pairs that exist in every selected namespace are
 comparable. The table lists those pairs with `MATCH`, `DIFF`, or `UNKNOWN`
-results (when a required version or image ID is unavailable), and separately
+results (when a required Image ID is unavailable), and separately
 lists workloads or containers missing from one or more namespaces. Replica pods
-are consolidated; `latest` is compared by running Image ID, otherwise by tag.
+are consolidated; the running Image ID is always used, never the tag.
 The comparison uses your current kubeconfig context unless `--context` is
 provided:
 

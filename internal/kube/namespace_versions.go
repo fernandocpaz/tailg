@@ -15,7 +15,7 @@ type namespaceVersionRow struct {
 }
 
 // ImageNamespaceComparisonReport compares equivalent workload containers in
-// multiple namespaces of one context. Non-overlapping workloads are reported
+// multiple namespaces of one context. The comparison always uses running\n// Image IDs, never configured tags. Non-overlapping workloads are reported
 // separately rather than incorrectly counting as image-version mismatches.
 func ImageNamespaceComparisonReport(snapshots []ImageVersionSnapshot) string {
 	if len(snapshots) < 2 {
@@ -37,16 +37,11 @@ func ImageNamespaceComparisonReport(snapshots []ImageVersionSnapshot) string {
 	var comparable, unmatched []namespaceVersionRow
 	matches, differences, unknown := 0, 0, 0
 	for key, versions := range byKey {
-		usesID := comparisonUsesImageID(versions)
-		basis := "TAG"
-		if usesID {
-			basis = "IMAGE ID"
-		}
-		row := namespaceVersionRow{key: key, basis: basis, values: make([]string, len(namespaces))}
+		row := namespaceVersionRow{key: key, basis: "IMAGE ID", values: make([]string, len(namespaces))}
 		available := true
 		for i, namespace := range namespaces {
 			pods := versions[namespace]
-			row.values[i] = joinedComparisonValues(pods, usesID)
+			row.values[i] = joinedComparisonImageIDs(pods)
 			if len(pods) == 0 {
 				available = false
 			}
@@ -57,10 +52,7 @@ func ImageNamespaceComparisonReport(snapshots []ImageVersionSnapshot) string {
 			continue
 		}
 		switch {
-		case usesID && hasUnavailableImageID(row.values):
-			row.status = "UNKNOWN"
-			unknown++
-		case !usesID && hasUnknownTag(row.values):
+		case hasUnavailableImageID(row.values):
 			row.status = "UNKNOWN"
 			unknown++
 		case differingValues(row.values):
@@ -126,17 +118,6 @@ func hasUnavailableImageID(values []string) bool {
 	for _, value := range values {
 		for _, item := range strings.Split(value, ", ") {
 			if item == "unavailable" || item == "unknown" || item == "" {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func hasUnknownTag(values []string) bool {
-	for _, value := range values {
-		for _, item := range strings.Split(value, ", ") {
-			if item == "unknown" || item == "" {
 				return true
 			}
 		}
