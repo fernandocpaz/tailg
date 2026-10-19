@@ -45,4 +45,5 @@ type Options struct {
 	NoColor            bool
 	Theme              string
 	NoUpdateCheck      bool
+	NoIntro            bool
 }
