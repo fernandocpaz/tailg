@@ -91,3 +91,17 @@ func TestStartupIntroNotActiveByDefault(t *testing.T) {
 		t.Fatal("intro should be enabled explicitly only for the first interactive picker")
 	}
 }
+
+func TestStartupIntroSkipsWhenTerminalTooSmall(t *testing.T) {
+	m := newPickerModel(nil, 0, "qa", "apollo", nil)
+	m.introActive = true
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 36, Height: 12})
+	m = updated.(pickerModel)
+	if m.introActive {
+		t.Fatal("the intro must be disabled when the terminal is too small to show it")
+	}
+	updated, _ = m.Update(startupIntroTick{frame: 0})
+	if updated.(pickerModel).introActive {
+		t.Fatal("a pending frame must not reenable an intro skipped for terminal size")
+	}
+}
