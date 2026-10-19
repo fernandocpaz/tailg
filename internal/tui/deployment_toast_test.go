@@ -82,7 +82,7 @@ func TestDeploymentToastTracksFullInventoryAndIgnoresCronJobs(t *testing.T) {
 	current := append([]core.AppChoice(nil), old...)
 	current[maxPickerApps] = toastApp(fmt.Sprintf("app-%02d", maxPickerApps), "v2", 200, "new-pod")
 	current = append(current, toastApp("brand-new-app", "v1", 200, "new"))
-	current = append(current, core.AppChoice{Name: "cronjob/nightly", CronJob: &core.CronJobChoice{}})
+	current = append(current, core.AppChoice{Name: "cronjob/nightly", CronJob: &core.CronJobInfo{}})
 	m, _ = toastRefresh(m, current, nil)
 	if len(m.deploymentToasts) != 2 {
 		t.Fatalf("expected two new deployments including one outside newest-20 view, got %+v", m.deploymentToasts)
