@@ -7,7 +7,8 @@ type Options struct {
 	LegacyNamespace string
 	Namespace       string
 	Context         string
-	VersionContexts []string
+	VersionContexts   []string
+	VersionNamespaces []string
 	Status          bool
 	Versions        bool
 	Network         bool
