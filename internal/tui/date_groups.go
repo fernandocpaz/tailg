@@ -20,62 +20,90 @@ type logTimelineRow struct {
 // renderLogTimelineRows adds non-selectable date separators while keeping the
 // viewport anchored to the newest log in live mode and the selected log while
 // paused or searching.
+// renderLogTimelineRows positions the viewport without formatting off-screen
+// records. This keeps redraw costs bounded even with a large history result.
 func renderLogTimelineRows(records []core.LogRecord, query string, selected, height, width int, showPod, color, followsLive bool, now time.Time) []string {
 	if height <= 0 || len(records) == 0 {
 		return nil
-	}
-
-	timeline := make([]logTimelineRow, 0, len(records)+1)
-	recordPositions := make([]int, len(records))
-	lastDate := ""
-	for index, record := range records {
-		groupLabel := logDateGroupLabel(record.Event.ObservedAt, now)
-		if groupLabel != "" {
-			date := localDateKey(record.Event.ObservedAt, now.Location())
-			if date != lastDate {
-				timeline = append(timeline, logTimelineRow{
-					groupLabel:  groupLabel,
-					separator:   true,
-					recordIndex: -1,
-				})
-				lastDate = date
-			}
-		}
-		recordPositions[index] = len(timeline)
-		timeline = append(timeline, logTimelineRow{
-			text:        renderRecordRowAt(record, query, index == selected, width, showPod, color, now),
-			recordIndex: index,
-			groupLabel:  groupLabel,
-		})
 	}
 
 	selectedRecord := selected
 	if selectedRecord < 0 || selectedRecord >= len(records) {
 		selectedRecord = len(records) - 1
 	}
+	contextRecord := max(0, selectedRecord-core.SearchContextLines)
+
+	// First pass: count date separators and find the selected row's position.
+	// Avoid formatting/colorizing any text outside the eventual viewport.
+	location := now.Location()
+	lastDay := 0
+	total, contextPosition, selectedPosition := 0, 0, 0
+	contextStartsGroup := false
+	for index, record := range records {
+		day := logTimelineDayKey(record.Event.ObservedAt, location)
+		startsGroup := day != 0 && day != lastDay
+		if startsGroup {
+			total++
+			lastDay = day
+		}
+		if index == contextRecord {
+			contextPosition = total
+			contextStartsGroup = startsGroup
+		}
+		if index == selectedRecord {
+			selectedPosition = total
+		}
+		total++
+	}
 
 	start := 0
-	if len(timeline) > height {
+	if total > height {
 		if followsLive {
-			start = len(timeline) - height
+			start = total - height
 		} else {
-			contextRecord := max(0, selectedRecord-core.SearchContextLines)
-			start = recordPositions[contextRecord]
-			if start > 0 && timeline[start-1].separator && timeline[start-1].groupLabel == timeline[start].groupLabel {
+			start = contextPosition
+			if contextStartsGroup && start > 0 {
 				start--
 			}
-			selectedPosition := recordPositions[selectedRecord]
 			if selectedPosition >= start+height {
 				start = selectedPosition - height + 1
 			}
 		}
 	}
-	end := min(len(timeline), start+height)
-	visible := append([]logTimelineRow(nil), timeline[start:end]...)
+	end := min(total, start+height)
 
-	// When the viewport starts inside a date group, keep its date visible as a
-	// sticky first row. If space is tight, discard an older unselected log—not
-	// the selected or newest record.
+	// Second pass: render only the screen-sized slice, including its date
+	// separators. The rest of the history is never formatted during a redraw.
+	visible := make([]logTimelineRow, 0, height)
+	lastDay = 0
+	position := 0
+	for index, record := range records {
+		day := logTimelineDayKey(record.Event.ObservedAt, location)
+		if day != 0 && day != lastDay {
+			if position >= start && position < end {
+				visible = append(visible, logTimelineRow{
+					groupLabel: logDateGroupLabel(record.Event.ObservedAt, now),
+					separator: true, recordIndex: -1,
+				})
+			}
+			position++
+			lastDay = day
+		}
+		if position >= start && position < end {
+			visible = append(visible, logTimelineRow{
+				text: renderRecordRowAt(record, query, index == selected, width, showPod, color, now),
+				recordIndex: index,
+				groupLabel: logDateGroupLabel(record.Event.ObservedAt, now),
+			})
+		}
+		position++
+		if position >= end {
+			break
+		}
+	}
+
+	// Retain the date above the currently visible records without sacrificing
+	// the selected/newest row when the terminal height is small.
 	if height > 1 && start > 0 && len(visible) > 0 && !visible[0].separator && visible[0].groupLabel != "" {
 		sticky := logTimelineRow{groupLabel: visible[0].groupLabel, separator: true, recordIndex: -1}
 		visible = append([]logTimelineRow{sticky}, visible...)
@@ -97,6 +125,16 @@ func renderLogTimelineRows(records []core.LogRecord, query string, selected, hei
 		}
 	}
 	return lines
+}
+
+// Integer calendar keys are much cheaper than formatting a date string for
+// each record on every redraw. Zero means the transport timestamp is absent.
+func logTimelineDayKey(at time.Time, location *time.Location) int {
+	if at.IsZero() {
+		return 0
+	}
+	year, month, day := at.In(location).Date()
+	return year*10000 + int(month)*100 + day
 }
 
 func logDateGroupLabel(observedAt, now time.Time) string {
