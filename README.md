@@ -365,13 +365,17 @@ Switching context or namespace clears checked applications.
 If credentials have expired, the picker shows the kubectl error so you can
 press `C` to choose another context or log in and press `R` to retry.
 
-Without `--since`, tailg loads up to 500 visible lines per container before
-following new logs. When include/exclude rules remove most of the raw Kubernetes
-tail, tailg progressively scans older lines until it fills that visible history,
-reaches the start of retained logs, or reaches the `--buffer-lines` scan limit.
-Supplying `--since` without an explicit `--tail` reads every retained line in
-that window. Day values are converted for `kubectl`, so `--since 4d` becomes
-`--since 96h`.
+tailg initially loads up to 500 visible lines per container before following
+new logs. This is also true when `--since` is set: the time window limits
+eligibility, but no longer turns the initial load into an unbounded download.
+When include/exclude rules remove most of the raw Kubernetes tail, tailg
+progressively scans older lines until it fills that visible history, reaches
+retained history's beginning, or scans 2,000 lines by default (never more
+than `--buffer-lines`; a larger explicit `--tail` remains respected).
+Use `--tail -1` if an unrestricted initial history load is intentional.
+Day values are converted for `kubectl`, so `--since 4d` becomes `--since 96h`.
+The live TUI coalesces incoming records into small batches and formats only
+the visible screen rows, keeping the interface responsive on busy pods.
 
 Probe traffic matching `health|ready|live` is hidden by default. Repeat
 `--exclude` to hide additional patterns, use `--include` to retain only selected
