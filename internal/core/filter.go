@@ -348,6 +348,22 @@ func (s *FilterState) MatchCount() int {
 }
 
 // Records returns the currently visible immutable record snapshots.
+// RenderRecords holds a read lock while a synchronous TUI frame is constructed,
+// avoiding a full log-slice clone for each redraw. The callback must not mutate
+// or retain the records, or invoke methods that lock this FilterState.
+func (s *FilterState) RenderRecords(render func([]LogRecord) []string) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return render(s.visibleRecords)
+}
+
+// VisibleCount returns the displayed row count without allocating a []string.
+func (s *FilterState) VisibleCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.visibleRecords)
+}
+
 func (s *FilterState) Records() []LogRecord {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

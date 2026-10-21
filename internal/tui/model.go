@@ -48,6 +48,8 @@ type Config struct {
 }
 
 type logMsg core.LogEvent
+// logBatchMsg reduces terminal redraws during high-volume log bursts.
+type logBatchMsg []core.LogEvent
 type inventoryMsg struct {
 	items []core.InventoryItem
 	err   error
@@ -241,7 +243,7 @@ func Run(parent context.Context, config Config) error {
 }
 
 func (m model) Init() tea.Cmd {
-	commands := []tea.Cmd{waitForEvent(m.events), waitForInventory(m.inventory), sharedTick(), m.updates.check(m.ctx)}
+	commands := []tea.Cmd{waitForLogBatch(m.events), waitForInventory(m.inventory), sharedTick(), m.updates.check(m.ctx)}
 	if strings.TrimSpace(m.config.Title) != "" {
 		commands = append(commands, tea.SetWindowTitle(m.config.Title))
 	}
@@ -288,63 +290,12 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.input.Width = max(10, min(48, inputWidth))
 		return m, nil
 	case logMsg:
-		event := core.LogEvent(msg)
-		m.recordFreshness(event)
-		if event.Started {
-			m.markConnected(event.Pod, event.Container)
-			if !m.isReconnecting() && strings.HasSuffix(m.notice, "; reconnecting...") {
-				m.notice = ""
-			}
-			return m, waitForEvent(m.events)
-		}
-		if m.issues == nil {
-			m.issues = core.NewIssueRadar(200)
-		}
-		if event.Err != nil {
-			m.notice = event.Err.Error()
-		}
-		if event.Closed {
-			if event.Err == nil {
-				m.notice = "log stream ended"
-			}
-			m.notice += "; reconnecting..."
-			m.markReconnecting(event.Pod, event.Container)
-			m.issues.Observe(event)
-		}
-		if !event.Closed {
-			wasReconnecting := m.isReconnecting()
-			m.markConnected(event.Pod, event.Container)
-			if wasReconnecting && !m.isReconnecting() && strings.HasSuffix(m.notice, "; reconnecting...") {
-				m.notice = ""
-			}
-			if event.Replayed {
-				return m, waitForEvent(m.events)
-			}
-			m.heartbeat.Add(event.Pod, event.Container, event.Message, event.ObservedAt)
-			records := core.RecordsForEvent(m.config.Formatter, event, true)
-			if len(records) > 0 {
-				m.issues.Observe(event)
-			}
-			previousCount := 0
-			if !m.followsLive {
-				previousCount = len(m.state.Lines())
-			}
-			added := m.state.AppendRecords(records...)
-			if m.traceOpen && m.traceState != nil {
-				for _, record := range records {
-					if record.Fields.TraceID == m.traceID {
-						m.traceState.AppendRecords(record)
-					}
-				}
-			}
-			if m.followsLive && added > 0 {
-				m.selected = len(m.state.Lines()) - 1
-				m.scroll = 0
-			} else if !m.followsLive {
-				m.scroll += max(0, len(m.state.Lines())-previousCount)
-			}
-		}
-		return m, waitForEvent(m.events)
+		// Keep the single-event message for older callers/tests.
+		m.processLogBatch([]core.LogEvent{core.LogEvent(msg)})
+		return m, waitForLogBatch(m.events)
+	case logBatchMsg:
+		m.processLogBatch([]core.LogEvent(msg))
+		return m, waitForLogBatch(m.events)
 	case inventoryMsg:
 		if msg.err != nil {
 			m.notice = msg.err.Error()
@@ -672,9 +623,11 @@ func (m model) View() string {
 	if m.detail != "" {
 		return m.renderDetail()
 	}
-	records := m.state.Records()
 	height := m.logHeight()
-	visible := renderLogTimelineRows(records, m.state.Highlight(), m.selected, height, m.width, m.config.Formatter.ShowPod, m.config.Formatter.Color, m.followsLive, time.Now())
+	highlight := m.state.Highlight()
+	visible := m.state.RenderRecords(func(records []core.LogRecord) []string {
+		return renderLogTimelineRows(records, highlight, m.selected, height, m.width, m.config.Formatter.ShowPod, m.config.Formatter.Color, m.followsLive, time.Now())
+	})
 	for len(visible) < height {
 		visible = append(visible, "")
 	}
@@ -1522,15 +1475,105 @@ func (m model) loadResourceDetail(resource core.MappedResource) tea.Cmd {
 		return resourceDetailMsg{text, err}
 	}
 }
-func waitForEvent(events <-chan core.LogEvent) tea.Cmd {
+const (
+	logBatchMaxEvents = 128
+	logBatchWindow    = 35 * time.Millisecond
+)
+
+// waitForLogBatch coalesces multiple channel deliveries into one TUI update.
+// A bounded batch keeps the UI responsive during sustained log bursts.
+func waitForLogBatch(events <-chan core.LogEvent) tea.Cmd {
 	return func() tea.Msg {
-		event, ok := <-events
+		first, ok := <-events
 		if !ok {
 			return nil
 		}
-		return logMsg(event)
+		batch := make([]core.LogEvent, 1, logBatchMaxEvents)
+		batch[0] = first
+		timer := time.NewTimer(logBatchWindow)
+		defer timer.Stop()
+		for len(batch) < logBatchMaxEvents {
+			select {
+			case event, ok := <-events:
+				if !ok {
+					return logBatchMsg(batch)
+				}
+				batch = append(batch, event)
+			case <-timer.C:
+				return logBatchMsg(batch)
+			}
+		}
+		return logBatchMsg(batch)
 	}
 }
+
+// processLogBatch updates the live buffer once per batch, not once per line.
+// Freshness and issue tracking still observe every underlying Kubernetes event.
+func (m *model) processLogBatch(events []core.LogEvent) {
+	if m.issues == nil {
+		m.issues = core.NewIssueRadar(200)
+	}
+	previousCount := 0
+	if !m.followsLive {
+		previousCount = m.state.VisibleCount()
+	}
+	records := make([]core.LogRecord, 0, len(events))
+	var traceRecords []core.LogRecord
+	for _, event := range events {
+		m.recordFreshness(event)
+		if event.Started {
+			m.markConnected(event.Pod, event.Container)
+			if !m.isReconnecting() && strings.HasSuffix(m.notice, "; reconnecting...") {
+				m.notice = ""
+			}
+			continue
+		}
+		if event.Err != nil {
+			m.notice = event.Err.Error()
+		}
+		if event.Closed {
+			if event.Err == nil {
+				m.notice = "log stream ended"
+			}
+			m.notice += "; reconnecting..."
+			m.markReconnecting(event.Pod, event.Container)
+			m.issues.Observe(event)
+			continue
+		}
+		wasReconnecting := m.isReconnecting()
+		m.markConnected(event.Pod, event.Container)
+		if wasReconnecting && !m.isReconnecting() && strings.HasSuffix(m.notice, "; reconnecting...") {
+			m.notice = ""
+		}
+		if event.Replayed {
+			continue
+		}
+		m.heartbeat.Add(event.Pod, event.Container, event.Message, event.ObservedAt)
+		formatted := core.RecordsForEvent(m.config.Formatter, event, true)
+		if len(formatted) > 0 {
+			m.issues.Observe(event)
+			records = append(records, formatted...)
+			if m.traceOpen && m.traceState != nil {
+				for _, record := range formatted {
+					if record.Fields.TraceID == m.traceID {
+						traceRecords = append(traceRecords, record)
+					}
+				}
+			}
+		}
+	}
+	added := m.state.AppendRecords(records...)
+	if len(traceRecords) > 0 {
+		m.traceState.AppendRecords(traceRecords...)
+	}
+	if m.followsLive && added > 0 {
+		m.selected = m.state.VisibleCount() - 1
+		m.scroll = 0
+	} else if !m.followsLive {
+		m.scroll += max(0, m.state.VisibleCount()-previousCount)
+	}
+}
+
 func sharedTick() tea.Cmd {
 	return tea.Tick(250*time.Millisecond, func(t time.Time) tea.Msg { return sharedFilterTick(t) })
 }

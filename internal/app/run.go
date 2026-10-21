@@ -54,10 +54,9 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 		}
 	}
 	if options.Since != "" {
+		// A time filter must not turn a bounded live startup into an
+		// unlimited download. --tail=-1 remains available explicitly.
 		options.Since = core.NormalizeSince(options.Since)
-		if !options.TailSet {
-			options.Tail = -1
-		}
 	}
 	if options.Container == "" {
 		options.Container = ".*"
@@ -399,7 +398,8 @@ pickAgain:
 			}
 			return runner.Stream(streamCtx, item, kube.LogOptions{
 				Since: options.Since, Tail: options.Tail, Follow: true, Cursor: cursor,
-				Visible: visible, InitialScanLimit: options.BufferLines,
+				// Keep filtered startup bounded; full history stays searchable.
+				Visible: visible, InitialScanLimit: min(options.BufferLines, max(options.Tail, 2_000)),
 			}, events)
 		}, Inventory: inventoryProvider,
 		SearchRecords: func(searchCtx context.Context, query string) ([]core.LogRecord, error) {
