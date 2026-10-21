@@ -624,8 +624,9 @@ func (m model) View() string {
 		return m.renderDetail()
 	}
 	height := m.logHeight()
+	highlight := m.state.Highlight()
 	visible := m.state.RenderRecords(func(records []core.LogRecord) []string {
-		return renderLogTimelineRows(records, m.state.Highlight(), m.selected, height, m.width, m.config.Formatter.ShowPod, m.config.Formatter.Color, m.followsLive, time.Now())
+		return renderLogTimelineRows(records, highlight, m.selected, height, m.width, m.config.Formatter.ShowPod, m.config.Formatter.Color, m.followsLive, time.Now())
 	})
 	for len(visible) < height {
 		visible = append(visible, "")
