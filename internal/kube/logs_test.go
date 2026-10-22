@@ -7,9 +7,22 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fernandocpaz/tailg/internal/core"
 )
+
+func TestFollowStreamDoesNotMaskKubectlFailures(t *testing.T) {
+	item := core.InventoryItem{Pod: "deployment-api", Container: "api"}
+	args := streamArgs(item, LogOptions{Tail: 500, Follow: true}, time.Time{})
+	line := strings.Join(args, " ")
+	if strings.Contains(line, "--ignore-errors") {
+		t.Fatalf("kubectl follow flags suppress real transport errors: %q", line)
+	}
+	if !strings.Contains(line, "-f") || !strings.Contains(line, "pod/deployment-api") {
+		t.Fatalf("kubectl follow flags must stream selected pod: %q", line)
+	}
+}
 
 func TestSendLogEventStopsAfterCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
