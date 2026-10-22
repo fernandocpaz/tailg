@@ -42,11 +42,11 @@ func TestStartupIntroAnimatesAndTransitionsToPicker(t *testing.T) {
 }
 
 func TestStartupIntroRunsAcrossEntireTerminal(t *testing.T) {
-    if startupIntroRenderWidth != 32 || startupIntroRenderHeight != 9 {
-        t.Fatalf("expected a half-size 32x9 runner, got %dx%d", startupIntroRenderWidth, startupIntroRenderHeight)
+    if startupIntroRenderWidth != 22 || startupIntroRenderHeight != 6 {
+        t.Fatalf("expected a compact 22x6 runner, got %dx%d", startupIntroRenderWidth, startupIntroRenderHeight)
     }
 
-    for _, width := range []int{32, 48, 80, 120, 180, 320} {
+    for _, width := range []int{22, 32, 48, 80, 120, 180, 320} {
         frames := startupIntroFrames(width)
         if startupIntroLeft(0) != -startupIntroRenderWidth+2 {
             t.Fatal("runner must begin entering from off-screen left")
