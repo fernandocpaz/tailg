@@ -13,6 +13,56 @@ import (
 	"github.com/fernandocpaz/tailg/internal/core"
 )
 
+func TestCompletedCronJobStreamIsCleanAndDoesNotReconnect(t *testing.T) {
+    now := time.Now()
+    item := core.InventoryItem{Pod: "auditlistener-job-123", Container: "auditlistener", Completed: true}
+    m := model{
+        items: []core.InventoryItem{item}, state: core.NewFilterState(10),
+        heartbeat: &core.HeartbeatAnalyzer{}, followsLive: true, width: 120,
+        config: Config{Formatter: core.Formatter{Color: false}},
+    }
+    m.processLogBatch([]core.LogEvent{
+        {Pod: item.Pod, Container: item.Container, ObservedAt: now, ReceivedAt: now,
+            Message: "[10:05:14 INF] Nothing to process this run."},
+        {Pod: item.Pod, Container: item.Container, Closed: true},
+    })
+    if m.isReconnecting() || m.notice != "" {
+        t.Fatalf("completed successful CronJob was marked disconnected: reconnect=%t, notice=%q", m.isReconnecting(), m.notice)
+    }
+    if m.issueStats().Groups != 0 || m.waitingStreams() != 0 {
+        t.Fatalf("completed successful CronJob became a warning: %+v, waiting=%d", m.issueStats(), m.waitingStreams())
+    }
+    if got := m.freshnessStatus(item, now.Add(time.Hour)); got != "COMPLETED" {
+        t.Fatalf("finished CronJob status=%q, want COMPLETED", got)
+    }
+    if header := m.renderHeader(); !strings.Contains(header, "COMPLETED") ||
+        strings.Contains(header, "ISSUE") || strings.Contains(header, "RECONNECTING") {
+        t.Fatalf("invalid completed Job header: %q", header)
+    }
+    if text := strings.Join(m.state.Lines(), " "); !strings.Contains(text, "Nothing to process") {
+        t.Fatalf("completed job's retained logs disappeared: %q", text)
+    }
+}
+
+func TestSuccessfulEOFRemainsRetryableForRunningPodThenSettlesOnCompletion(t *testing.T) {
+    item := core.InventoryItem{Pod: "cronjob-job", Container: "worker"}
+    m := model{
+        items: []core.InventoryItem{item}, state: core.NewFilterState(10),
+        heartbeat: &core.HeartbeatAnalyzer{}, followsLive: true,
+        config: Config{Formatter: core.Formatter{Color: false}},
+    }
+    m.processLogBatch([]core.LogEvent{{Pod: item.Pod, Container: item.Container, Closed: true}})
+    if !m.isReconnecting() || m.issueStats().Groups != 0 {
+        t.Fatalf("clean EOF before pod completion should retry without an ISSUE")
+    }
+    item.Completed = true
+    updated, _ := m.Update(inventoryMsg{items: []core.InventoryItem{item}})
+    m = updated.(model)
+    if m.isReconnecting() || m.issueStats().Groups != 0 || m.freshnessStatus(item, time.Now()) != "COMPLETED" {
+        t.Fatalf("later completion did not resolve transient reconnect state")
+    }
+}
+
 func TestFreshnessDistinguishesRecentReceiptFromOldLogsAndQuiet(t *testing.T) {
 	now := time.Date(2026, 9, 9, 20, 0, 0, 0, time.UTC)
 	item := core.InventoryItem{Pod: "pod-1", Container: "api"}
