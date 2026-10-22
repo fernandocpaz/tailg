@@ -78,6 +78,9 @@ func (m model) freshnessItems() []core.InventoryItem {
 func (m model) waitingStreams() int {
 	count := 0
 	for _, item := range m.freshnessItems() {
+		if item.Completed {
+			continue
+		}
 		state := m.freshness[item.Key()]
 		if state.awaiting || state.lastReceived.IsZero() {
 			count++
@@ -90,6 +93,12 @@ func (m model) freshnessSummary(now time.Time) string {
 	items := m.freshnessItems()
 	if len(items) == 1 {
 		state := m.freshness[items[0].Key()]
+		if items[0].Completed {
+			if state.lastReceived.IsZero() {
+				return " · completed · no logs"
+			}
+			return " · completed · recv " + freshnessAge(state.lastReceived, now) + " · log " + freshnessAge(state.lastLog, now)
+		}
 		if state.lastReceived.IsZero() {
 			return " · no logs yet"
 		}
@@ -104,6 +113,9 @@ func (m model) freshnessSummary(now time.Time) string {
 	}
 	quiet := 0
 	for _, item := range items {
+		if item.Completed {
+			continue
+		}
 		state := m.freshness[item.Key()]
 		if !state.awaiting && !state.lastReceived.IsZero() && now.Sub(state.lastReceived) >= quietStreamAfter {
 			quiet++
@@ -123,6 +135,9 @@ func freshnessAge(at, now time.Time) string {
 }
 
 func (m model) freshnessStatus(item core.InventoryItem, now time.Time) string {
+	if item.Completed {
+		return "COMPLETED"
+	}
 	if _, ok := m.reconnecting[item.Key()]; ok {
 		return "RECONNECTING"
 	}
