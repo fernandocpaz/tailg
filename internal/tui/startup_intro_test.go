@@ -28,7 +28,7 @@ func TestStartupIntroAnimatesAndTransitionsToPicker(t *testing.T) {
 	}
 	previous := start
 	moved := false
-	for frame := 0; frame < startupIntroFrameCount; frame++ {
+	for frame := 0; frame < startupIntroFrames(m.width); frame++ {
 		updated, _ := m.Update(startupIntroTick{frame: frame})
 		m = updated.(pickerModel)
 		if m.introActive && m.View() != previous {
@@ -41,11 +41,45 @@ func TestStartupIntroAnimatesAndTransitionsToPicker(t *testing.T) {
 	}
 }
 
+func TestStartupIntroRunsAcrossEntireTerminal(t *testing.T) {
+    if startupIntroRenderWidth != 32 || startupIntroRenderHeight != 9 {
+        t.Fatalf("expected a half-size 32x9 runner, got %dx%d", startupIntroRenderWidth, startupIntroRenderHeight)
+    }
+
+    for _, width := range []int{32, 48, 80, 120, 180, 320} {
+        frames := startupIntroFrames(width)
+        if startupIntroLeft(0) != -startupIntroRenderWidth+2 {
+            t.Fatal("runner must begin entering from off-screen left")
+        }
+        if startupIntroLeft(frames-1) >= width {
+            t.Fatalf("runner left the viewport before the last frame at width %d", width)
+        }
+        if startupIntroLeft(frames) < width {
+            t.Fatalf("runner has not fully exited after %d frames at width %d", frames, width)
+        }
+        covered := make([]bool, width)
+        for frame := 0; frame < frames; frame++ {
+            left := startupIntroLeft(frame)
+            if frame > 0 && left-startupIntroLeft(frame-1) != startupIntroStep {
+                t.Fatalf("inconsistent movement at frame %d", frame)
+            }
+            for col := max(0, left); col < min(width, left+startupIntroRenderWidth); col++ {
+                covered[col] = true
+            }
+        }
+        for col, visited := range covered {
+            if !visited {
+                t.Fatalf("runner skipped viewport column %d at width %d", col, width)
+            }
+        }
+    }
+}
+
 func TestStartupIntroFramesContainNoText(t *testing.T) {
 	m := newPickerModel(nil, 0, "qa", "apollo", nil)
 	m.width, m.height = 80, 24
 	m.introActive = true
-	for frame := 0; frame < startupIntroFrameCount; frame++ {
+	for frame := 0; frame < startupIntroFrames(m.width); frame++ {
 		m.introFrame = frame
 		view := ansi.Strip(m.View())
 		for _, runeValue := range view {
@@ -124,8 +158,8 @@ func TestStartupIntroCtrlCQuitsImmediately(t *testing.T) {
 func TestStartupIntroRendersWithinTerminalBounds(t *testing.T) {
 	m := newPickerModel(nil, 0, "tkgs-qa", "apollo", nil)
 	m.introActive = true
-	for _, size := range []tea.WindowSizeMsg{{Width: 24, Height: 8}, {Width: 45, Height: 14}, {Width: 55, Height: 20}, {Width: 64, Height: 18}, {Width: 80, Height: 24}, {Width: 180, Height: 40}} {
-		for i := 0; i < startupIntroFrameCount; i++ {
+	for _, size := range []tea.WindowSizeMsg{{Width: 24, Height: 8}, {Width: 45, Height: 14}, {Width: 32, Height: 9}, {Width: 55, Height: 20}, {Width: 64, Height: 18}, {Width: 80, Height: 24}, {Width: 180, Height: 40}, {Width: 320, Height: 45}} {
+		for i := 0; i < startupIntroFrames(m.width); i++ {
 			m.width, m.height, m.introFrame = size.Width, size.Height, i
 			lines := strings.Split(ansi.Strip(m.View()), "\n")
 			if len(lines) != size.Height {
@@ -151,7 +185,7 @@ func TestStartupIntroNotActiveByDefault(t *testing.T) {
 func TestStartupIntroSkipsWhenTerminalTooSmall(t *testing.T) {
 	m := newPickerModel(nil, 0, "qa", "apollo", nil)
 	m.introActive = true
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 36, Height: 12})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 24, Height: 8})
 	m = updated.(pickerModel)
 	if m.introActive {
 		t.Fatal("the intro must be disabled when the terminal is too small to show it")

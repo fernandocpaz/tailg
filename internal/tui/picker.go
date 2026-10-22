@@ -169,7 +169,7 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.introFrame++
-		if m.introFrame >= startupIntroFrameCount {
+		if m.introFrame >= startupIntroFrames(m.width) {
 			m.introActive = false
 			return m, nil
 		}
