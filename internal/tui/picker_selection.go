@@ -324,6 +324,9 @@ func (m pickerModel) pickerSelectionView() string {
 		child := state.pods
 		index, count = child.index, len(child.rows)
 		header = append(header, truncatePickerCell(fmt.Sprintf("Selected: %d pods · pinned · %s", child.checkedCount(), podMonitorSummary(m.monitorEnabled, m.monitorBusy, m.monitorLastScan, m.monitorError)), inner))
+		if m.monitorEnabled {
+			header = append(header, truncatePickerCell(m.metricsSummary(), inner))
+		}
 		controls = "Space Mark · A App · Enter Logs · M Monitor · Esc Back"
 		for i, row := range child.rows {
 			label := row.pod.Name
@@ -343,6 +346,7 @@ func (m pickerModel) pickerSelectionView() string {
 			selected = row.app + " / " + row.pod.Name + " · " + valueOrDash(row.pod.Ready) + " · " + valueOrDash(row.pod.Phase)
 			if m.monitorEnabled {
 				healthReason = m.monitorHealth[row.pod.Name].reason
+				selected += " · " + podMetricPreview(m.podMonitorState, row.pod.Name)
 			}
 		}
 	}
