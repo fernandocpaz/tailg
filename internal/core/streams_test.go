@@ -3,10 +3,68 @@ package core
 import (
 	"context"
 	"errors"
+    "fmt"
+    "sync/atomic"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestFollowStreamsDoesNotRetryCompletedJob(t *testing.T) {
+    for _, initiallyComplete := range []bool{true, false} {
+        t.Run(fmt.Sprintf("initiallyComplete=%t", initiallyComplete), func(t *testing.T) {
+            ctx, cancel := context.WithCancel(context.Background())
+            defer cancel()
+
+            var started atomic.Int32
+            var completionObserved atomic.Bool
+            completionObserved.Store(initiallyComplete)
+            attempts := make(chan int32, 3)
+            item := InventoryItem{Pod: "cronjob-auditlistener-job", Container: "worker", Completed: initiallyComplete}
+            finished := make(chan struct{})
+
+            go func() {
+                FollowStreams(ctx, StreamConfig{
+                    Items: []InventoryItem{item},
+                    RefreshInterval: 10 * time.Millisecond,
+                    Inventory: func(context.Context) ([]InventoryItem, error) {
+                        copyOfItem := item
+                        copyOfItem.Completed = completionObserved.Load()
+                        return []InventoryItem{copyOfItem}, nil
+                    },
+                    Stream: func(context.Context, InventoryItem, *LogCursor, chan<- LogEvent) error {
+                        attempt := started.Add(1)
+                        completionObserved.Store(true)
+                        attempts <- attempt
+                        return nil // kubectl -f naturally exits at Job completion.
+                    },
+                }, make(chan LogEvent, 10))
+                close(finished)
+            }()
+
+            select {
+            case count := <-attempts:
+                if count != 1 {
+                    t.Fatalf("initial stream attempt = %d", count)
+                }
+            case <-time.After(time.Second):
+                t.Fatal("first stream never started")
+            }
+            // The backoff is 250ms. Wait beyond that to detect an accidental retry.
+            select {
+            case count := <-attempts:
+                t.Fatalf("completed Job was followed again (attempt %d)", count)
+            case <-time.After(550 * time.Millisecond):
+            }
+            cancel()
+            select {
+            case <-finished:
+            case <-time.After(time.Second):
+                t.Fatal("stream manager did not stop")
+            }
+        })
+    }
+}
 
 func TestFollowStreamsReplacesRuntimeAndIgnoresOldCompletion(t *testing.T) {
 	for _, change := range []struct {
