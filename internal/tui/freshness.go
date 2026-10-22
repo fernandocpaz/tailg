@@ -141,6 +141,9 @@ func (m model) freshnessStatus(item core.InventoryItem, now time.Time) string {
 	if _, ok := m.reconnecting[item.Key()]; ok {
 		return "RECONNECTING"
 	}
+	if _, ok := m.reattaching[item.Key()]; ok {
+		return "REATTACHING"
+	}
 	state := m.freshness[item.Key()]
 	if state.awaiting || state.lastReceived.IsZero() {
 		return "WAITING"
