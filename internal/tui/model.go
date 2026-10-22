@@ -113,7 +113,8 @@ type model struct {
 	searching       bool
 	searchMatches   int
 	searchLines     int
-	reconnecting    map[string]struct{}
+	reconnecting    map[string]struct{} // real kubectl transport failures
+	reattaching     map[string]struct{} // clean EOF while pod remains active
 	issues          *core.IssueRadar
 	issueOpen       bool
 	issueIndex      int
@@ -770,11 +771,14 @@ func (m model) renderHeader() string {
 	} else if m.isReconnecting() {
 		state = "↻ RECONNECTING"
 		stateStyle = warnStyle
+	} else if m.isReattaching() {
+		state = "↻ REATTACHING LOGS"
+		stateStyle = dimStyle
 	} else if !m.followsLive {
 		state = fmt.Sprintf("Ⅱ PAUSED -%d", m.scroll)
 		stateStyle = warnStyle
 	}
-	if m.followsLive && !m.isReconnecting() && m.waitingStreams() > 0 {
+	if m.followsLive && !m.isReconnecting() && !m.isReattaching() && m.waitingStreams() > 0 {
 		state = fmt.Sprintf("WAITING %d", m.waitingStreams())
 		stateStyle = warnStyle
 	}
@@ -1298,15 +1302,34 @@ func (m *model) markReconnecting(pod, container string) {
 	if m.reconnecting == nil {
 		m.reconnecting = map[string]struct{}{}
 	}
-	m.reconnecting[streamKey(pod, container)] = struct{}{}
+	key := streamKey(pod, container)
+	delete(m.reattaching, key)
+	m.reconnecting[key] = struct{}{}
+}
+
+// A clean kubectl EOF is not a transport error or evidence of a failed pod.
+// Keep reattaching in the background until the pod has completed or changed.
+func (m *model) markReattaching(pod, container string) {
+	if m.reattaching == nil {
+		m.reattaching = map[string]struct{}{}
+	}
+	key := streamKey(pod, container)
+	delete(m.reconnecting, key)
+	m.reattaching[key] = struct{}{}
 }
 
 func (m *model) markConnected(pod, container string) {
-	delete(m.reconnecting, streamKey(pod, container))
+	key := streamKey(pod, container)
+	delete(m.reconnecting, key)
+	delete(m.reattaching, key)
 }
 
 func (m model) isReconnecting() bool {
 	return len(m.reconnecting) > 0
+}
+
+func (m model) isReattaching() bool {
+	return len(m.reattaching) > 0
 }
 
 // Kubernetes pod phase, not log content or the absence of new lines,
@@ -1343,6 +1366,11 @@ func (m *model) pruneReconnects(items []core.InventoryItem) {
 	for key := range m.reconnecting {
 		if _, ok := wanted[key]; !ok {
 			delete(m.reconnecting, key)
+		}
+	}
+	for key := range m.reattaching {
+		if _, ok := wanted[key]; !ok {
+			delete(m.reattaching, key)
 		}
 	}
 	if !m.isReconnecting() && strings.HasSuffix(m.notice, "; reconnecting...") {
@@ -1561,7 +1589,7 @@ func (m *model) processLogBatch(events []core.LogEvent) {
 		}
 		if event.Closed {
 			if m.streamCompleted(event.Pod, event.Container) {
-				// kubectl logs -f normally reaches EOF when a Job succeeds.
+				// Job completed: a normal EOF is expected and needs no retry.
 				m.markConnected(event.Pod, event.Container)
 				if event.Err == nil {
 					if !m.isReconnecting() && strings.HasSuffix(m.notice, "; reconnecting...") {
@@ -1569,10 +1597,15 @@ func (m *model) processLogBatch(events []core.LogEvent) {
 					}
 					continue
 				}
-			} else {
-				if event.Err == nil {
-					m.notice = "log stream ended"
+			} else if event.Err == nil {
+				// Active Deployment pods can return clean EOF. The background
+				// manager reattaches, but EOF does not imply a failed connection.
+				m.markReattaching(event.Pod, event.Container)
+				if !m.isReconnecting() && strings.HasSuffix(m.notice, "; reconnecting...") {
+					m.notice = ""
 				}
+				continue
+			} else {
 				m.notice += "; reconnecting..."
 				m.markReconnecting(event.Pod, event.Container)
 			}
