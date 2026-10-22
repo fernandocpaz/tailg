@@ -53,6 +53,7 @@ func TestRealKubectlTransportErrorRemainsAnIssue(t *testing.T) {
     item := core.InventoryItem{Pod: "deployment-api-5d4c", Container: "api"}
     m := model{items: []core.InventoryItem{item}, state: core.NewFilterState(30),
         heartbeat: &core.HeartbeatAnalyzer{}, followsLive: true,
+        width: 160, height: 24,
         config: Config{Formatter: core.Formatter{Color: false}},
     }
     m.processLogBatch([]core.LogEvent{{Pod: item.Pod, Container: item.Container, Closed: true}})
