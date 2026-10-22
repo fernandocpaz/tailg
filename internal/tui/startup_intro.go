@@ -90,7 +90,13 @@ var startupIntroLegFrames = [4][2][4]startupIntroPoint{
 }
 
 func startupIntroLine(pixels [][]byte, a, b startupIntroPoint, ink byte) {
-    dx, dy := abs(b.x-a.x), -abs(b.y-a.y)
+    dx, dy := b.x-a.x, a.y-b.y
+    if dx < 0 {
+        dx = -dx
+    }
+    if dy > 0 {
+        dy = -dy
+    }
     sx, sy := -1, -1
     if a.x < b.x {
         sx = 1
