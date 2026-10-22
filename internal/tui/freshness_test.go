@@ -52,13 +52,13 @@ func TestSuccessfulEOFRemainsRetryableForRunningPodThenSettlesOnCompletion(t *te
         config: Config{Formatter: core.Formatter{Color: false}},
     }
     m.processLogBatch([]core.LogEvent{{Pod: item.Pod, Container: item.Container, Closed: true}})
-    if !m.isReconnecting() || m.issueStats().Groups != 0 {
-        t.Fatalf("clean EOF before pod completion should retry without an ISSUE")
+    if !m.isReattaching() || m.isReconnecting() || m.issueStats().Groups != 0 {
+        t.Fatalf("clean EOF before completion should reattach without warning or ISSUE")
     }
     item.Completed = true
     updated, _ := m.Update(inventoryMsg{items: []core.InventoryItem{item}})
     m = updated.(model)
-    if m.isReconnecting() || m.issueStats().Groups != 0 || m.freshnessStatus(item, time.Now()) != "COMPLETED" {
+    if m.isReconnecting() || m.isReattaching() || m.issueStats().Groups != 0 || m.freshnessStatus(item, time.Now()) != "COMPLETED" {
         t.Fatalf("later completion did not resolve transient reconnect state")
     }
 }

@@ -157,7 +157,9 @@ func streamArgs(item core.InventoryItem, options LogOptions, sinceTime time.Time
 		// A fixed tail cap on reconnect could skip logs written while disconnected.
 		tail = -1
 	}
-	args := []string{"logs", "pod/" + item.Pod, "-c", item.Container, "--ignore-errors=true", "--timestamps=true", "--tail", strconv.Itoa(tail)}
+	// Never mask kubectl follow errors: a nonzero exit must be distinguishable
+	// from a normal EOF so the UI reports real transport failures accurately.
+	args := []string{"logs", "pod/" + item.Pod, "-c", item.Container, "--timestamps=true", "--tail", strconv.Itoa(tail)}
 	if !sinceTime.IsZero() {
 		args = append(args, "--since-time", sinceTime.UTC().Format(time.RFC3339))
 	} else if options.Since != "" {
