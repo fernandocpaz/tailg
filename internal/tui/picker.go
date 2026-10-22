@@ -412,7 +412,7 @@ func (m pickerModel) View() string {
 }
 
 func (m pickerModel) showUpdate() bool {
-	return m.updates.pending && m.selection == nil && !m.helpVisible && m.activity.view == "" && m.confirmRun == nil
+	return !m.introActive && m.updates.pending && m.selection == nil && !m.helpVisible && m.activity.view == "" && m.confirmRun == nil
 }
 
 func (m pickerModel) pickerView() string {
