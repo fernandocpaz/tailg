@@ -162,21 +162,6 @@ func metricPercent(usage, capacity float64, known bool) string {
 	return fmt.Sprintf(" (%.0f%%)", math.Round(100*usage/capacity))
 }
 
-func renderMetricCell(value string, used, limit float64, known bool, enabled bool) string {
-	if !enabled || !known || limit <= 0 {
-		return value
-	}
-	ratio := used / limit
-	switch {
-	case ratio >= .95:
-		return alertStyle.Render(value)
-	case ratio >= .8:
-		return warnStyle.Render(value)
-	default:
-		return value
-	}
-}
-
 func (m podMonitorState) resourceCells(app core.AppChoice) (string, string) {
 	usage, found := m.appResources(app)
 	if !found {
