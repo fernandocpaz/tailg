@@ -185,7 +185,7 @@ func TestStartupIntroNotActiveByDefault(t *testing.T) {
 func TestStartupIntroSkipsWhenTerminalTooSmall(t *testing.T) {
 	m := newPickerModel(nil, 0, "qa", "apollo", nil)
 	m.introActive = true
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 24, Height: 8})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 20, Height: 5})
 	m = updated.(pickerModel)
 	if m.introActive {
 		t.Fatal("the intro must be disabled when the terminal is too small to show it")
