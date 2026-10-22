@@ -50,7 +50,7 @@ func TestStartupIntroFramesContainNoText(t *testing.T) {
 		view := ansi.Strip(m.View())
 		for _, runeValue := range view {
 			switch runeValue {
-			case ' ', '\\n', '█', '▀', '▄':
+			case ' ', '\n', '█', '▀', '▄':
 			default:
 				t.Fatalf("splash frame %d contains non-art character %q", frame, runeValue)
 			}
