@@ -69,6 +69,9 @@ func (m pickerModel) pickerScreen() string {
 		values := pickerRowValues(app, now)
 		if m.monitorEnabled {
 			values["cpu"], values["memory"] = m.resourceCells(app)
+			cpuStyle, memStyle := m.resourceCellStyles(app)
+			values["cpu"] = cpuStyle.Render(values["cpu"])
+			values["memory"] = memStyle.Render(values["memory"])
 		}
 		marker := "  [ ] "
 		if m.checked[app.Name] {
@@ -90,14 +93,6 @@ func (m pickerModel) pickerScreen() string {
 			line = prefix + renderMonitoredPodName(name, m.monitorApps[app.Name], m.monitorFlashOn) + suffix
 		} else {
 			line = style.Render(line)
-		}
-		if m.monitorEnabled {
-			// Color usage only when a declared resource limit is available.
-			// Render after row selection so the cursor and checks stay visible.
-			usage, found := m.appResources(app)
-			if found {
-				_ = usage // details/thresholds are rendered in the footer.
-			}
 		}
 		rows[i].lines = []string{line}
 	}
@@ -154,24 +149,21 @@ func (m pickerModel) pickerScreenFooter(width int) []string {
 		}
 		values := pickerRowValues(app, time.Now())
 		detail := values["name"] + " · Image: " + values["image"] + " · Restarts: " + values["restarts"] + " · Started: " + values["started"] + " · Deployed: " + values["deployed"]
-		if m.monitorEnabled {
-			detail += " · " + m.metricsSummaryForApp(app)
-		}
 		if app.CronJob != nil {
 			last := "never"
 			if !app.CronJob.LastScheduledAt.IsZero() {
 				last = app.CronJob.LastScheduledAt.Local().Format("2006-01-02 15:04:05 MST")
 			}
 			detail = fmt.Sprintf("%s · Schedule: %s (%s) · %s · Active: %s · Pods: %s · Last scheduled: %s", values["name"], values["schedule"], values["zone"], values["state"], values["active"], values["pods"], last)
-			if m.monitorEnabled {
-				detail += " · " + m.metricsSummaryForApp(app)
-			}
 		}
 		limit := 2
 		if m.height > 0 && m.height < 20 {
 			limit = 1
 		}
 		footer = append(footer, pickerLimitedLines(detail, width, limit)...)
+		if m.monitorEnabled {
+			footer = append(footer, pickerLimitedLines(m.metricsSummaryForApp(app), width, 1)...)
+		}
 	}
 	if len(m.checked) > 0 {
 		pods := 0
