@@ -54,7 +54,7 @@ func (m pickerModel) pickerScreen() string {
 		header = header[:min(len(header), max(1, m.height-len(footer)-4))]
 	}
 	rows := make([]pickerViewportRow, len(m.apps))
-	appColumns, jobColumns := pickerColumns(width, false), pickerColumns(width, true)
+	appColumns, jobColumns := pickerColumnsWithMetrics(width, false, m.monitorEnabled), pickerColumnsWithMetrics(width, true, m.monitorEnabled)
 	var headers [2][]string
 	for section, columns := range [][]pickerColumn{appColumns, jobColumns} {
 		headers[section] = []string{dimStyle.Render(pickerTableLine("      ", columns, nil)), dimStyle.Render(strings.Repeat("─", width))}
@@ -67,6 +67,9 @@ func (m pickerModel) pickerScreen() string {
 			rows[i].section = 1
 		}
 		values := pickerRowValues(app, now)
+		if m.monitorEnabled {
+			values["cpu"], values["memory"] = m.resourceCells(app)
+		}
 		marker := "  [ ] "
 		if m.checked[app.Name] {
 			marker = "  [x] "
@@ -87,6 +90,14 @@ func (m pickerModel) pickerScreen() string {
 			line = prefix + renderMonitoredPodName(name, m.monitorApps[app.Name], m.monitorFlashOn) + suffix
 		} else {
 			line = style.Render(line)
+		}
+		if m.monitorEnabled {
+			// Color usage only when a declared resource limit is available.
+			// Render after row selection so the cursor and checks stay visible.
+			usage, found := m.appResources(app)
+			if found {
+				_ = usage // details/thresholds are rendered in the footer.
+			}
 		}
 		rows[i].lines = []string{line}
 	}
@@ -128,6 +139,9 @@ func (m pickerModel) pickerScreenHeader(width int) []string {
 		lines = append(lines, inspect)
 		lines = append(lines, pickerLimitedLines(watch, width, 2)...)
 	}
+	if m.monitorEnabled {
+		lines = append(lines, pickerLimitedLines(m.metricsSummary(), width, 1)...)
+	}
 	return append(pickerWrapLines(lines, width), dimStyle.Render(strings.Repeat("─", width)))
 }
 
@@ -140,12 +154,18 @@ func (m pickerModel) pickerScreenFooter(width int) []string {
 		}
 		values := pickerRowValues(app, time.Now())
 		detail := values["name"] + " · Image: " + values["image"] + " · Restarts: " + values["restarts"] + " · Started: " + values["started"] + " · Deployed: " + values["deployed"]
+		if m.monitorEnabled {
+			detail += " · " + m.metricsSummaryForApp(app)
+		}
 		if app.CronJob != nil {
 			last := "never"
 			if !app.CronJob.LastScheduledAt.IsZero() {
 				last = app.CronJob.LastScheduledAt.Local().Format("2006-01-02 15:04:05 MST")
 			}
 			detail = fmt.Sprintf("%s · Schedule: %s (%s) · %s · Active: %s · Pods: %s · Last scheduled: %s", values["name"], values["schedule"], values["zone"], values["state"], values["active"], values["pods"], last)
+			if m.monitorEnabled {
+				detail += " · " + m.metricsSummaryForApp(app)
+			}
 		}
 		limit := 2
 		if m.height > 0 && m.height < 20 {
@@ -210,6 +230,10 @@ type pickerColumn struct {
 }
 
 func pickerColumns(width int, cronJob bool) []pickerColumn {
+	return pickerColumnsWithMetrics(width, cronJob, false)
+}
+
+func pickerColumnsWithMetrics(width int, cronJob, withMetrics bool) []pickerColumn {
 	columns := []pickerColumn{{"name", "APPLICATION", 0}}
 	add := func(minimum int, id, title string, size int) {
 		if width >= minimum {
@@ -237,6 +261,10 @@ func pickerColumns(width int, cronJob bool) []pickerColumn {
 		add(100, "started", "STARTED", 10)
 		add(120, "deployed", "DEPLOYED", 10)
 		add(75, "image", "IMAGE", 12)
+		if withMetrics && width >= 120 {
+			add(120, "cpu", "CPU", 8)
+			add(120, "memory", "MEM", 9)
+		}
 	}
 	remaining := width - 6 - (len(columns) - 1)
 	for _, column := range columns[1:] {
