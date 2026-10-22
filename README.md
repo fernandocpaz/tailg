@@ -445,10 +445,17 @@ starts inside a group, while live and paused views preserve their anchors.
 When a CronJob's pod reaches Kubernetes phase `Succeeded`, its log stream
 is marked **COMPLETED** rather than RECONNECTING/WAITING. A normal end of
 `kubectl logs --follow` is not an Issue Radar error. The existing log history
-remains inspectable without retrying a completed pod. Running pods still
-reconnect after an unexpected stream closure; true log-collection errors and
-application failures continue to be reported as issues. This requires pod
-inventory access so tailg can confirm successful completion.
+remains inspectable without retrying a completed pod. When the same clean EOF
+occurs on an active Deployment (or another running workload), the UI shows
+**REATTACHING LOGS** in muted color instead of **RECONNECTING** and does not
+create a STREAM issue or a red warning. The background stream manager keeps
+trying to follow the logs, preserving the cursor. If kubectl reports an actual
+error, **RECONNECTING** and Issue Radar still show that failure: the follower
+no longer uses `--ignore-errors=true` to suppress transport failures. Application
+log errors and warnings remain visible as issues regardless of stream state.
+Press `F8` to inspect actual issue evidence; `F4` distinguishes REATTACHING
+from RECONNECTING. A stream EOF does not establish whether the pod is healthy.
+Pod inventory is required to confirm successfully completed Jobs.
 
 The header also shows receipt age (`recv`) and the age of the last received log
 (`log`) for a single stream. An old log received just now still shows its original
