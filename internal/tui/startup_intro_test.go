@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -46,22 +47,25 @@ func TestStartupIntroRunsAcrossEntireTerminal(t *testing.T) {
         t.Fatalf("expected a compact 22x6 runner, got %dx%d", startupIntroRenderWidth, startupIntroRenderHeight)
     }
 
+    if elapsed := time.Duration(startupIntroFrameCount) * startupIntroInterval; elapsed > time.Second {
+        t.Fatalf("startup animation scheduled duration is %v; must be <= 1 second", elapsed)
+    }
     for _, width := range []int{22, 32, 48, 80, 120, 180, 320} {
         frames := startupIntroFrames(width)
-        if startupIntroLeft(0) != -startupIntroRenderWidth+2 {
+        if startupIntroLeft(0, width) != -startupIntroRenderWidth+2 {
             t.Fatal("runner must begin entering from off-screen left")
         }
-        if startupIntroLeft(frames-1) >= width {
+        if startupIntroLeft(frames-1, width) >= width {
             t.Fatalf("runner left the viewport before the last frame at width %d", width)
         }
-        if startupIntroLeft(frames) < width {
+        if startupIntroLeft(frames, width) < width {
             t.Fatalf("runner has not fully exited after %d frames at width %d", frames, width)
         }
         covered := make([]bool, width)
         for frame := 0; frame < frames; frame++ {
-            left := startupIntroLeft(frame)
-            if frame > 0 && left-startupIntroLeft(frame-1) != startupIntroStep {
-                t.Fatalf("inconsistent movement at frame %d", frame)
+            left := startupIntroLeft(frame, width)
+            if frame > 0 && left <= startupIntroLeft(frame-1, width) {
+                t.Fatalf("runner must move monotonically right at frame %d", frame)
             }
             for col := max(0, left); col < min(width, left+startupIntroRenderWidth); col++ {
                 covered[col] = true
