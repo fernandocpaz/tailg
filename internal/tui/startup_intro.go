@@ -9,12 +9,15 @@ import (
 )
 
 const (
-    startupIntroFrameCount   = 18
-    startupIntroInterval     = 70 * time.Millisecond
+    startupIntroInterval     = 40 * time.Millisecond
     startupIntroSpriteWidth  = 64
-    startupIntroSpriteHeight = 36 // Two vertical pixels per terminal cell.
-    startupIntroMinWidth     = startupIntroSpriteWidth
-    startupIntroMinHeight    = startupIntroSpriteHeight / 2
+    startupIntroSpriteHeight = 36
+    startupIntroScale        = 2 // Half the previous width and height on screen.
+    startupIntroRenderWidth  = startupIntroSpriteWidth / startupIntroScale
+    startupIntroRenderHeight = startupIntroSpriteHeight / (2 * startupIntroScale)
+    startupIntroStep         = 3 // Terminal columns per animation frame.
+    startupIntroMinWidth     = startupIntroRenderWidth
+    startupIntroMinHeight    = startupIntroRenderHeight
 )
 
 type startupIntroTick struct{ frame int }
@@ -24,6 +27,21 @@ func startupIntroCmd(frame int) tea.Cmd {
         return startupIntroTick{frame: frame}
     })
 }
+
+// Keep a consistent running speed at any terminal width. The bird starts
+// almost entirely off the left edge and completes its run past the right edge.
+func startupIntroFrames(width int) int {
+    if width <= 0 {
+        width = 100
+    }
+    distance := width + startupIntroRenderWidth - 2
+    return (distance + startupIntroStep - 1) / startupIntroStep
+}
+
+func startupIntroLeft(frame int) int {
+    return -startupIntroRenderWidth + 2 + frame*startupIntroStep
+}
+
 
 // Hand-drawn pixel sprite: sweeping tail, blue body and wing, long neck,
 // crested head, visible eye, and hooked golden beak. Each letter is a color.
@@ -179,8 +197,30 @@ func startupIntroColor(pixel byte) lipgloss.Color {
     }
 }
 
-// Half-block glyphs allow a detailed, 36-pixel-tall sprite in just 18 rows.
-// Empty halves remain transparent to the user's terminal background.
+// Collapse each 2x2 source-pixel block to its predominant non-transparent
+// color, preserving the eye, beak, feathers, and running legs at half size.
+func startupIntroReducedPixel(pixels [][]byte, x, y int) byte {
+    var colors [256]uint8
+    bestColor := byte(' ')
+    bestCount := uint8(0)
+    for dy := 0; dy < startupIntroScale; dy++ {
+        for dx := 0; dx < startupIntroScale; dx++ {
+            pixel := pixels[y+dy][x+dx]
+            if pixel == ' ' {
+                continue
+            }
+            colors[pixel]++
+            if colors[pixel] > bestCount {
+                bestCount = colors[pixel]
+                bestColor = pixel
+            }
+        }
+    }
+    return bestColor
+}
+
+// Half-block glyphs retain two vertically stacked colors in each terminal
+// cell. Empty halves remain transparent to the terminal background.
 func startupIntroCell(top, bottom byte) string {
     if top == ' ' && bottom == ' ' {
         return " "
@@ -200,8 +240,9 @@ func startupIntroCell(top, bottom byte) string {
         Render("▀")
 }
 
-// Render only the running bird and dust inside Bubble Tea's alternate screen.
-// There is deliberately no brand, title, status, or skip instruction.
+// Only the bird and dust appear, crossing the entire viewport from left to
+// right. Clipping is done by cell BEFORE rendering to avoid splitting ANSI
+// color escapes as the sprite enters and exits the screen.
 func (m pickerModel) startupIntroView() string {
     width, height := m.width, m.height
     if width <= 0 {
@@ -216,7 +257,7 @@ func (m pickerModel) startupIntroView() string {
 
     frame := m.introFrame
     pixels := startupIntroRaster(frame)
-    // Dust fades backward from the moving bird (and is never rendered as text).
+    // Small dust particles track the sprint instead of leaving any text.
     for i := 0; i < 5; i++ {
         x := 12 - (frame*2+i*5)%13
         y := 29 + (frame+i*2)%6
@@ -225,20 +266,23 @@ func (m pickerModel) startupIntroView() string {
         }
     }
 
-    travel := min(24, width-startupIntroSpriteWidth)
-    left := (width-startupIntroSpriteWidth-travel)/2 + frame*travel/(startupIntroFrameCount-1)
-    artHeight := startupIntroSpriteHeight/2
-    top := max(0, (height-artHeight)/2)
+    left := startupIntroLeft(frame)
+    firstColumn := max(0, -left)
+    lastColumn := min(startupIntroRenderWidth, width-left)
+    top := max(0, (height-startupIntroRenderHeight)/2)
     if frame%4 == 1 && top > 0 {
         top--
     }
-    body := make([]string, top, top+artHeight)
+    body := make([]string, top, top+startupIntroRenderHeight)
     cells := make(map[uint16]string)
-    for y := 0; y < startupIntroSpriteHeight; y += 2 {
+    for row := 0; row < startupIntroRenderHeight; row++ {
         var line strings.Builder
-        line.WriteString(strings.Repeat(" ", left))
-        for x := 0; x < startupIntroSpriteWidth; x++ {
-            upper, lower := pixels[y][x], pixels[y+1][x]
+        line.WriteString(strings.Repeat(" ", max(0, left)))
+        for col := firstColumn; col < lastColumn; col++ {
+            x := col * startupIntroScale
+            y := row * startupIntroScale * 2
+            upper := startupIntroReducedPixel(pixels, x, y)
+            lower := startupIntroReducedPixel(pixels, x, y+startupIntroScale)
             key := uint16(upper)<<8 | uint16(lower)
             glyph, ok := cells[key]
             if !ok {
