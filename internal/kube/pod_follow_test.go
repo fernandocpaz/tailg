@@ -76,6 +76,32 @@ func TestPodFollowerDoesNotGuessOwnerOrReplaceStandalonePod(t *testing.T) {
 	}
 }
 
+func TestCompletedCronJobPodKeepsSuccessfulLifecycleMetadata(t *testing.T) {
+    succeeded := followTestPod("auditlistener-job-123", "", "", "")
+    succeeded["status"] = map[string]any{"phase": "Succeeded", "containerStatuses": []any{map[string]any{
+        "name": "api", "state": map[string]any{"terminated": map[string]any{
+            "exitCode": 0, "reason": "Completed",
+        }},
+    }}}
+    failed := followTestPod("failed-job-456", "", "", "")
+    failed["status"] = map[string]any{"phase": "Failed"}
+    running := followTestPod("active-service-123", "", "", "")
+    items := inventoryFromPods([]any{succeeded, failed, running})
+    if len(items) != 3 {
+        t.Fatalf("inventory = %+v", items)
+    }
+    for _, item := range items {
+        if got, want := item.Completed, item.Pod == "auditlistener-job-123"; got != want {
+            t.Fatalf("pod %s completed=%t, want %t", item.Pod, got, want)
+        }
+    }
+    follower := Runner{}.FollowPods([]string{"auditlistener-job-123"})
+    pinned, err := follower.fromPods(context.Background(), []any{succeeded})
+    if err != nil || len(pinned) != 1 || !pinned[0].Completed {
+        t.Fatalf("finished Job should remain readable and identified as completed: %+v, %v", pinned, err)
+    }
+}
+
 func TestInventoryIncludesContainerRuntimeIdentity(t *testing.T) {
 	pod := followTestPod("api", "", "", "")
 	pod["spec"] = map[string]any{"containers": []any{map[string]any{"name": "api"}, map[string]any{"name": "sidecar"}}}

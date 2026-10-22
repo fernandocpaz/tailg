@@ -10,12 +10,12 @@ structured diagnostics for scripts and AI agents.
 
 ## Road Runner startup animation
 
-Running `tailg` in an interactive terminal plays a small (32-column,
-9-row), full-color pixel-art Road Runner running all the way across the screen:
+Running `tailg` in an interactive terminal plays a compact (22-column,
+6-row), full-color pixel-art Road Runner running all the way across the screen:
 it enters from the left and exits on the right at a constant speed, adapting
 the duration to terminal width. The splash contains **only the animation**:
 no title, status text, or on-screen instructions. Press any key to skip;
-Ctrl+C still quits. Terminals narrower than 32 columns or shorter than 9 rows
+Ctrl+C still quits. Terminals narrower than 22 columns or shorter than 6 rows
 go straight to the picker. The animation runs only on the first picker entry,
 never for scripts, subcommands, or redirected output. Use `tailg --no-intro`
 to disable it.
@@ -423,6 +423,14 @@ The log timeline inserts non-selectable local-calendar separators such as
 `Today · 2026-09-18`, `1 day ago · 2026-09-17`, and
 `2 days ago · 2026-09-16`. The active date remains visible when the viewport
 starts inside a group, while live and paused views preserve their anchors.
+
+When a CronJob's pod reaches Kubernetes phase `Succeeded`, its log stream
+is marked **COMPLETED** rather than RECONNECTING/WAITING. A normal end of
+`kubectl logs --follow` is not an Issue Radar error. The existing log history
+remains inspectable without retrying a completed pod. Running pods still
+reconnect after an unexpected stream closure; true log-collection errors and
+application failures continue to be reported as issues. This requires pod
+inventory access so tailg can confirm successful completion.
 
 The header also shows receipt age (`recv`) and the age of the last received log
 (`log`) for a single stream. An old log received just now still shows its original

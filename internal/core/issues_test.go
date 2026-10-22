@@ -50,6 +50,23 @@ func TestIssueRadarDetectsOperationalSignals(t *testing.T) {
 	}
 }
 
+func TestCleanLogStreamEOFIsNotAnIssue(t *testing.T) {
+    now := time.Now()
+    success := LogEvent{Pod: "scheduled-job", Container: "worker", Closed: true, ObservedAt: now}
+    if issue, ok := ClassifyIssue(success); ok {
+        t.Fatalf("normal kubectl EOF was classified as a problem: %+v", issue)
+    }
+    radar := NewIssueRadar(20)
+    if radar.Observe(success) || radar.Stats(now, IssueActiveWindow).Groups != 0 {
+        t.Fatal("successful completed Job generated a false issue")
+    }
+    failed := success
+    failed.Err = errors.New("kubectl connection reset")
+    if !radar.Observe(failed) || radar.Stats(now, IssueActiveWindow).Groups != 1 {
+        t.Fatal("genuine kubectl transport error should still be an issue")
+    }
+}
+
 func TestIssueRadarIgnoresHealthyCountersAndHeartbeat(t *testing.T) {
 	for _, message := range []string{
 		"Heartbeat: uptime=00:02:00 failed=0 dlq=0 breaker=closed",

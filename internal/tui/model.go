@@ -765,7 +765,9 @@ func (m model) renderHeader() string {
 
 	state := "● LIVE"
 	stateStyle := okStyle
-	if m.isReconnecting() {
+	if m.allStreamsCompleted() {
+		state = "✓ COMPLETED"
+	} else if m.isReconnecting() {
 		state = "↻ RECONNECTING"
 		stateStyle = warnStyle
 	} else if !m.followsLive {
@@ -1307,10 +1309,36 @@ func (m model) isReconnecting() bool {
 	return len(m.reconnecting) > 0
 }
 
+// Kubernetes pod phase, not log content or the absence of new lines,
+// establishes whether a Job completed successfully.
+func (m model) streamCompleted(pod, container string) bool {
+	key := streamKey(pod, container)
+	for _, item := range m.items {
+		if item.Key() == key {
+			return item.Completed
+		}
+	}
+	return false
+}
+
+func (m model) allStreamsCompleted() bool {
+	if len(m.items) == 0 {
+		return false
+	}
+	for _, item := range m.items {
+		if !item.Completed {
+			return false
+		}
+	}
+	return true
+}
+
 func (m *model) pruneReconnects(items []core.InventoryItem) {
 	wanted := make(map[string]struct{}, len(items))
 	for _, item := range items {
-		wanted[item.Key()] = struct{}{}
+		if !item.Completed {
+			wanted[item.Key()] = struct{}{}
+		}
 	}
 	for key := range m.reconnecting {
 		if _, ok := wanted[key]; !ok {
@@ -1532,11 +1560,23 @@ func (m *model) processLogBatch(events []core.LogEvent) {
 			m.notice = event.Err.Error()
 		}
 		if event.Closed {
-			if event.Err == nil {
-				m.notice = "log stream ended"
+			if m.streamCompleted(event.Pod, event.Container) {
+				// kubectl logs -f normally reaches EOF when a Job succeeds.
+				m.markConnected(event.Pod, event.Container)
+				if event.Err == nil {
+					if !m.isReconnecting() && strings.HasSuffix(m.notice, "; reconnecting...") {
+						m.notice = ""
+					}
+					continue
+				}
+			} else {
+				if event.Err == nil {
+					m.notice = "log stream ended"
+				}
+				m.notice += "; reconnecting..."
+				m.markReconnecting(event.Pod, event.Container)
 			}
-			m.notice += "; reconnecting..."
-			m.markReconnecting(event.Pod, event.Container)
+			// Actual stream errors remain reportable, even for completed pods.
 			m.issues.Observe(event)
 			continue
 		}

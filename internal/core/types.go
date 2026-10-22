@@ -20,6 +20,7 @@ type InventoryItem struct {
 	PodUID       string
 	ContainerID  string
 	RestartCount int
+	Completed    bool // Kubernetes reports pod phase Succeeded; no stream retry needed.
 }
 
 func (i InventoryItem) Key() string { return i.Pod + "\x00" + i.Container }

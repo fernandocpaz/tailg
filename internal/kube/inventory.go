@@ -274,6 +274,7 @@ func inventoryFromPods(pods []any) []core.InventoryItem {
 				result = append(result, core.InventoryItem{Pod: name, Container: containerName,
 					PodUID:      stringValue(mapValue(pod["metadata"])["uid"]),
 					ContainerID: stringValue(status["containerID"]), RestartCount: intValue(status["restartCount"]),
+					Completed: podPhase(pod) == "Succeeded",
 				})
 			}
 		}

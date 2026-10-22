@@ -438,10 +438,12 @@ func detectIssue(event LogEvent) (detectedIssue, bool) {
 
 func detectIssueFields(event LogEvent, fields LogFields) (detectedIssue, bool) {
 	if event.Closed {
-		summary := "log stream ended"
-		if event.Err != nil {
-			summary = strings.TrimSpace(event.Err.Error())
+		// A successful kubectl exit can be normal for a completed Job/CronJob.
+		// The stream manager handles reconnecting active pods separately.
+		if event.Err == nil {
+			return detectedIssue{}, false
 		}
+		summary := strings.TrimSpace(event.Err.Error())
 		fullSummary := cleanIssueSummary(summary)
 		return detectedIssue{severity: IssueError, kind: "STREAM", summary: truncateIssueSummary(fullSummary), fullSummary: fullSummary, search: issueSearchTerm(fullSummary, "STREAM")}, true
 	}

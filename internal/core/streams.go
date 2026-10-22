@@ -165,6 +165,11 @@ func FollowStreams(ctx context.Context, config StreamConfig, events chan<- LogEv
 			handle.cancel()
 			handle.cancel = nil
 			handle.attempt = nextAttempt
+			// Completed Job/CronJob pods retain logs, but kubectl -f
+			// naturally reaches EOF. Do not repeatedly reopen the pod.
+			if handle.item.Completed {
+				continue
+			}
 			delay := streamRetryDelay(nextAttempt)
 			go func(request managedStreamRetry) {
 				timer := time.NewTimer(delay)
@@ -186,6 +191,10 @@ func FollowStreams(ctx context.Context, config StreamConfig, events chan<- LogEv
 			item, ok := wanted[retry.key]
 			if !ok {
 				delete(active, retry.key)
+				continue
+			}
+			// A running pod can become Succeeded while a retry is pending.
+			if item.Completed {
 				continue
 			}
 			start(item, handle.attempt)
