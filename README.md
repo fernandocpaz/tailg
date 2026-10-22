@@ -10,13 +10,15 @@ structured diagnostics for scripts and AI agents.
 
 ## Road Runner startup animation
 
-Running `tailg` in an interactive terminal plays a brief full-color pixel-art
-Road Runner sprint before the application picker opens. The splash displays
-**only the animated bird**: no title, status text, or on-screen instructions.
-Press any key to skip; Ctrl+C still quits. Terminals narrower than 64 columns
-or shorter than 18 rows go straight to the picker. The animation runs only on
-the first picker entry, never for scripts, subcommands, or redirected output.
-Use `tailg --no-intro` to disable it.
+Running `tailg` in an interactive terminal plays a small (32-column,
+9-row), full-color pixel-art Road Runner running all the way across the screen:
+it enters from the left and exits on the right at a constant speed, adapting
+the duration to terminal width. The splash contains **only the animation**:
+no title, status text, or on-screen instructions. Press any key to skip;
+Ctrl+C still quits. Terminals narrower than 32 columns or shorter than 9 rows
+go straight to the picker. The animation runs only on the first picker entry,
+never for scripts, subcommands, or redirected output. Use `tailg --no-intro`
+to disable it.
 
 ## Adaptive terminal colors
 
