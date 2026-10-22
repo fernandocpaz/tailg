@@ -12,8 +12,8 @@ const (
     startupIntroInterval     = 40 * time.Millisecond
     startupIntroSpriteWidth  = 64
     startupIntroSpriteHeight = 36
-    startupIntroScale        = 2 // Half the previous width and height on screen.
-    startupIntroRenderWidth  = startupIntroSpriteWidth / startupIntroScale
+    startupIntroScale        = 3 // Compact ~22×6 sprite; preserve running silhouette.
+    startupIntroRenderWidth  = (startupIntroSpriteWidth + startupIntroScale - 1) / startupIntroScale
     startupIntroRenderHeight = startupIntroSpriteHeight / (2 * startupIntroScale)
     startupIntroStep         = 3 // Terminal columns per animation frame.
     startupIntroMinWidth     = startupIntroRenderWidth
@@ -197,14 +197,17 @@ func startupIntroColor(pixel byte) lipgloss.Color {
     }
 }
 
-// Collapse each 2x2 source-pixel block to its predominant non-transparent
-// color, preserving the eye, beak, feathers, and running legs at half size.
+// Collapse each source-pixel block to its dominant nontransparent color,
+// preserving the colorful silhouette as the bird runs across the viewport.
 func startupIntroReducedPixel(pixels [][]byte, x, y int) byte {
     var colors [256]uint8
     bestColor := byte(' ')
     bestCount := uint8(0)
     for dy := 0; dy < startupIntroScale; dy++ {
         for dx := 0; dx < startupIntroScale; dx++ {
+            if y+dy >= startupIntroSpriteHeight || x+dx >= startupIntroSpriteWidth {
+                continue // Last sprite column is only one source pixel wide.
+            }
             pixel := pixels[y+dy][x+dx]
             if pixel == ' ' {
                 continue
