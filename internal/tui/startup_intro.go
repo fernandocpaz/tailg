@@ -9,13 +9,13 @@ import (
 )
 
 const (
-    startupIntroInterval     = 40 * time.Millisecond
+    startupIntroInterval     = 25 * time.Millisecond
+    startupIntroFrameCount   = 24 // Full crossing is 600ms, even on wide terminals.
     startupIntroSpriteWidth  = 64
     startupIntroSpriteHeight = 36
     startupIntroScale        = 3 // Compact ~22×6 sprite; preserve running silhouette.
     startupIntroRenderWidth  = (startupIntroSpriteWidth + startupIntroScale - 1) / startupIntroScale
     startupIntroRenderHeight = startupIntroSpriteHeight / (2 * startupIntroScale)
-    startupIntroStep         = 3 // Terminal columns per animation frame.
     startupIntroMinWidth     = startupIntroRenderWidth
     startupIntroMinHeight    = startupIntroRenderHeight
 )
@@ -28,18 +28,24 @@ func startupIntroCmd(frame int) tea.Cmd {
     })
 }
 
-// Keep a consistent running speed at any terminal width. The bird starts
-// almost entirely off the left edge and completes its run past the right edge.
+// Use a fixed number of ticks so a wider terminal does not prolong startup.
+// The bird enters from off-screen left, reaches the right edge, then disappears.
 func startupIntroFrames(width int) int {
+    return startupIntroFrameCount
+}
+
+func startupIntroLeft(frame, width int) int {
     if width <= 0 {
         width = 100
     }
-    distance := width + startupIntroRenderWidth - 2
-    return (distance + startupIntroStep - 1) / startupIntroStep
-}
-
-func startupIntroLeft(frame int) int {
-    return -startupIntroRenderWidth + 2 + frame*startupIntroStep
+    start := -startupIntroRenderWidth + 2
+    if frame <= 0 {
+        return start
+    }
+    if frame >= startupIntroFrameCount {
+        return width
+    }
+    return start + (width - start - 1) * frame / (startupIntroFrameCount - 1)
 }
 
 
@@ -269,7 +275,7 @@ func (m pickerModel) startupIntroView() string {
         }
     }
 
-    left := startupIntroLeft(frame)
+    left := startupIntroLeft(frame, width)
     firstColumn := max(0, -left)
     lastColumn := min(startupIntroRenderWidth, width-left)
     top := max(0, (height-startupIntroRenderHeight)/2)
