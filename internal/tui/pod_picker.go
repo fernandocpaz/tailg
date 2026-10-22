@@ -144,6 +144,7 @@ func (m podPickerModel) View() string {
 		),
 		fmt.Sprintf("Selected: %d pods · pinned to these pod names", m.checkedCount()),
 		podMonitorSummary(m.monitorEnabled, m.monitorBusy, m.monitorLastScan, m.monitorError),
+		m.metricsSummary(),
 		"",
 	}
 	if len(m.rows) == 0 {
@@ -174,6 +175,9 @@ func (m podPickerModel) View() string {
 		podCell := fmt.Sprintf("%-53s", truncatePickerCell(row.pod.Name, 53))
 		suffix := fmt.Sprintf(" %-7s %-12s %s",
 			valueOrDash(row.pod.Ready), valueOrDash(row.pod.Phase), formatPickerAge(now, row.pod.StartedAt))
+		if m.monitorEnabled {
+			suffix += "  " + podMetricPreview(m.podMonitorState, row.pod.Name)
+		}
 
 		if m.monitorEnabled {
 			if health, ok := m.monitorHealth[row.pod.Name]; ok {
