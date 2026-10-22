@@ -143,7 +143,7 @@ func TestStartupIntroRendersWithinTerminalBounds(t *testing.T) {
 func TestStartupIntroNotActiveByDefault(t *testing.T) {
 	m := newPickerModel(nil, 0, "qa", "apollo", nil)
 	m.width, m.height = 100, 28
-	if m.introActive || !strings.Contains(ansi.Strip(m.View()), "APPLICATION") {
+	if m.introActive || m.View() != m.pickerView() {
 		t.Fatal("normal picker must be visible when no intro was requested")
 	}
 }
