@@ -12,8 +12,8 @@ structured diagnostics for scripts and AI agents.
 
 Running `tailg` in an interactive terminal plays a compact (22-column,
 6-row), full-color pixel-art Road Runner running all the way across the screen:
-it enters from the left and exits on the right at a constant speed, adapting
-the duration to terminal width. The splash contains **only the animation**:
+it enters from the left and exits on the right in approximately **600ms**
+regardless of terminal width. The splash contains **only the animation**:
 no title, status text, or on-screen instructions. Press any key to skip;
 Ctrl+C still quits. Terminals narrower than 22 columns or shorter than 6 rows
 go straight to the picker. The animation runs only on the first picker entry,
@@ -299,6 +299,24 @@ DaemonSets, ReplicaSets, pods, CronJobs, Jobs, and events, with at most four
 requests in flight. Permission failures and collection errors show as incomplete
 sources, with full errors available in Details. Successful sources remain usable;
 failed lists retain their previous data and never count as resource deletions.
+
+Press `M` in this main application list to toggle log monitoring (off by
+default). When monitoring is on, tailg also refreshes CPU and memory every
+**15 seconds** using the namespace-scoped Kubernetes Metrics API
+(`metrics.k8s.io`). On terminals at least 120 columns wide, normal workload
+rows include **CPU** (millicores) and **MEM** (MiB/GiB), aggregated across its
+current pods and containers without double-counting replicas. The selected
+workload also displays CPU/memory usage, configured resource limits, utilization
+against limits, and requests when available. Usage at 80% or more of a known
+limit is highlighted amber; at 95% or more, red. In the exact-pod modal, the
+selected pod's CPU and memory are shown individually.
+
+Metric readings require Metrics Server and RBAC access to the pod metrics API;
+`kubectl get pods` access is additionally needed for requests/limits. Missing
+metrics, incomplete replica coverage, and permission errors display as
+unavailable (`—`), never as zero consumption or an application health issue.
+The monitor still functions when metrics cannot be read. Monitoring off means
+no resource polling.
 
 Press `M` in this main application list to toggle log monitoring (off by
 default). It scans all containers in every pod belonging to the displayed

@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fernandocpaz/tailg/internal/core"
+	"github.com/fernandocpaz/tailg/internal/kube"
 )
 
 // Both pickers share polling, cancellation, and stale-message handling.
@@ -23,6 +24,10 @@ type podMonitorState struct {
 	monitorError      string
 	monitorContext    context.Context
 	monitorCancel     context.CancelFunc
+	metricsPods       map[string]kube.PodResourceUsage
+	metricsWarning    string
+	metricsAt         time.Time
+	metricsBusy       bool
 }
 
 func (m *podMonitorState) stop() {
@@ -34,6 +39,10 @@ func (m *podMonitorState) stop() {
 	m.monitorEnabled = false
 	m.monitorBusy = false
 	m.monitorFlashOn = false
+	m.metricsPods = nil
+	m.metricsWarning = ""
+	m.metricsAt = time.Time{}
+	m.metricsBusy = false
 }
 
 func (m *podMonitorState) toggle(rows []podPickerRow, kubeContext, namespace string) tea.Cmd {
@@ -47,6 +56,10 @@ func (m *podMonitorState) toggle(rows []podPickerRow, kubeContext, namespace str
 	m.monitorFlashOn = true
 	m.monitorError = ""
 	m.monitorLastScan = time.Time{}
+	m.metricsPods = nil
+	m.metricsWarning = ""
+	m.metricsAt = time.Time{}
+	m.metricsBusy = true
 	m.monitorHealth = nil
 	m.monitorPrevious = nil
 	m.monitorActivity = nil
@@ -55,10 +68,15 @@ func (m *podMonitorState) toggle(rows []podPickerRow, kubeContext, namespace str
 		scanPodHealthCmd(m.monitorContext, rows, kubeContext, namespace, m.monitorGeneration),
 		podMonitorPollCmd(m.monitorGeneration),
 		podMonitorFlashCmd(m.monitorGeneration),
+		namespaceMetricsReadCmd(m.monitorContext, namespace, kubeContext, m.monitorGeneration),
+		namespaceMetricsPollCmd(m.monitorGeneration),
 	)
 }
 
 func (m *podMonitorState) update(message tea.Msg, rows []podPickerRow, kubeContext, namespace string) (bool, tea.Cmd) {
+	if handled, cmd := m.updateMetrics(message, kubeContext, namespace); handled {
+		return true, cmd
+	}
 	switch msg := message.(type) {
 	case podHealthScanMsg:
 		if !m.monitorEnabled || msg.generation != m.monitorGeneration {
