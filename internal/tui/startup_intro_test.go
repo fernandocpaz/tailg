@@ -76,6 +76,23 @@ func TestStartupIntroLegsActuallyAnimate(t *testing.T) {
 	}
 }
 
+func TestStartupIntroDefersReleaseUpdateModal(t *testing.T) {
+	m := newPickerModel(nil, 0, "qa", "apollo", nil)
+	m.width, m.height = 100, 28
+	m.introActive = true
+	m.updates.pending = true
+	if m.showUpdate() {
+		t.Fatal("release update dialog must not interrupt the splash")
+	}
+	if strings.Contains(ansi.Strip(m.View()), "APPLICATION") {
+		t.Fatal("only the bird should appear during the splash")
+	}
+	m.introActive = false
+	if !m.showUpdate() {
+		t.Fatal("pending release update should appear after the splash")
+	}
+}
+
 func TestStartupIntroKeySkipConsumesOnlyDismissKey(t *testing.T) {
 	m := newPickerModel([]core.AppChoice{{Name: "api", Pods: []string{"api-1"}}}, 1, "tkgs-qa", "apollo", nil)
 	m.introActive = true
