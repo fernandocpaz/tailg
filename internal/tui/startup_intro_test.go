@@ -20,8 +20,11 @@ func TestStartupIntroAnimatesAndTransitionsToPicker(t *testing.T) {
 		t.Fatal("interactive startup must schedule animation frames")
 	}
 	start := ansi.Strip(m.View())
-	if !strings.Contains(start, "tailg") || !strings.Contains(start, "(o)") || !strings.Contains(start, "Press any key to skip") {
-		t.Fatalf("missing Road Runner animation: %s", start)
+	if !strings.ContainsAny(start, "█▀▄") {
+		t.Fatalf("missing Road Runner pixel animation: %s", start)
+	}
+	if strings.Contains(start, "tailg") || strings.Contains(start, "MEEP") || strings.Contains(start, "Starting") || strings.Contains(start, "Press") {
+		t.Fatalf("splash must display only the bird, not text: %s", start)
 	}
 	previous := start
 	moved := false
@@ -35,6 +38,58 @@ func TestStartupIntroAnimatesAndTransitionsToPicker(t *testing.T) {
 	}
 	if !moved || m.introActive || !strings.Contains(ansi.Strip(m.View()), "APPLICATION") {
 		t.Fatal("animation must change frames then return to interactive application picker")
+	}
+}
+
+func TestStartupIntroFramesContainNoText(t *testing.T) {
+	m := newPickerModel(nil, 0, "qa", "apollo", nil)
+	m.width, m.height = 80, 24
+	m.introActive = true
+	for frame := 0; frame < startupIntroFrameCount; frame++ {
+		m.introFrame = frame
+		view := ansi.Strip(m.View())
+		for _, runeValue := range view {
+			switch runeValue {
+			case ' ', '\n', '█', '▀', '▄':
+			default:
+				t.Fatalf("splash frame %d contains non-art character %q", frame, runeValue)
+			}
+		}
+	}
+}
+
+func TestStartupIntroLegsActuallyAnimate(t *testing.T) {
+	for frame := 0; frame < len(startupIntroLegFrames)-1; frame++ {
+		current, next := startupIntroRaster(frame), startupIntroRaster(frame+1)
+		var changed bool
+		for y := 26; y < startupIntroSpriteHeight && !changed; y++ {
+			for x := 0; x < startupIntroSpriteWidth; x++ {
+				if current[y][x] != next[y][x] {
+					changed = true
+					break
+				}
+			}
+		}
+		if !changed {
+			t.Fatalf("running stride %d must differ from the next frame", frame)
+		}
+	}
+}
+
+func TestStartupIntroDefersReleaseUpdateModal(t *testing.T) {
+	m := newPickerModel(nil, 0, "qa", "apollo", nil)
+	m.width, m.height = 100, 28
+	m.introActive = true
+	m.updates.pending = true
+	if m.showUpdate() {
+		t.Fatal("release update dialog must not interrupt the splash")
+	}
+	if strings.Contains(ansi.Strip(m.View()), "APPLICATION") {
+		t.Fatal("only the bird should appear during the splash")
+	}
+	m.introActive = false
+	if !m.showUpdate() {
+		t.Fatal("pending release update should appear after the splash")
 	}
 }
 
@@ -69,7 +124,7 @@ func TestStartupIntroCtrlCQuitsImmediately(t *testing.T) {
 func TestStartupIntroRendersWithinTerminalBounds(t *testing.T) {
 	m := newPickerModel(nil, 0, "tkgs-qa", "apollo", nil)
 	m.introActive = true
-	for _, size := range []tea.WindowSizeMsg{{Width: 24, Height: 8}, {Width: 45, Height: 14}, {Width: 55, Height: 20}, {Width: 80, Height: 24}, {Width: 180, Height: 40}} {
+	for _, size := range []tea.WindowSizeMsg{{Width: 24, Height: 8}, {Width: 45, Height: 14}, {Width: 55, Height: 20}, {Width: 64, Height: 18}, {Width: 80, Height: 24}, {Width: 180, Height: 40}} {
 		for i := 0; i < startupIntroFrameCount; i++ {
 			m.width, m.height, m.introFrame = size.Width, size.Height, i
 			lines := strings.Split(ansi.Strip(m.View()), "\n")
@@ -87,8 +142,9 @@ func TestStartupIntroRendersWithinTerminalBounds(t *testing.T) {
 
 func TestStartupIntroNotActiveByDefault(t *testing.T) {
 	m := newPickerModel(nil, 0, "qa", "apollo", nil)
-	if m.introActive || strings.Contains(ansi.Strip(m.View()), "Press any key to skip") {
-		t.Fatal("intro should be enabled explicitly only for the first interactive picker")
+	m.width, m.height = 100, 28
+	if m.introActive || m.View() != m.pickerView() {
+		t.Fatal("normal picker must be visible when no intro was requested")
 	}
 }
 

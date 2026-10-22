@@ -226,7 +226,7 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if size, ok := message.(tea.WindowSizeMsg); ok {
 		m.width = size.Width
 		m.height = size.Height
-		if m.introActive && (size.Width < 45 || size.Height < 14) {
+		if m.introActive && (size.Width < startupIntroMinWidth || size.Height < startupIntroMinHeight) {
 			m.introActive = false // Do not consume keys for an animation that cannot be displayed.
 		}
 		m.resizePickerSelectionInput()
@@ -412,7 +412,7 @@ func (m pickerModel) View() string {
 }
 
 func (m pickerModel) showUpdate() bool {
-	return m.updates.pending && m.selection == nil && !m.helpVisible && m.activity.view == "" && m.confirmRun == nil
+	return !m.introActive && m.updates.pending && m.selection == nil && !m.helpVisible && m.activity.view == "" && m.confirmRun == nil
 }
 
 func (m pickerModel) pickerView() string {
