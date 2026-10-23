@@ -15,6 +15,7 @@ func (m *model) closeResourceDetail() {
 	m.resourceDetail = ""
 	m.resourceOffset = 0
 	m.resourceLayout = nil
+	m.resourceMouseCapture = false
 }
 
 func (m model) mappedResourceHeight() int {
@@ -52,8 +53,8 @@ func (m *model) scrollMappedResource(key string) {
 	m.resourceOffset = min(max(0, offset), limit)
 }
 
-// Mouse wheel works when enabled in the terminal, and clicking the scrollbar
-// track jumps to the approximate position in the source.
+// Mouse wheel and scrollbar clicks work only after the user presses M in the
+// document viewer. The default keeps native terminal drag-to-select available.
 func (m *model) scrollMappedResourceMouse(msg tea.MouseMsg) {
 	if msg.Action != tea.MouseActionPress {
 		return
@@ -114,7 +115,11 @@ func (m model) renderResourceDetail() string {
 	if len(lines)>0 {
 		position = fmt.Sprintf("%d-%d/%d", start+1, end, len(lines))
 	}
-	footer := fmt.Sprintf("%s | ↑↓ Scroll | PgUp/PgDn | Home/End | Mouse wheel | Enter copy | Esc back",position)
+	mouseHint := "M:mouse OFF (select text)"
+	if m.resourceMouseCapture {
+		mouseHint = "M:mouse ON (wheel; Shift-select)"
+	}
+	footer := fmt.Sprintf("%s | ↑↓ PgUp/PgDn | %s | Home/End | Enter copy | Esc",position,mouseHint)
 	header := renderWithColor(headerStyle, "tailg", m.config.Formatter.Color) + "  Mapped resource"
 	return strings.Join([]string{
 		truncate(header, m.width),
