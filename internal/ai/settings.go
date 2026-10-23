@@ -67,8 +67,11 @@ func SaveSettings(cfg Config) error {
 		if service=="" || strings.HasPrefix(service,"/") || mapping.Path=="" {
 			return errors.New("invalid service repository mapping")
 		}
-		if _,err:=LocalServiceRepo(mapping.Path);err!=nil {
-			return fmt.Errorf("source mapping for %s: %w",service,err)
+		// Keep stale paths in the settings file. The detail view detects a
+		// missing checkout and prompts for remapping instead of blocking
+		// unrelated service configuration updates.
+		if !filepath.IsAbs(mapping.Path) {
+			return fmt.Errorf("source mapping for %s must be an absolute path",service)
 		}
 	}
 	path,err:=SettingsPath()
