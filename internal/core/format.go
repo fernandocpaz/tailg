@@ -154,8 +154,8 @@ func levelStyle(level string) (string, string) {
 	}
 }
 
-var bracketedLevel = regexp.MustCompile(`(?i)\[(?:[^\]]+\s)?(WRN|ERR|FTL|FATAL|CRIT|CRITICAL|INF|DBG|VRB|WARN|ERROR|INFO|DEBUG|VERBOSE|TRACE|TRC)\]`)
-var plainLevel = regexp.MustCompile(`(?i)^\s*(WRN|ERR|FTL|FATAL|CRIT|CRITICAL|INF|DBG|VRB|WARN|ERROR|INFO|DEBUG|VERBOSE|TRACE|TRC)(?:\s+|:\s*|$)`)
+var bracketedLevel = regexp.MustCompile(`(?i)\[(?:[^\]]+\s)?(WRN|ERR|FTL|FATAL|CRIT|CRITICAL|INF|DBG|VRB|WARN|WARNING|ERROR|INFO|INFORMATION|DEBUG|VERBOSE|TRACE|TRC)\]`)
+var plainLevel = regexp.MustCompile(`(?i)^\s*(WRN|ERR|FTL|FATAL|CRIT|CRITICAL|INF|DBG|VRB|WARN|WARNING|ERROR|INFO|INFORMATION|DEBUG|VERBOSE|TRACE|TRC)(?:\s+|:\s*|$)`)
 var trailingPropertyList = regexp.MustCompile(`^(?:[A-Za-z_@][A-Za-z0-9_.@-]*=\S+)(?:\s+[A-Za-z_@][A-Za-z0-9_.@-]*=\S+)*$`)
 // Preserve explicitly labeled response payload JSON in log messages.
 var logBodyLabel = regexp.MustCompile(`(?i)\b(?:body|payload|response[ _-]*body)\s*:\s*$`)
