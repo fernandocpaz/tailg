@@ -111,6 +111,11 @@ func (m model) updateLogDetailKey(key string) (tea.Model, tea.Cmd) {
 		return m.toggleAIExplanation()
 	case "s", "S":
 		return m.openAIWizard("")
+	case "p", "P":
+		if m.config.AI==nil{return m.openAIWizard("Configure an AI provider before mapping repositories.")}
+		service:=m.selectedAIService()
+		if service=="" {m.notice="Cannot identify a service for this log entry";return m,nil}
+		return m.openServiceRepoWizard(service,"Choose or change this service's source repository.")
 	case "enter":
 		if m.aiView {
 			if !m.aiLoading {
