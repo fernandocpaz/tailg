@@ -39,7 +39,9 @@ func (m model) toggleAIExplanation() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.detailLoading {
-		m.aiText = "Full error details are still loading. Press A to return, then retry after loading completes."
+		// Do not cache the warning as an AI result. The next A after the
+		// full error loads should start the actual request.
+		m.aiView = false
 		return m, nil
 	}
 	ctx := m.ctx
