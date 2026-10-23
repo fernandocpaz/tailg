@@ -58,7 +58,17 @@ func (m model) startAIExplanation(repos []string) (tea.Model,tea.Cmd){
 	client := m.config.AI
 	return m, func() tea.Msg {
 		defer cancel()
-		result, err := client.ExplainWithRepos(ctx, log, repos)
+		var result ai.Result
+		var err error
+		if service:=m.selectedAIService();service!="" && len(repos)==1 {
+			if mapping,ok:=m.config.AISettings.CurrentServiceRepo(service);ok && mapping.Path==repos[0] {
+				result,err=client.ExplainWithService(ctx,log,mapping)
+			} else {
+				result,err=client.ExplainWithRepos(ctx,log,repos)
+			}
+		} else {
+			result,err=client.ExplainWithRepos(ctx,log,repos)
+		}
 		if ctx.Err() == context.Canceled { return nil }
 		return aiExplanationMsg{generation: generation, result: result, err: err}
 	}
@@ -94,6 +104,15 @@ func (m model) updateAIExplanation(message aiExplanationMsg) (tea.Model, tea.Cmd
 	}
 	var text strings.Builder
 	text.WriteString(core.StripANSI(message.result.Explanation))
+	if service:=m.selectedAIService();service!="" {
+		if mapping,ok:=m.config.AISettings.CurrentServiceRepo(service);ok {
+			if mapping.Branch!="" || mapping.Commit!="" {
+				fmt.Fprintf(&text,"\n\nInspected source snapshot: %s",mapping.Branch)
+				if len(mapping.Commit)>=8 {fmt.Fprintf(&text," @ %s",mapping.Commit[:8])}
+				text.WriteString(" (not verified against deployed image)")
+			}
+		}
+	}
 	if len(message.result.MatchedFiles) > 0 {
 		fmt.Fprintf(&text,"\n\nSource excerpts provided: %s",strings.Join(message.result.MatchedFiles,", "))
 	} else {
