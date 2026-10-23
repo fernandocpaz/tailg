@@ -445,6 +445,45 @@ export TAILG_AI_BASE_URL='https://api.openai.com/v1'
 tailg --ai-repo "$HOME/src/PatientApi" --ai-repo "$HOME/src/EncounterService"
 ```
 
+### Service-specific source repositories
+
+On **A** in the full error inspector, tailg first identifies the selected
+Kubernetes workload (controller identity, or pod-name fallback). Source
+mappings are saved by **namespace/service**, and survive restarts in the
+user-only `tailg/ai.json` settings file. A service in a different namespace
+does not silently inherit another service's checkout.
+
+If this service has **no mapping**, tailg asks before making any AI API call:
+
+- Select one of the discovered local Git checkouts with arrows/Enter;
+  press **A** to add an existing local folder manually (never modified).
+- Press **C** to enter an HTTPS or SSH Git clone URL, then confirm. Git must
+  already be installed and authentication available through your local Git
+  setup (SSH agent or credential helper); credentials cannot be embedded
+  in the URL. The clone is placed under the user's cache directory at
+  `tailg/ai-repos/`, **never in any of your working repositories**.
+- The clone automatically reads the remote's **advertised symbolic HEAD**
+  with `git ls-remote --symref`, fetches just that branch, and saves the
+  checked-out **branch and commit SHA** alongside the service mapping.
+  If the default branch cannot be determined, cloning stops with an error
+  rather than choosing `main` or `master` arbitrarily.
+- Press **L** to analyze only the selected logs, without sending repository
+  source excerpts. Cancel with **Esc**, with no paid request.
+- Press **P** in the error detail view at any time to change the service's
+  repository mapping. Existing clones are never reset or pulled; changing
+  it can create another separately managed checkout.
+
+A subsequent **A** for that service automatically uses only its saved
+source folder; it does not read source mapped to unrelated services. If a
+saved folder has disappeared, tailg prompts again. Existing `--ai-repo` and
+`TAILG_AI_REPOS` remain for legacy log entries that lack a workload identity.
+
+**Source revision:** The branch/commit are the snapshot of the clone or
+local checkout at the time it was selected. tailg does not automatically
+fetch remote changes or assume the currently deployed Kubernetes image was
+built from that commit. To inspect a newer source revision, use **P** to
+choose or clone it again.
+
 Settings saved by the wizard take precedence over old environment variables
 so a user can repair an outdated configuration in the UI. Source context
 comes only from explicitly selected local checkouts. It sends up to three

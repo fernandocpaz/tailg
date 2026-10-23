@@ -25,22 +25,27 @@ func (m model) toggleAIExplanation() (tea.Model, tea.Cmd) {
 		m.closeAIView()
 		return m, nil
 	}
-	m.aiView = true
-	m.detailOffset = 0
 	if m.config.AI == nil {
-		m.aiView=false
 		return m.openAIWizard("AI provider is not configured. The wizard will help you connect it.")
 	}
-	if m.aiText != "" {
-		// Reopen a previously fetched answer without using another paid request.
-		return m, nil
+	if m.detailLoading {return m,nil}
+	service:=m.selectedAIService()
+	if service!="" {
+		mapping,ok:=m.config.AISettings.CurrentServiceRepo(service)
+		if !ok {
+			return m.openServiceRepoWizard(service,"No source repository is mapped for this service yet.")
+		}
+		return m.startAIExplanation([]string{mapping.Path})
 	}
-	if m.detailLoading {
-		// Do not cache the warning as an AI result. The next A after the
-		// full error loads should start the actual request.
-		m.aiView = false
-		return m, nil
-	}
+	// Legacy callers without a selected Kubernetes workload retain log-only
+	// or explicitly configured global source behavior.
+	return m.startAIExplanation(m.config.AISettings.Repos)
+}
+
+func (m model) startAIExplanation(repos []string) (tea.Model,tea.Cmd){
+	m.aiView=true
+	m.detailOffset=0
+	if m.aiText!=""{return m,nil}
 	ctx := m.ctx
 	if ctx == nil { ctx = context.Background() }
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
@@ -53,7 +58,17 @@ func (m model) toggleAIExplanation() (tea.Model, tea.Cmd) {
 	client := m.config.AI
 	return m, func() tea.Msg {
 		defer cancel()
-		result, err := client.Explain(ctx, log)
+		var result ai.Result
+		var err error
+		if service:=m.selectedAIService();service!="" && len(repos)==1 {
+			if mapping,ok:=m.config.AISettings.CurrentServiceRepo(service);ok && mapping.Path==repos[0] {
+				result,err=client.ExplainWithService(ctx,log,mapping)
+			} else {
+				result,err=client.ExplainWithRepos(ctx,log,repos)
+			}
+		} else {
+			result,err=client.ExplainWithRepos(ctx,log,repos)
+		}
 		if ctx.Err() == context.Canceled { return nil }
 		return aiExplanationMsg{generation: generation, result: result, err: err}
 	}
@@ -89,6 +104,15 @@ func (m model) updateAIExplanation(message aiExplanationMsg) (tea.Model, tea.Cmd
 	}
 	var text strings.Builder
 	text.WriteString(core.StripANSI(message.result.Explanation))
+	if service:=m.selectedAIService();service!="" {
+		if mapping,ok:=m.config.AISettings.CurrentServiceRepo(service);ok {
+			if mapping.Branch!="" || mapping.Commit!="" {
+				fmt.Fprintf(&text,"\n\nInspected source snapshot: %s",mapping.Branch)
+				if len(mapping.Commit)>=8 {fmt.Fprintf(&text," @ %s",mapping.Commit[:8])}
+				text.WriteString(" (not verified against deployed image)")
+			}
+		}
+	}
 	if len(message.result.MatchedFiles) > 0 {
 		fmt.Fprintf(&text,"\n\nSource excerpts provided: %s",strings.Join(message.result.MatchedFiles,", "))
 	} else {

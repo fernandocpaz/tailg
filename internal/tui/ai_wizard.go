@@ -254,6 +254,8 @@ func (m model) updateAIWizardKey(msg tea.KeyMsg) (tea.Model,tea.Cmd) {
 			w.back()
 		case "enter","s":
 			if w.verified==nil{w.note="Test the provider successfully before saving.";w.step=aiStepTest;return m,nil}
+			// Provider setup must not discard existing per-service source mappings.
+			w.validatedConfig.ServiceRepos=m.config.AISettings.ServiceRepos
 			if err:=ai.SaveSettings(w.validatedConfig);err!=nil{
 				w.note="Unable to save your settings: "+err.Error()
 				return m,nil

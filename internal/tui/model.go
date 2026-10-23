@@ -110,6 +110,7 @@ type model struct {
 	aiGeneration    int
 	aiCancel        context.CancelFunc
 	aiSetup         *aiSetupWizard
+	serviceRepoSetup *serviceRepoWizard
 	heartbeatOpen   bool
 	resourceOpen    bool
 	resourceDetail  string
@@ -271,6 +272,12 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	if msg,ok:=message.(serviceCloneMsg);ok {
+		return m.updateServiceClone(msg)
+	}
+	if msg,ok:=message.(tea.KeyMsg);ok && m.serviceRepoSetup!=nil {
+		return m.updateServiceRepoWizardKey(msg)
+	}
 	if msg,ok:=message.(aiSetupTestMsg);ok {
 		return m.updateAIWizardTest(msg)
 	}
@@ -638,6 +645,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
+	if m.serviceRepoSetup!=nil && m.width>0 && m.height>0 {
+		return m.renderServiceRepoWizard()
+	}
 	if m.aiSetup!=nil && m.width>0 && m.height>0{
 		return m.renderAIWizard()
 	}
@@ -719,6 +729,7 @@ func (m *model) openDetail(value string) {
 }
 
 func (m *model) closeDetail() {
+	if m.serviceRepoSetup!=nil{m.serviceRepoSetup.stop();m.serviceRepoSetup=nil}
 	if m.aiSetup!=nil{m.aiSetup.stop();m.aiSetup=nil}
 	m.cancelAI()
 	m.aiView, m.aiLoading, m.aiText = false, false, ""
@@ -786,7 +797,7 @@ func (m model) renderDetail() string {
 	if len(allLines) > 0 {
 		position = fmt.Sprintf("%d-%d/%d", start+1, end, len(allLines))
 	}
-	footer := position + " | Up/Down PgUp/PgDn Home/End | Enter copy | R reload | F6 trace | A AI | S setup | Esc close"
+	footer := position + " | Up/Down PgUp/PgDn Home/End | Enter copy | R reload | F6 trace | A AI | P repos | S setup | Esc close"
 	header := renderWithColor(headerStyle, "tailg", m.config.Formatter.Color) + "  Full log entry"
 	if m.aiView {
 		footer = position + " | Up/Down PgUp/PgDn Home/End | A/Esc back to log"
