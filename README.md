@@ -546,11 +546,20 @@ the view is paused or the service is quiet.
 | `Esc` | Close the current detail panel |
 | `Ctrl+C` / `Ctrl+Q` | Exit |
 
-Mapped resource details use a scrollable, wrapped full-document viewer with a visible
-right-side scrollbar. Use **Up/Down**, **PageUp/PageDown**, **Home/End** or the
-**mouse wheel** to move, or click the scrollbar to jump through the document.
-**Enter** still copies the original complete resource (not just visible lines),
-**Esc** returns to the mapped-resource list, and **F2** closes the picker.
+**Text selection and copy (Windows Terminal and other terminals):** tailg
+does **not** capture the mouse by default. Drag to select text in log screens,
+error inspectors, ConfigMaps, and other views, then use your terminal's Copy
+shortcut (typically **Ctrl+Shift+C** in Windows Terminal).
+
+Mapped resource details use a scrollable, wrapped full-document viewer with a
+visible right-side scrollbar. Use **Up/Down**, **PageUp/PageDown**, or
+**Home/End** to move without affecting native text selection. Press **M**
+inside a mapped-resource detail to temporarily enable mouse-wheel scrolling
+and clicking the scrollbar. While mouse mode is ON, hold **Shift** when
+drag-selecting text (terminal support varies). Press **M** again to restore
+normal selection; **Esc**, **F2**, and **Enter** (copy entire resource) also
+turn off mouse tracking automatically. Mouse tracking is never enabled on
+the regular log screen.
 
 F1's matching-only mode and the filter text are synchronized across panes and
 tiled windows launched by the same parent process. Secret values are decoded

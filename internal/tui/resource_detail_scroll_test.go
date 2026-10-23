@@ -66,6 +66,16 @@ func TestMappedResourceMouseWheelScrollbarClickAndResize(t *testing.T) {
 	m.width,m.height=54,13
 	result,_:=m.Update(resourceDetailMsg{text:longMappedResource()})
 	m=result.(model)
+	if m.resourceMouseCapture {t.Fatal("mouse capture must be disabled by default for terminal text selection")}
+	if !strings.Contains(m.View(),"M:mouse OFF") {t.Fatal("missing native text selection hint")}
+	result,_=m.Update(tea.MouseMsg{Button:tea.MouseButtonWheelDown,Action:tea.MouseActionPress})
+	m=result.(model)
+	if m.resourceOffset!=0{t.Fatal("mouse should not be captured before explicit opt-in")}
+	result,mouseEnable:=m.Update(tea.KeyMsg{Type:tea.KeyRunes,Runes:[]rune{'m'}})
+	m=result.(model)
+	if mouseEnable==nil || !m.resourceMouseCapture || !strings.Contains(m.View(),"M:mouse ON") {
+		t.Fatal("M must enable mouse capture with a visible text-selection warning")
+	}
 	result,_=m.Update(tea.MouseMsg{Button:tea.MouseButtonWheelDown,Action:tea.MouseActionPress})
 	m=result.(model)
 	if m.resourceOffset!=3{t.Fatalf("mouse wheel did not scroll down: %d",m.resourceOffset)}
@@ -81,9 +91,10 @@ func TestMappedResourceMouseWheelScrollbarClickAndResize(t *testing.T) {
 	for _,line:=range strings.Split(m.View(),"\n") {
 		if lipgloss.Width(line)>m.width{t.Fatalf("resize overflow: width=%d rendered=%d",m.width,lipgloss.Width(line))}
 	}
-	m=resourceKey(m,tea.KeyEsc)
-	if m.resourceDetail!="" || m.resourceLayout!=nil || m.resourceOffset!=0 || !m.resourceOpen {
-		t.Fatal("Esc should return to mapped resource list and reset viewport")
+	result,mouseDisable:=m.Update(tea.KeyMsg{Type:tea.KeyEsc})
+	m=result.(model)
+	if mouseDisable==nil || m.resourceMouseCapture || m.resourceDetail!="" || m.resourceLayout!=nil || m.resourceOffset!=0 || !m.resourceOpen {
+		t.Fatal("Esc should disable mouse capture, return to mapped resource list, and reset viewport")
 	}
 	result,_=m.Update(resourceDetailMsg{text:"one\ntwo"})
 	m=result.(model)
@@ -112,4 +123,34 @@ func TestMappedResourceEnterCopiesFullUntruncatedContent(t *testing.T) {
 	b,err:=os.ReadFile(clipboard)
 	if err!=nil || string(b)!=full{t.Fatalf("copy did not preserve entire document: size=%d, want=%d, err=%v",len(b),len(full),err)}
 	if m.resourceDetail!="" || !m.resourceOpen{t.Fatal("Enter should close detail after copy")}
+}
+
+func TestMappedResourceMouseModeReturnsToSelectionWithMEnterAndF2(t *testing.T) {
+	m:=workflowModel()
+	m.resourceOpen=true
+	m.width,m.height=90,20
+	updated,_:=m.Update(resourceDetailMsg{text:longMappedResource()})
+	m=updated.(model)
+	keyM:=tea.KeyMsg{Type:tea.KeyRunes,Runes:[]rune{'m'}}
+	updated,cmd:=m.Update(keyM)
+	m=updated.(model)
+	if cmd==nil || !m.resourceMouseCapture{t.Fatal("mouse opt-in not enabled")}
+	updated,cmd=m.Update(keyM)
+	m=updated.(model)
+	if cmd==nil || m.resourceMouseCapture{t.Fatal("M must disable mouse capture and restore native selection")}
+	updated,_=m.Update(keyM)
+	m=updated.(model)
+	updated,cmd=m.Update(tea.KeyMsg{Type:tea.KeyF2})
+	m=updated.(model)
+	if cmd==nil || m.resourceMouseCapture || m.resourceOpen{t.Fatal("F2 must restore native selection")}
+	m.resourceOpen=true
+	updated,_=m.Update(resourceDetailMsg{text:longMappedResource()})
+	m=updated.(model)
+	updated,_=m.Update(keyM)
+	m=updated.(model)
+	updated,cmd=m.Update(tea.KeyMsg{Type:tea.KeyEnter})
+	m=updated.(model)
+	if cmd==nil || m.resourceMouseCapture || m.resourceDetail!="" {
+		t.Fatal("copy/close must restore native mouse selection")
+	}
 }
