@@ -128,12 +128,12 @@ func CloneService(parent context.Context,service,remote string)(ServiceRepositor
  if err!=nil || !info.IsDir() || info.Mode()&os.ModeSymlink!=0{return ServiceRepository{},errors.New("checkout directory must be a real directory")}
  digest:=sha256.Sum256([]byte(service+"\x00"+remote))
  name:=cleanSlug(strings.ReplaceAll(service,"/","-"))+"-"+hex.EncodeToString(digest[:6])
- destination:=filepath.Join(root,name)
- if _,err:=os.Lstat(destination);err==nil{return ServiceRepository{},errors.New("managed clone already exists; choose that local folder instead (tailg will not overwrite it)")}else if !errors.Is(err,os.ErrNotExist){return ServiceRepository{},err}
- staging,err:=os.MkdirTemp(root,".clone-")
+ // MkdirTemp atomically reserves a new isolated directory instead of
+ // renaming over any possibly-existing user data (including races).
+ staging,err:=os.MkdirTemp(root,name+"-")
  if err!=nil{return ServiceRepository{},err}
- defer os.RemoveAll(staging)
- // Clone into a new nested path so git doesn't need to accept pre-existing dirs.
+ success:=false
+ defer func(){if !success{_ = os.RemoveAll(staging)}}()
  target:=filepath.Join(staging,"checkout")
  _,err=gitCommand(ctx,"clone","--quiet","--depth","1","--single-branch","--branch",branch,"--",remote,target)
  if err!=nil{return ServiceRepository{},err}
@@ -141,8 +141,8 @@ func CloneService(parent context.Context,service,remote string)(ServiceRepositor
  if err!=nil||actual!=branch{return ServiceRepository{},errors.New("cloned checkout branch did not match advertised HEAD")}
  commit,err:=gitCommand(ctx,"-C",target,"rev-parse","--verify","HEAD")
  if err!=nil||len(commit)<40{return ServiceRepository{},errors.New("could not verify checkout commit")}
- if err:=os.Rename(target,destination);err!=nil{return ServiceRepository{},fmt.Errorf("cannot store clone without replacing existing folder: %w",err)}
- return ServiceRepository{Path:destination,URL:remote,Branch:branch,Commit:commit},nil
+ success=true
+ return ServiceRepository{Path:target,URL:remote,Branch:branch,Commit:commit},nil
 }
 
 func GitAvailable() bool {_,err:=exec.LookPath("git");return err==nil}
