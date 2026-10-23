@@ -68,5 +68,5 @@ func TestAIMissingConfigurationDoesNotCallProvider(t *testing.T){
 	m.openDetail("ERROR some log")
 	updated,cmd:=m.Update(tea.KeyMsg{Type:tea.KeyRunes,Runes:[]rune{'a'}})
 	m=updated.(model)
-	if cmd!=nil || !strings.Contains(m.View(),"TAILG_AI_API_KEY") {t.Fatal("missing AI configuration was not explained")}
+	if cmd!=nil || m.aiSetup==nil || m.aiView {t.Fatal("missing AI configuration should start the setup wizard without calling a provider")}
 }
