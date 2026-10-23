@@ -196,6 +196,7 @@ var (
 var (
 	bracketTimeLevelPattern = regexp.MustCompile(`^\[(\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+([[:alpha:]]+)\]\s*`)
 	plainTimeLevelPattern   = regexp.MustCompile(`^(\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+\[([[:alpha:]]+)\]\s*`)
+	levelBracketTimePattern = regexp.MustCompile(`(?i)^(ERR|ERROR|FTL|FATAL|CRIT|CRITICAL|WRN|WARN|WARNING|INF|INFO|INFORMATION|DBG|DEBUG|VRB|VERBOSE|TRACE|TRC)\s+\[(\d{2}:\d{2}:\d{2}(?:\.\d+)?)\]\s*`)
 	leadingBracketPattern   = regexp.MustCompile(`^\[([^\]]+)\]\s*`)
 )
 
@@ -1143,6 +1144,10 @@ func parseLogColumns(value string, showPod bool) logColumns {
 	} else if match := plainTimeLevelPattern.FindStringSubmatchIndex(remaining); len(match) == 6 {
 		columns.time = remaining[match[2]:match[3]]
 		columns.level = normalizeLevel(remaining[match[4]:match[5]])
+		remaining = strings.TrimSpace(remaining[match[1]:])
+	} else if match := levelBracketTimePattern.FindStringSubmatchIndex(remaining); len(match) == 6 {
+		columns.level = normalizeLevel(remaining[match[2]:match[3]])
+		columns.time = remaining[match[4]:match[5]]
 		remaining = strings.TrimSpace(remaining[match[1]:])
 	}
 	columns.message = remaining
