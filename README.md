@@ -407,6 +407,64 @@ Repeat `--exclude` to hide additional patterns (including failures), use
 all probe lines. Structured JSON properties appended to readable text are hidden
 unless `--detail` is set; explicitly labeled response bodies remain visible.
 
+## AI-assisted error explanations (optional)
+
+In the **full log detail window**, press **A** to request an AI explanation of the
+selected error. The normal log remains unchanged; press **A** or **Esc** to return
+to it. An explanation is cached for the current entry, so reopening it does not
+incur another API call. Tailg makes **no AI API calls** while browsing logs or
+monitoring unless you explicitly press **A**.
+
+Tailg supports OpenAI-compatible `/chat/completions` endpoints. Configure
+credentials in environment variables, **not** on command lines or in a repository:
+
+```sh
+export TAILG_AI_API_KEY='your-api-key'
+export TAILG_AI_MODEL='your-provider-model'
+# Defaults to https://api.openai.com/v1; change for compatible providers.
+export TAILG_AI_BASE_URL='https://api.openai.com/v1'
+
+# Local checkouts available ON THE COMPUTER WHERE TAILG RUNS:
+tailg --ai-repo "$HOME/src/PatientApi" --ai-repo "$HOME/src/EncounterService"
+```
+
+You can also supply local source roots via `TAILG_AI_REPOS`, using your OS's
+path-list separator (`:` on Linux/macOS, `;` on Windows). Multiple `--ai-repo`
+arguments and environment roots are combined. Only recognized source files in
+these roots are eligible for a small, bounded, matching excerpt. Config files,
+secrets, dependency/build directories and symlinks are excluded; no `git push`,
+repo mutation, or AI-initiated shell execution takes place. Your checkouts must
+already be available locally, e.g. in WSL under `/mnt/c/... ` if applicable.
+
+**AI usage and budget (optional):** API responses exposing
+`usage.prompt_tokens`/`usage.completion_tokens` show both per-request and
+cumulative **current-process session** token usage. Add your provider's
+**actual prices** (USD per million tokens) to estimate cost:
+
+```sh
+export TAILG_AI_INPUT_USD_PER_M=0.40   # example only: replace with current provider price
+export TAILG_AI_OUTPUT_USD_PER_M=1.60  # example only: replace with current provider price
+export TAILG_AI_BUDGET_USD=2.00        # optional local session spending allowance
+```
+
+The session budget is a **local guardrail**: tailg checks a pessimistic
+per-request cost ceiling before sending and deducts estimated cost from the
+session allowance using provider-reported token usage. It is **not an API
+account balance**, an invoice, or a guarantee against all charges. Running
+multiple tailg processes or restarting creates a new allowance; other clients
+using the same API account are not included. If a provider does not return usage
+tokens, the numbers are shown as unavailable rather than invented. Provider
+credit, monthly allowance, or remaining rate-limit quota cannot be reliably
+inferred from generic chat completion responses.
+
+**Privacy:** Pressing **A** sends the selected (redacted and truncated) log
+detail and up to three matching snippets from explicitly selected local
+repositories to the external provider. Redaction catches common credential
+formats but is **not guaranteed to remove all sensitive data**, including
+patient information. Avoid this feature with protected or sensitive logs unless
+you are authorized to transmit that information to the configured provider.
+Provider output is advice, not a verified diagnosis.
+
 ## Live view
 
 Following logs opens the full-screen filter by default. Typing in the filter
