@@ -16,9 +16,168 @@ var colors = map[string]string{
 }
 
 type Formatter struct {
-	Include []*regexp.Regexp
-	Exclude []*regexp.Regexp
-	ShowPod bool
+	Include        []*regexp.Regexp
+	Exclude        []*regexp.Regexp // explicit --exclude patterns
+	DefaultExclude []*regexp.Regexp // built-in probe filter; failed probes remain visible
+	ShowPod        bool
+	Color   bool
+	// ColorCodes optionally supplies terminal-aware semantic ANSI sequences.
+	ColorCodes map[string]string
+	Detail     bool
+}
+
+func CompilePatterns(values []string) ([]*regexp.Regexp, error) {
+	patterns := make([]*regexp.Regexp, 0, len(values))
+	for _, value := range values {
+		pattern, err := regexp.Compile(value)
+		if err != nil {
+			return nil, fmt.Errorf("invalid regex %q: %w", value, err)
+		}
+		patterns = append(patterns, pattern)
+	}
+	return patterns, nil
+}
+
+func (f Formatter) Format(pod, _ string, message string, hideHeartbeat bool) []string {
+	if message == "" || (hideHeartbeat && IsHeartbeat(message)) || !f.shouldShow(message) {
+		return nil
+	}
+	prefix := ""
+	if f.ShowPod {
+		prefix = f.colorize("["+PodReplicaSuffix(pod)+"] ", "dim")
+	}
+
+	var object map[string]any
+	if json.Unmarshal([]byte(message), &object) == nil && object != nil {
+		timestamp := firstString(object, "ts", "timestamp", "time", "@t")
+		level := firstString(object, "level", "lvl", "@l")
+		logger := firstString(object, "logger", "SourceContext", "sourceContext")
+		rendered := firstString(object, "msg", "message", "RenderedMessage", "@m")
+		if rendered == "" {
+			rendered = message
+		}
+		label, colorName := levelStyle(level)
+		var builder strings.Builder
+		builder.WriteString(prefix)
+		if timestamp != "" {
+			builder.WriteString(f.colorize(formatTimestamp(timestamp)+" ", colorName))
+		}
+		if label != "" {
+			builder.WriteString(f.colorize("["+label+"] ", colorName))
+		}
+		if logger != "" {
+			builder.WriteString(f.colorize("["+logger+"] ", colorName))
+		}
+		builder.WriteString(f.colorize(rendered, colorName))
+		result := []string{builder.String()}
+		if exception := firstString(object, "exception", "Exception", "@x"); exception != "" {
+			result = append(result, f.colorize(exception, "red"))
+		}
+		return result
+	}
+
+	rendered := message
+	if !f.Detail {
+		rendered = StripTrailingStructuredProperties(message)
+	}
+	_, colorName := textLogStyle(rendered)
+	return []string{prefix + f.colorize(rendered, colorName)}
+}
+
+func (f Formatter) shouldShow(message string) bool {
+	if len(f.Include) > 0 {
+		matched := false
+		for _, pattern := range f.Include {
+			if pattern.MatchString(message) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	for _, pattern := range f.Exclude {
+		if pattern.MatchString(message) {
+			return false
+		}
+	}
+	// Default probe-noise filtering never hides a WARN, ERROR, or FATAL event.
+	// Explicit --exclude rules above still take precedence.
+	for _, pattern := range f.DefaultExclude {
+		if pattern.MatchString(message) {
+			level := ParseLogFields(LogEvent{Message: message}).Level
+			return level == "ERR" || level == "WRN"
+		}
+	}
+	return true
+}
+
+func (f Formatter) colorize(text, name string) string {
+	if !f.Color || name == "" {
+		return text
+	}
+	palette := f.ColorCodes
+	if palette == nil {
+		palette = colors
+	}
+	if code := palette[name]; code != "" {
+		return code + text + ansiReset
+	}
+	return text
+}
+
+func firstString(value map[string]any, names ...string) string {
+	for _, name := range names {
+		if item, ok := value[name]; ok && item != nil {
+			text := strings.TrimSpace(fmt.Sprint(item))
+			if text != "" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+func levelStyle(level string) (string, string) {
+	switch strings.ToUpper(strings.TrimSpace(level)) {
+	case "ERR", "ERROR", "FTL", "FATAL", "CRIT", "CRITICAL":
+		return "ERR", "red"
+	case "WRN", "WARN", "WARNING":
+		return "WRN", "yellow"
+	case "INF", "INFO", "INFORMATION":
+		return "INF", "info"
+	case "DBG", "DEBUG", "VRB", "VERBOSE", "TRACE", "TRC":
+		return strings.ToUpper(strings.TrimSpace(level))[:3], "dim"
+	default:
+		return strings.ToUpper(strings.TrimSpace(level)), ""
+	}
+}
+
+var bracketedLevel = regexp.MustCompile(`(?i)\[(?:[^\]]+\s)?(WRN|ERR|FTL|FATAL|CRIT|CRITICAL|INF|DBG|VRB|WARN|ERROR|INFO|DEBUG|VERBOSE|TRACE|TRC)\]`)
+var plainLevel = regexp.MustCompile(`(?i)^\s*(WRN|ERR|FTL|FATAL|CRIT|CRITICAL|INF|DBG|VRB|WARN|ERROR|INFO|DEBUG|VERBOSE|TRACE|TRC)(?:\s+|:\s*|$)`)
+var trailingPropertyList = regexp.MustCompile(`^(?:[A-Za-z_@][A-Za-z0-9_.@-]*=\S+)(?:\s+[A-Za-z_@][A-Za-z0-9_.@-]*=\S+)*package core
+
+import (
+	"encoding/json"
+	"fmt"
+	"regexp"
+	"sort"
+	"strings"
+	"time"
+)
+
+const ansiReset = "\x1b[0m"
+
+var colors = map[string]string{
+	"red": "\x1b[31m", "yellow": "\x1b[33m", "info": "\x1b[90m", "dim": "\x1b[90m",
+}
+
+type Formatter struct {
+	Include        []*regexp.Regexp
+	Exclude        []*regexp.Regexp // explicit --exclude patterns
+	DefaultExclude []*regexp.Regexp // built-in probe filter; failed probes remain visible
+	ShowPod        bool
 	Color   bool
 	// ColorCodes optionally supplies terminal-aware semantic ANSI sequences.
 	ColorCodes map[string]string
@@ -147,7 +306,159 @@ func levelStyle(level string) (string, string) {
 
 var bracketedLevel = regexp.MustCompile(`(?i)\[(?:[^\]]+\s)?(WRN|ERR|FTL|FATAL|CRIT|CRITICAL|INF|DBG|VRB|WARN|ERROR|INFO|DEBUG|VERBOSE|TRACE|TRC)\]`)
 var plainLevel = regexp.MustCompile(`(?i)^\s*(WRN|ERR|FTL|FATAL|CRIT|CRITICAL|INF|DBG|VRB|WARN|ERROR|INFO|DEBUG|VERBOSE|TRACE|TRC)(?:\s+|:\s*|$)`)
-var trailingPropertyList = regexp.MustCompile(`^(?:[A-Za-z_@][A-Za-z0-9_.@-]*=\S+)(?:\s+[A-Za-z_@][A-Za-z0-9_.@-]*=\S+)*$`)
+)
+// Preserve explicitly labeled response payload JSON in log messages.
+var logBodyLabel = regexp.MustCompile(function raw() { [native code] }`(?i)\b(?:body|payload|response[ _-]*body)\s*:\s*package core
+
+import (
+	"encoding/json"
+	"fmt"
+	"regexp"
+	"sort"
+	"strings"
+	"time"
+)
+
+const ansiReset = "\x1b[0m"
+
+var colors = map[string]string{
+	"red": "\x1b[31m", "yellow": "\x1b[33m", "info": "\x1b[90m", "dim": "\x1b[90m",
+}
+
+type Formatter struct {
+	Include        []*regexp.Regexp
+	Exclude        []*regexp.Regexp // explicit --exclude patterns
+	DefaultExclude []*regexp.Regexp // built-in probe filter; failed probes remain visible
+	ShowPod        bool
+	Color   bool
+	// ColorCodes optionally supplies terminal-aware semantic ANSI sequences.
+	ColorCodes map[string]string
+	Detail     bool
+}
+
+func CompilePatterns(values []string) ([]*regexp.Regexp, error) {
+	patterns := make([]*regexp.Regexp, 0, len(values))
+	for _, value := range values {
+		pattern, err := regexp.Compile(value)
+		if err != nil {
+			return nil, fmt.Errorf("invalid regex %q: %w", value, err)
+		}
+		patterns = append(patterns, pattern)
+	}
+	return patterns, nil
+}
+
+func (f Formatter) Format(pod, _ string, message string, hideHeartbeat bool) []string {
+	if message == "" || (hideHeartbeat && IsHeartbeat(message)) || !f.shouldShow(message) {
+		return nil
+	}
+	prefix := ""
+	if f.ShowPod {
+		prefix = f.colorize("["+PodReplicaSuffix(pod)+"] ", "dim")
+	}
+
+	var object map[string]any
+	if json.Unmarshal([]byte(message), &object) == nil && object != nil {
+		timestamp := firstString(object, "ts", "timestamp", "time", "@t")
+		level := firstString(object, "level", "lvl", "@l")
+		logger := firstString(object, "logger", "SourceContext", "sourceContext")
+		rendered := firstString(object, "msg", "message", "RenderedMessage", "@m")
+		if rendered == "" {
+			rendered = message
+		}
+		label, colorName := levelStyle(level)
+		var builder strings.Builder
+		builder.WriteString(prefix)
+		if timestamp != "" {
+			builder.WriteString(f.colorize(formatTimestamp(timestamp)+" ", colorName))
+		}
+		if label != "" {
+			builder.WriteString(f.colorize("["+label+"] ", colorName))
+		}
+		if logger != "" {
+			builder.WriteString(f.colorize("["+logger+"] ", colorName))
+		}
+		builder.WriteString(f.colorize(rendered, colorName))
+		result := []string{builder.String()}
+		if exception := firstString(object, "exception", "Exception", "@x"); exception != "" {
+			result = append(result, f.colorize(exception, "red"))
+		}
+		return result
+	}
+
+	rendered := message
+	if !f.Detail {
+		rendered = StripTrailingStructuredProperties(message)
+	}
+	_, colorName := textLogStyle(rendered)
+	return []string{prefix + f.colorize(rendered, colorName)}
+}
+
+func (f Formatter) shouldShow(message string) bool {
+	if len(f.Include) > 0 {
+		matched := false
+		for _, pattern := range f.Include {
+			if pattern.MatchString(message) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	for _, pattern := range f.Exclude {
+		if pattern.MatchString(message) {
+			return false
+		}
+	}
+	return true
+}
+
+func (f Formatter) colorize(text, name string) string {
+	if !f.Color || name == "" {
+		return text
+	}
+	palette := f.ColorCodes
+	if palette == nil {
+		palette = colors
+	}
+	if code := palette[name]; code != "" {
+		return code + text + ansiReset
+	}
+	return text
+}
+
+func firstString(value map[string]any, names ...string) string {
+	for _, name := range names {
+		if item, ok := value[name]; ok && item != nil {
+			text := strings.TrimSpace(fmt.Sprint(item))
+			if text != "" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+func levelStyle(level string) (string, string) {
+	switch strings.ToUpper(strings.TrimSpace(level)) {
+	case "ERR", "ERROR", "FTL", "FATAL", "CRIT", "CRITICAL":
+		return "ERR", "red"
+	case "WRN", "WARN", "WARNING":
+		return "WRN", "yellow"
+	case "INF", "INFO", "INFORMATION":
+		return "INF", "info"
+	case "DBG", "DEBUG", "VRB", "VERBOSE", "TRACE", "TRC":
+		return strings.ToUpper(strings.TrimSpace(level))[:3], "dim"
+	default:
+		return strings.ToUpper(strings.TrimSpace(level)), ""
+	}
+}
+
+var bracketedLevel = regexp.MustCompile(`(?i)\[(?:[^\]]+\s)?(WRN|ERR|FTL|FATAL|CRIT|CRITICAL|INF|DBG|VRB|WARN|ERROR|INFO|DEBUG|VERBOSE|TRACE|TRC)\]`)
+var plainLevel = regexp.MustCompile(`(?i)^\s*(WRN|ERR|FTL|FATAL|CRIT|CRITICAL|INF|DBG|VRB|WARN|ERROR|INFO|DEBUG|VERBOSE|TRACE|TRC)(?:\s+|:\s*|$)`)
+)
 
 func textLogStyle(message string) (string, string) {
 	if match := bracketedLevel.FindStringSubmatch(message); len(match) > 1 {
@@ -170,6 +481,9 @@ func formatTimestamp(raw string) string {
 func StripTrailingStructuredProperties(message string) string {
 	for index := 0; index < len(message); index++ {
 		if message[index] != '{' || index == 0 || !strings.ContainsAny(message[index-1:index], " \t") {
+			continue
+		}
+		if logBodyLabel.MatchString(message[:index]) {
 			continue
 		}
 		decoder := json.NewDecoder(strings.NewReader(message[index:]))
