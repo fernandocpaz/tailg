@@ -28,11 +28,8 @@ func (m model) toggleAIExplanation() (tea.Model, tea.Cmd) {
 	m.aiView = true
 	m.detailOffset = 0
 	if m.config.AI == nil {
-		m.aiText = "AI is not configured. Set TAILG_AI_API_KEY and TAILG_AI_MODEL in your environment.\n" +
-			"Optionally pass --ai-repo /path/to/checkout (repeatable).\n\n" +
-			"Press A or Esc to return to the original log.\n" +
-			"An API request is only made when you press A with AI configured."
-		return m, nil
+		m.aiView=false
+		return m.openAIWizard("AI provider is not configured. The wizard will help you connect it.")
 	}
 	if m.aiText != "" {
 		// Reopen a previously fetched answer without using another paid request.
@@ -87,8 +84,8 @@ func (m model) updateAIExplanation(message aiExplanationMsg) (tea.Model, tea.Cmd
 	m.aiCancel = nil
 	m.detailOffset = 0
 	if message.err != nil {
-		m.aiText = "AI explanation could not be loaded: " + core.StripANSI(message.err.Error()) + "\n\nPress A to return to the log."
-		return m, nil
+		m.aiView=false
+		return m.openAIWizard("AI provider unavailable: "+core.StripANSI(message.err.Error())+" — update or test the connection below.")
 	}
 	var text strings.Builder
 	text.WriteString(core.StripANSI(message.result.Explanation))

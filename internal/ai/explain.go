@@ -33,7 +33,8 @@ const (
 	maxOutputTokens = 1200
 )
 
-// Config uses environment variables for secrets: keys are never CLI flags or config files.
+// Config accepts environment variables or the owner-restricted settings file saved by the wizard.
+// API keys are never command-line arguments or stored in repository files.
 // The API must implement POST /chat/completions with standard chat choices and usage.
 type Config struct {
 	APIKey, BaseURL, Model string
@@ -49,6 +50,14 @@ func EnvConfig(extraRepos []string) (Config, error) {
 		BaseURL: os.Getenv("TAILG_AI_BASE_URL"),
 		Model: os.Getenv("TAILG_AI_MODEL"),
 		Repos: append([]string(nil), extraRepos...),
+	}
+	// Wizard-saved settings take priority over stale/broken environment values.
+	// This lets users repair configuration without editing shell profiles.
+	if saved, exists, err := LoadSettings(); err != nil {
+		return cfg, fmt.Errorf("saved AI settings: %w", err)
+	} else if exists {
+		saved.Repos = append(saved.Repos, cfg.Repos...)
+		return saved, nil
 	}
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = "https://api.openai.com/v1"

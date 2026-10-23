@@ -409,63 +409,64 @@ unless `--detail` is set; explicitly labeled response bodies remain visible.
 
 ## AI-assisted error explanations (optional)
 
-In the **full log detail window**, press **A** to request an AI explanation of the
-selected error. The normal log remains unchanged; press **A** or **Esc** to return
-to it. An explanation is cached for the current entry, so reopening it does not
-incur another API call. Tailg makes **no AI API calls** while browsing logs or
-monitoring unless you explicitly press **A**.
+Press **A** on a full log entry. If AI is not configured, tailg opens the
+**in-app guided setup wizard** automatically. If a configured provider rejects
+a request or is unreachable, the same wizard appears with a plain-language
+error and lets you update the connection. Press **S** in the detail inspector
+to reopen setup at any time.
 
-Tailg supports OpenAI-compatible `/chat/completions` endpoints. Configure
-credentials in environment variables, **not** on command lines or in a repository:
+The wizard walks through selecting OpenAI or another OpenAI-compatible API,
+entering an API key (masked), choosing the model and optional endpoint,
+selecting discovered local repository folders (or adding a folder), optionally
+entering actual token prices / a spending allowance, and **testing the API
+before saving**. The test sends only `Reply OK`, not the selected error or
+source files. **Saving is a separate confirmation** after validation, and the
+new settings take effect immediately without restarting tailg. The completed
+settings load on future launches without asking the user to reenter them.
+
+The wizard stores the API key unencrypted in the OS user configuration
+directory, in `tailg/ai.json`. On Unix this file is restricted to the owner
+(file mode 0600, containing directory owner-only). On Windows file access uses
+the profile's normal file permissions. **This is a local user-only settings
+file, not an OS credential vault**: anyone with privileged file access or
+access to the same user profile could read the key. Use a scoped provider key
+and follow your organization's rules for credential storage and log-data
+sharing. The wizard never displays the full key, never passes it on the
+command line, and never stores settings in your source-code checkout.
+Press **Esc** at any step to cancel without saving.
+
+For advanced setups, you can still use environment variables instead of the
+wizard:
 
 ```sh
 export TAILG_AI_API_KEY='your-api-key'
-export TAILG_AI_MODEL='your-provider-model'
-# Defaults to https://api.openai.com/v1; change for compatible providers.
+export TAILG_AI_MODEL='your-model'
 export TAILG_AI_BASE_URL='https://api.openai.com/v1'
-
-# Local checkouts available ON THE COMPUTER WHERE TAILG RUNS:
 tailg --ai-repo "$HOME/src/PatientApi" --ai-repo "$HOME/src/EncounterService"
 ```
 
-You can also supply local source roots via `TAILG_AI_REPOS`, using your OS's
-path-list separator (`:` on Linux/macOS, `;` on Windows). Multiple `--ai-repo`
-arguments and environment roots are combined. Only recognized source files in
-these roots are eligible for a small, bounded, matching excerpt. Config files,
-secrets, dependency/build directories and symlinks are excluded; no `git push`,
-repo mutation, or AI-initiated shell execution takes place. Your checkouts must
-already be available locally, e.g. in WSL under `/mnt/c/... ` if applicable.
+Settings saved by the wizard take precedence over old environment variables
+so a user can repair an outdated configuration in the UI. Source context
+comes only from explicitly selected local checkouts. It sends up to three
+bounded, matched source-code excerpts, omitting known secrets, config files,
+dependency/build directories and symlinks. You can select no repositories
+and use log-only explanations.
 
-**AI usage and budget (optional):** API responses exposing
-`usage.prompt_tokens`/`usage.completion_tokens` show both per-request and
-cumulative **current-process session** token usage. Add your provider's
-**actual prices** (USD per million tokens) to estimate cost:
+**Usage and cost:** The AI inspector shows provider-reported tokens per
+request and in the current tailg process. Actual API pricing varies; the
+wizard lets you enter real input/output prices per million tokens to estimate
+spend. You may optionally specify a **local per-process** spending allowance
+to prevent requests exceeding that allowance. The provider may return remaining
+rate-limit requests/tokens via response headers, also displayed. None of these
+numbers is the actual remaining **provider account credit**. A validation call
+can incur a small charge. A new tailg process has a fresh local allowance.
 
-```sh
-export TAILG_AI_INPUT_USD_PER_M=0.40   # example only: replace with current provider price
-export TAILG_AI_OUTPUT_USD_PER_M=1.60  # example only: replace with current provider price
-export TAILG_AI_BUDGET_USD=2.00        # optional local session spending allowance
-```
-
-The session budget is a **local guardrail**: tailg checks a pessimistic
-per-request cost ceiling before sending and deducts estimated cost from the
-session allowance using provider-reported token usage. It is **not an API
-account balance**, an invoice, or a guarantee against all charges. Running
-multiple tailg processes or restarting creates a new allowance; other clients
-using the same API account are not included. If a provider does not return usage
-tokens, the numbers are shown as unavailable rather than invented. Provider
-credit or monthly allowance cannot be reliably inferred from generic chat
-completion responses. If the provider returns `X-Ratelimit-Remaining-Requests`
-or `X-Ratelimit-Remaining-Tokens` response headers, tailg displays those
-rate-window counters separately. They are not account credits.
-
-**Privacy:** Pressing **A** sends the selected (redacted and truncated) log
-detail and up to three matching snippets from explicitly selected local
-repositories to the external provider. Redaction catches common credential
-formats but is **not guaranteed to remove all sensitive data**, including
-patient information. Avoid this feature with protected or sensitive logs unless
-you are authorized to transmit that information to the configured provider.
-Provider output is advice, not a verified diagnosis.
+**Privacy:** Pressing **A** sends the selected, redacted/truncated log detail
+and matching excerpts from chosen repos to the provider. Redaction catches
+common credentials but cannot guarantee removal of all secrets or sensitive
+information, including patient data. Do not use this feature on protected
+logs or code unless your organization's policy and your provider agreement
+permit sharing it. The model's answer is a hypothesis, not a verified fix.
 
 ## Live view
 
