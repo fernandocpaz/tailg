@@ -104,10 +104,18 @@ func (m model) updateLogDetailKey(key string) (tea.Model, tea.Cmd) {
 		cmd := m.openSelectedTrace()
 		return m, cmd
 	case "r":
+		if m.aiView { return m, nil }
 		cmd := m.loadLogDetail()
 		return m, cmd
+	case "a", "A":
+		return m.toggleAIExplanation()
 	case "enter":
-		if !m.detailLoading {
+		if m.aiView {
+			if !m.aiLoading {
+				m.notice = copyText(m.aiText)
+				m.closeDetail()
+			}
+		} else if !m.detailLoading {
 			m.notice = copyText(m.detail)
 			m.closeDetail()
 		}
@@ -118,6 +126,13 @@ func (m model) updateLogDetailKey(key string) (tea.Model, tea.Cmd) {
 }
 
 func (m model) wrappedDetailLines() []string {
+	if m.aiView {
+		status := ""
+		if m.aiLoading { status = "Analyzing selected error with the configured AI provider..." }
+		text := m.aiText
+		if text == "" { text = "AI analysis requested; only redacted error text and matched excerpts from configured repositories are sent." }
+		return wrapDetailText(m.detailLayout, text, status, m.width)
+	}
 	status := m.detailNotice
 	if m.detailLoading {
 		status = "Loading the full entry from this pod..."

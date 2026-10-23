@@ -15,6 +15,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	xterm "github.com/charmbracelet/x/term"
+	"github.com/fernandocpaz/tailg/internal/ai"
 	"github.com/fernandocpaz/tailg/internal/bundle"
 	"github.com/fernandocpaz/tailg/internal/core"
 	"github.com/fernandocpaz/tailg/internal/kube"
@@ -92,6 +93,19 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 		}
 	}
 	formatter := core.Formatter{Include: includePatterns, Exclude: excludePatterns, DefaultExclude: defaultExcludes, Color: !options.NoColor, Detail: options.Detail}
+	aiConfig, err := ai.EnvConfig(options.AIRepos)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	var aiClient *ai.Client
+	if aiConfig.APIKey != "" && aiConfig.Model != "" {
+		aiClient, err = ai.New(aiConfig)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 2
+		}
+	}
 	if _, err := exec.LookPath("kubectl"); err != nil {
 		fmt.Fprintln(stderr, "kubectl was not found in PATH.")
 		return 1
@@ -395,7 +409,7 @@ pickAgain:
 		return followPlain(ctx, runner, items, inventoryProvider, options, formatter, stdout, stderr)
 	}
 	title := logTitle(items, effectiveNamespace, effectiveContext, resolvedTarget)
-	err = tui.Run(ctx, tui.Config{Updates: updates, Title: title, Namespace: effectiveNamespace, KubeContext: effectiveContext, Target: resolvedTarget, Items: items, Formatter: formatter, HeartbeatWindow: options.HeartbeatWindow, RefreshInterval: options.RefreshInterval, BufferLines: options.BufferLines, FilterFile: options.FilterFile, Version: BuildDescription(),
+	err = tui.Run(ctx, tui.Config{Updates: updates, AI: aiClient, Title: title, Namespace: effectiveNamespace, KubeContext: effectiveContext, Target: resolvedTarget, Items: items, Formatter: formatter, HeartbeatWindow: options.HeartbeatWindow, RefreshInterval: options.RefreshInterval, BufferLines: options.BufferLines, FilterFile: options.FilterFile, Version: BuildDescription(),
 		Stream: func(streamCtx context.Context, item core.InventoryItem, cursor *core.LogCursor, events chan<- core.LogEvent) error {
 			visible := func(message string) bool {
 				return len(formatter.Format(item.Pod, item.Container, message, true)) > 0
@@ -720,6 +734,9 @@ func childArgs(options Options, namespace string) func(string) []string {
 		}
 		for _, value := range options.Include {
 			args = append(args, "--include", value)
+		}
+		for _, path := range options.AIRepos {
+			args = append(args, "--ai-repo", path)
 		}
 		if options.NoDefaultExclude {
 			args = append(args, "--no-default-exclude")

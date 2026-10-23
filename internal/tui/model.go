@@ -18,11 +18,13 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/fernandocpaz/tailg/internal/ai"
 	"github.com/fernandocpaz/tailg/internal/core"
 	"github.com/fernandocpaz/tailg/internal/update"
 )
 
 type Config struct {
+	AI              *ai.Client
 	Updates         *update.Client
 	ErrorLogs       func(context.Context, string) ([][]core.LogEvent, error)
 	LogDetails      func(context.Context, core.LogEvent) ([]core.LogEvent, error)
@@ -100,6 +102,11 @@ type model struct {
 	detailGen       int
 	detailSearches  *searchController
 	detailLayout    *detailLayout
+	aiView          bool
+	aiLoading       bool
+	aiText          string
+	aiGeneration    int
+	aiCancel        context.CancelFunc
 	heartbeatOpen   bool
 	resourceOpen    bool
 	resourceDetail  string
@@ -281,6 +288,8 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateErrorLogs(msg)
 	case logDetailMsg:
 		return m.updateLogDetail(msg)
+	case aiExplanationMsg:
+		return m.updateAIExplanation(msg)
 	case replicaMsg:
 		return m.updateReplicaResult(msg)
 	case tea.WindowSizeMsg:
@@ -406,7 +415,11 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if m.detail != "" {
-				m.closeDetail()
+				if m.aiView {
+					m.closeAIView()
+				} else {
+					m.closeDetail()
+				}
 			} else if m.errorLogs.open {
 				m.closeErrorLogs()
 			} else if m.traceOpen {
@@ -657,6 +670,8 @@ func (m *model) openDetail(value string) {
 }
 
 func (m *model) closeDetail() {
+	m.cancelAI()
+	m.aiView, m.aiLoading, m.aiText = false, false, ""
 	if m.detailSearches != nil {
 		m.detailSearches.stop()
 	}
@@ -721,8 +736,12 @@ func (m model) renderDetail() string {
 	if len(allLines) > 0 {
 		position = fmt.Sprintf("%d-%d/%d", start+1, end, len(allLines))
 	}
-	footer := position + " | Up/Down PgUp/PgDn Home/End | Enter copy | R reload | F6 trace | Esc close"
+	footer := position + " | Up/Down PgUp/PgDn Home/End | Enter copy | R reload | F6 trace | A AI | Esc close"
 	header := renderWithColor(headerStyle, "tailg", m.config.Formatter.Color) + "  Full log entry"
+	if m.aiView {
+		footer = position + " | Up/Down PgUp/PgDn Home/End | A/Esc back to log"
+		header = renderWithColor(headerStyle, "tailg", m.config.Formatter.Color) + "  AI error explanation"
+	}
 	if m.detailLoading {
 		header += " | Loading..."
 	} else if m.detailNotice != "" {
