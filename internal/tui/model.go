@@ -304,7 +304,22 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case replicaMsg:
 		return m.updateReplicaResult(msg)
 	case tea.WindowSizeMsg:
+		// Preserve the end of a long mapped document when a resize causes
+		// its lines to wrap differently. Otherwise retain the scroll position.
+		resourceWasAtEnd := false
+		if m.resourceOpen && m.resourceDetail != "" {
+			oldLimit := max(0, len(m.mappedResourceLines())-m.mappedResourceHeight())
+			resourceWasAtEnd = oldLimit > 0 && m.resourceOffset >= oldLimit
+		}
 		m.width, m.height = msg.Width, msg.Height
+		if m.resourceOpen && m.resourceDetail != "" {
+			newLimit := max(0, len(m.mappedResourceLines())-m.mappedResourceHeight())
+			if resourceWasAtEnd {
+				m.resourceOffset = newLimit
+			} else {
+				m.resourceOffset = min(max(0,m.resourceOffset),newLimit)
+			}
+		}
 		inputWidth := msg.Width - 52
 		if msg.Width < 80 {
 			inputWidth = msg.Width - 30
