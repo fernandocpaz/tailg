@@ -400,10 +400,12 @@ Day values are converted for `kubectl`, so `--since 4d` becomes `--since 96h`.
 The live TUI coalesces incoming records into small batches and formats only
 the visible screen rows, keeping the interface responsive on busy pods.
 
-Probe traffic matching `health|ready|live` is hidden by default. Repeat
-`--exclude` to hide additional patterns, use `--include` to retain only selected
-lines, or pass `--no-default-exclude` to show probe lines. Structured JSON
-properties appended to readable text are hidden unless `--detail` is set.
+Routine probe traffic matching `health|ready|live` is hidden by default, but
+WARN/ERROR/FATAL probe logs remain visible so unhealthy checks aren't missed.
+Repeat `--exclude` to hide additional patterns (including failures), use
+`--include` to retain only selected lines, or pass `--no-default-exclude` to show
+all probe lines. Structured JSON properties appended to readable text are hidden
+unless `--detail` is set; explicitly labeled response bodies remain visible.
 
 ## Live view
 

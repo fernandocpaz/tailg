@@ -16,9 +16,10 @@ var colors = map[string]string{
 }
 
 type Formatter struct {
-	Include []*regexp.Regexp
-	Exclude []*regexp.Regexp
-	ShowPod bool
+	Include        []*regexp.Regexp
+	Exclude        []*regexp.Regexp // explicit --exclude patterns
+	DefaultExclude []*regexp.Regexp // built-in probe filter; failed probes remain visible
+	ShowPod        bool
 	Color   bool
 	// ColorCodes optionally supplies terminal-aware semantic ANSI sequences.
 	ColorCodes map[string]string
@@ -101,6 +102,14 @@ func (f Formatter) shouldShow(message string) bool {
 			return false
 		}
 	}
+	// Default probe-noise filtering never hides a WARN, ERROR, or FATAL event.
+	// Explicit --exclude rules above still take precedence.
+	for _, pattern := range f.DefaultExclude {
+		if pattern.MatchString(message) {
+			level := ParseLogFields(LogEvent{Message: message}).Level
+			return level == "ERR" || level == "WRN"
+		}
+	}
 	return true
 }
 
@@ -145,9 +154,11 @@ func levelStyle(level string) (string, string) {
 	}
 }
 
-var bracketedLevel = regexp.MustCompile(`(?i)\[(?:[^\]]+\s)?(WRN|ERR|FTL|FATAL|CRIT|CRITICAL|INF|DBG|VRB|WARN|ERROR|INFO|DEBUG|VERBOSE|TRACE|TRC)\]`)
-var plainLevel = regexp.MustCompile(`(?i)^\s*(WRN|ERR|FTL|FATAL|CRIT|CRITICAL|INF|DBG|VRB|WARN|ERROR|INFO|DEBUG|VERBOSE|TRACE|TRC)(?:\s+|:\s*|$)`)
+var bracketedLevel = regexp.MustCompile(`(?i)\[(?:[^\]]+\s)?(WRN|ERR|FTL|FATAL|CRIT|CRITICAL|INF|DBG|VRB|WARN|WARNING|ERROR|INFO|INFORMATION|DEBUG|VERBOSE|TRACE|TRC)\]`)
+var plainLevel = regexp.MustCompile(`(?i)^\s*(WRN|ERR|FTL|FATAL|CRIT|CRITICAL|INF|DBG|VRB|WARN|WARNING|ERROR|INFO|INFORMATION|DEBUG|VERBOSE|TRACE|TRC)(?:\s+|:\s*|$)`)
 var trailingPropertyList = regexp.MustCompile(`^(?:[A-Za-z_@][A-Za-z0-9_.@-]*=\S+)(?:\s+[A-Za-z_@][A-Za-z0-9_.@-]*=\S+)*$`)
+// Preserve explicitly labeled response payload JSON in log messages.
+var logBodyLabel = regexp.MustCompile(`(?i)\b(?:body|payload|response[ _-]*body)\s*:\s*$`)
 
 func textLogStyle(message string) (string, string) {
 	if match := bracketedLevel.FindStringSubmatch(message); len(match) > 1 {
@@ -170,6 +181,9 @@ func formatTimestamp(raw string) string {
 func StripTrailingStructuredProperties(message string) string {
 	for index := 0; index < len(message); index++ {
 		if message[index] != '{' || index == 0 || !strings.ContainsAny(message[index-1:index], " \t") {
+			continue
+		}
+		if logBodyLabel.MatchString(message[:index]) {
 			continue
 		}
 		decoder := json.NewDecoder(strings.NewReader(message[index:]))
