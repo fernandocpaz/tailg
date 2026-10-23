@@ -5,6 +5,8 @@ import (
  "fmt"
  "net/http"
  "net/http/httptest"
+ "os"
+ "path/filepath"
  "strings"
  "testing"
 
@@ -17,6 +19,8 @@ func TestServiceRepoPromptPersistsMappingAndRestrictsSource(t *testing.T) {
  t.Setenv("XDG_CONFIG_HOME",t.TempDir())
  t.Setenv("APPDATA",t.TempDir())
  root:=t.TempDir()
+ if err:=os.WriteFile(filepath.Join(root,"RentalResultsAuthService.cs"),
+  []byte("public class RentalResultsAuthService { void GetTokenWithApplicationKey() {} }"),0600);err!=nil{t.Fatal(err)}
  requests:=0
  var payload string
  server:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
@@ -50,7 +54,7 @@ func TestServiceRepoPromptPersistsMappingAndRestrictsSource(t *testing.T) {
  if got,ok:=m.config.AISettings.CurrentServiceRepo("qa/rental-service");!ok||got.Path!=root{t.Fatal("wrong saved service path")}
  updated,_=m.Update(cmd())
  m=updated.(model)
- if requests!=1||!strings.Contains(payload,"RentalResultsAuthService"){t.Fatal("AI did not receive selected error")}
+ if requests!=1||!strings.Contains(payload,"RentalResultsAuthService.cs"){t.Fatal("AI was not given matching source from selected service checkout")}
  saved,exists,err:=ai.LoadSettings()
  if err!=nil||!exists||saved.ServiceRepos["qa/rental-service"].Path!=root{t.Fatal("service mapping not persisted")}
  m.closeDetail()
@@ -63,7 +67,7 @@ func TestServiceRepoPromptPersistsMappingAndRestrictsSource(t *testing.T) {
  m=updated.(model)
  if cmd==nil||!m.aiView||m.serviceRepoSetup!=nil{t.Fatal("explicit log-only path missing")}
  updated,_=m.Update(cmd());m=updated.(model)
- if requests!=2||strings.Contains(payload,"LOCAL SOURCE EXCERPTS (may be absent or incomplete):\\nFILE"){t.Fatal("log-only request leaked source snippets")}
+ if requests!=2||strings.Contains(payload,"RentalResultsAuthService.cs"){t.Fatal("log-only request leaked the previously mapped service's source")}
 }
 
 func TestServiceWorkloadAndPodFallback(t *testing.T){
