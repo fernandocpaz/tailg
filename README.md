@@ -533,6 +533,12 @@ the view is paused or the service is quiet.
 | --- | --- |
 | `F1` | Toggle between context view and matching lines only |
 | `F2` | Browse ConfigMaps and Secrets mapped into the pod |
+
+Mapped resource details use a scrollable, wrapped full-document viewer with a visible
+right-side scrollbar. Use **Up/Down**, **PageUp/PageDown**, **Home/End** or the
+**mouse wheel** to move, or click the scrollbar to jump through the document.
+**Enter** still copies the original complete resource (not just visible lines),
+**Esc** returns to the mapped-resource list, and **F2** closes the picker.
 | `F3` | Fetch the selected pod's complete retained ERR / FTL logs, grouped by date |
 | `F4` | Inspect per-container log freshness, replay counts and buffer usage |
 | `F5` | Open heartbeat diagnostics |
