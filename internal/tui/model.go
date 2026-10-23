@@ -113,6 +113,8 @@ type model struct {
 	heartbeatOpen   bool
 	resourceOpen    bool
 	resourceDetail  string
+	resourceOffset  int
+	resourceLayout  *detailLayout
 	resources       []core.MappedResource
 	resourceIndex   int
 	lastSharedText  string
@@ -243,7 +245,7 @@ func Run(parent context.Context, config Config) error {
 		searching: strings.TrimSpace(shared.text) != "" && (config.Search != nil || config.SearchRecords != nil),
 		issues:    core.NewIssueRadar(200),
 	}
-	program := tea.NewProgram(m, tea.WithAltScreen())
+	program := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	final, err := program.Run()
 	if result, ok := final.(model); ok && result.updates.restart {
 		return ErrRestart
@@ -302,7 +304,22 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case replicaMsg:
 		return m.updateReplicaResult(msg)
 	case tea.WindowSizeMsg:
+		// Preserve the end of a long mapped document when a resize causes
+		// its lines to wrap differently. Otherwise retain the scroll position.
+		resourceWasAtEnd := false
+		if m.resourceOpen && m.resourceDetail != "" {
+			oldLimit := max(0, len(m.mappedResourceLines())-m.mappedResourceHeight())
+			resourceWasAtEnd = oldLimit > 0 && m.resourceOffset >= oldLimit
+		}
 		m.width, m.height = msg.Width, msg.Height
+		if m.resourceOpen && m.resourceDetail != "" {
+			newLimit := max(0, len(m.mappedResourceLines())-m.mappedResourceHeight())
+			if resourceWasAtEnd {
+				m.resourceOffset = newLimit
+			} else {
+				m.resourceOffset = min(max(0,m.resourceOffset),newLimit)
+			}
+		}
 		inputWidth := msg.Width - 52
 		if msg.Width < 80 {
 			inputWidth = msg.Width - 30
@@ -371,6 +388,8 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = msg.err.Error()
 		} else {
 			m.resourceDetail = msg.text
+			m.resourceOffset = 0
+			m.resourceLayout = &detailLayout{}
 		}
 		return m, nil
 	case sharedFilterTick:
@@ -412,6 +431,11 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		commands = append(commands, sharedTick())
 		return m, tea.Batch(commands...)
+	case tea.MouseMsg:
+		if m.resourceOpen && m.resourceDetail != "" && m.aiSetup == nil && !m.showUpdate() {
+			m.scrollMappedResourceMouse(msg)
+		}
+		return m, nil
 	case tea.KeyMsg:
 		key := msg.String()
 		if key == "ctrl+c" || key == "ctrl+q" {
@@ -440,7 +464,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.heartbeatOpen {
 				m.heartbeatOpen = false
 			} else if m.resourceDetail != "" {
-				m.resourceDetail = ""
+				m.closeResourceDetail()
 			} else if m.resourceOpen {
 				m.resourceOpen = false
 			}
@@ -632,7 +656,7 @@ func (m model) View() string {
 	}
 	if m.resourceOpen {
 		if m.resourceDetail != "" {
-			return m.panel("Mapped resource", m.resourceDetail, "Enter copies | Esc returns")
+			return m.renderResourceDetail()
 		}
 		var lines []string
 		for index, resource := range m.resources {
@@ -1487,12 +1511,13 @@ func (m *model) scrollToSelection() {
 }
 func (m model) updateResourceKey(key string) (tea.Model, tea.Cmd) {
 	if key == "f2" {
+		m.closeResourceDetail()
 		m.resourceOpen = false
 		return m, nil
 	}
 	if key == "esc" {
 		if m.resourceDetail != "" {
-			m.resourceDetail = ""
+			m.closeResourceDetail()
 		} else {
 			m.resourceOpen = false
 		}
@@ -1501,7 +1526,9 @@ func (m model) updateResourceKey(key string) (tea.Model, tea.Cmd) {
 	if m.resourceDetail != "" {
 		if key == "enter" {
 			m.notice = copyText(m.resourceDetail)
-			m.resourceDetail = ""
+			m.closeResourceDetail()
+		} else {
+			m.scrollMappedResource(key)
 		}
 		return m, nil
 	}

@@ -546,6 +546,12 @@ the view is paused or the service is quiet.
 | `Esc` | Close the current detail panel |
 | `Ctrl+C` / `Ctrl+Q` | Exit |
 
+Mapped resource details use a scrollable, wrapped full-document viewer with a visible
+right-side scrollbar. Use **Up/Down**, **PageUp/PageDown**, **Home/End** or the
+**mouse wheel** to move, or click the scrollbar to jump through the document.
+**Enter** still copies the original complete resource (not just visible lines),
+**Esc** returns to the mapped-resource list, and **F2** closes the picker.
+
 F1's matching-only mode and the filter text are synchronized across panes and
 tiled windows launched by the same parent process. Secret values are decoded
 only after you explicitly open the selected Secret.
