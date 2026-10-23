@@ -115,6 +115,7 @@ type model struct {
 	resourceDetail  string
 	resourceOffset  int
 	resourceLayout  *detailLayout
+	resourceMouseCapture bool
 	resources       []core.MappedResource
 	resourceIndex   int
 	lastSharedText  string
@@ -245,7 +246,9 @@ func Run(parent context.Context, config Config) error {
 		searching: strings.TrimSpace(shared.text) != "" && (config.Search != nil || config.SearchRecords != nil),
 		issues:    core.NewIssueRadar(200),
 	}
-	program := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	// Mouse reporting is opt-in per mapped resource. When enabled globally it
+	// captures normal selection gestures across every log and diagnostics view.
+	program := tea.NewProgram(m, tea.WithAltScreen())
 	final, err := program.Run()
 	if result, ok := final.(model); ok && result.updates.restart {
 		return ErrRestart
@@ -387,9 +390,16 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.notice = msg.err.Error()
 		} else {
+			// A newly loaded resource starts in native selection mode even
+			// if the previous resource had opted into mouse navigation.
+			wasCaptured := m.resourceMouseCapture
+			m.resourceMouseCapture = false
 			m.resourceDetail = msg.text
 			m.resourceOffset = 0
 			m.resourceLayout = &detailLayout{}
+			if wasCaptured {
+				return m, tea.DisableMouse
+			}
 		}
 		return m, nil
 	case sharedFilterTick:
@@ -432,7 +442,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		commands = append(commands, sharedTick())
 		return m, tea.Batch(commands...)
 	case tea.MouseMsg:
-		if m.resourceOpen && m.resourceDetail != "" && m.aiSetup == nil && !m.showUpdate() {
+		if m.resourceMouseCapture && m.resourceOpen && m.resourceDetail != "" && m.aiSetup == nil && !m.showUpdate() {
 			m.scrollMappedResourceMouse(msg)
 		}
 		return m, nil
@@ -443,6 +453,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		if key == "esc" {
+			if m.resourceOpen && m.resourceDetail != "" {
+				return m.updateResourceKey("esc")
+			}
 			if m.replicas.open {
 				m.replicas.open = false
 				return m, nil
@@ -1511,23 +1524,42 @@ func (m *model) scrollToSelection() {
 }
 func (m model) updateResourceKey(key string) (tea.Model, tea.Cmd) {
 	if key == "f2" {
+		mouseCaptured := m.resourceMouseCapture
 		m.closeResourceDetail()
 		m.resourceOpen = false
+		if mouseCaptured {
+			return m, tea.DisableMouse
+		}
 		return m, nil
 	}
 	if key == "esc" {
 		if m.resourceDetail != "" {
+			mouseCaptured := m.resourceMouseCapture
 			m.closeResourceDetail()
+			if mouseCaptured {
+				return m, tea.DisableMouse
+			}
 		} else {
 			m.resourceOpen = false
 		}
 		return m, nil
 	}
 	if m.resourceDetail != "" {
-		if key == "enter" {
+		switch key {
+		case "m":
+			m.resourceMouseCapture = !m.resourceMouseCapture
+			if m.resourceMouseCapture {
+				return m, tea.EnableMouseCellMotion
+			}
+			return m, tea.DisableMouse
+		case "enter":
+			mouseCaptured := m.resourceMouseCapture
 			m.notice = copyText(m.resourceDetail)
 			m.closeResourceDetail()
-		} else {
+			if mouseCaptured {
+				return m, tea.DisableMouse
+			}
+		default:
 			m.scrollMappedResource(key)
 		}
 		return m, nil
