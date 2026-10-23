@@ -121,6 +121,7 @@ func NewCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) 
 	flags.StringArrayVar(&options.Include, "include", nil, "regular expression; only matching log lines are shown (repeatable)")
 	flags.StringArrayVar(&options.Exclude, "exclude", nil, "regular expression; matching log lines are hidden (repeatable)")
 	flags.BoolVar(&options.NoDefaultExclude, "no-default-exclude", false, "show health, ready, and live probe traffic")
+	flags.StringArrayVar(&options.AIRepos, "ai-repo", nil, "local source checkout for opt-in AI error explanations (repeatable; requires TAILG_AI_API_KEY and TAILG_AI_MODEL)")
 	flags.BoolVar(&options.NoFollow, "no-follow", false, "read recent logs and exit")
 	flags.StringVar(&options.DumpDirectory, "dump", "", "write a troubleshooting bundle, optionally to DIR")
 	flags.Lookup("dump").NoOptDefVal = "."
