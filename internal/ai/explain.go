@@ -51,6 +51,14 @@ func EnvConfig(extraRepos []string) (Config, error) {
 		Model: os.Getenv("TAILG_AI_MODEL"),
 		Repos: append([]string(nil), extraRepos...),
 	}
+	// Wizard-saved settings take priority over stale/broken environment values.
+	// This lets users repair configuration without editing shell profiles.
+	if saved, exists, err := LoadSettings(); err != nil {
+		return cfg, fmt.Errorf("saved AI settings: %w", err)
+	} else if exists {
+		saved.Repos = append(saved.Repos, cfg.Repos...)
+		return saved, nil
+	}
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = "https://api.openai.com/v1"
 	}
@@ -69,14 +77,6 @@ func EnvConfig(extraRepos []string) (Config, error) {
 			}
 			*item.target = number
 		}
-	}
-	// Settings saved by the in-app wizard are authoritative so they can
-	// repair an outdated environment configuration without shell changes.
-	if saved, exists, err := LoadSettings(); err != nil {
-		return cfg, fmt.Errorf("saved AI settings: %w", err)
-	} else if exists {
-		saved.Repos = append(saved.Repos, cfg.Repos...)
-		return saved, nil
 	}
 	return cfg, nil
 }
