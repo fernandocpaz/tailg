@@ -76,6 +76,8 @@ type Usage struct {
 	Calls int
 	InputTokens, OutputTokens int
 	HasTokens bool
+	RateRemainingRequests, RateRemainingTokens int
+	HasRateRemainingRequests, HasRateRemainingTokens bool
 	EstimatedUSD float64
 	HasPrice bool
 	BudgetUSD, RemainingUSD float64
@@ -252,9 +254,20 @@ func (c *Client) Explain(ctx context.Context, log string) (Result, error) {
 		c.usage.RemainingUSD = c.usage.BudgetUSD - c.usage.EstimatedUSD
 		if c.usage.RemainingUSD < 0 { c.usage.RemainingUSD = 0 }
 	}
+	// Many OpenAI-compatible providers expose per-window headroom via HTTP
+	// headers. These are rate limits, not the customer's financial balance.
+	c.usage.RateRemainingRequests, c.usage.HasRateRemainingRequests = headerCount(response.Header, "X-Ratelimit-Remaining-Requests")
+	c.usage.RateRemainingTokens, c.usage.HasRateRemainingTokens = headerCount(response.Header, "X-Ratelimit-Remaining-Tokens")
 	result.Usage = c.usage
 	c.mu.Unlock()
 	return result, nil
+}
+
+func headerCount(header http.Header, name string) (int, bool) {
+	value := strings.TrimSpace(header.Get(name))
+	if value == "" { return 0, false }
+	count, err := strconv.Atoi(value)
+	return count, err == nil && count >= 0
 }
 
 func UsageText(u Usage) string {
@@ -263,6 +276,12 @@ func UsageText(u Usage) string {
 		parts = append(parts, fmt.Sprintf("Session: %d calls, %d input + %d output tokens", u.Calls, u.InputTokens, u.OutputTokens))
 	} else {
 		parts = append(parts, fmt.Sprintf("Session: %d calls; provider token usage unavailable", u.Calls))
+	}
+	if u.HasRateRemainingRequests || u.HasRateRemainingTokens {
+		var limits []string
+		if u.HasRateRemainingRequests { limits = append(limits, fmt.Sprintf("%d requests", u.RateRemainingRequests)) }
+		if u.HasRateRemainingTokens { limits = append(limits, fmt.Sprintf("%d tokens", u.RateRemainingTokens)) }
+		parts = append(parts, "rate-limit headroom: "+strings.Join(limits, ", "))
 	}
 	if u.HasPrice && u.HasTokens {
 		parts = append(parts, fmt.Sprintf("estimated spend $%.4f", u.EstimatedUSD))
