@@ -242,11 +242,13 @@ func (c *Client) Explain(ctx context.Context, log string) (Result, error) {
 			c.usage.EstimatedUSD += result.RequestUSD
 		}
 	} else {
-		// Provider did not include usage data; never report a fictitious balance.
+		// Without token usage we cannot account for this paid request. If a
+		// budget was configured, fail closed for subsequent AI requests.
 		c.usage.HasTokens = false
 		c.usage.HasPrice = false
+		if c.usage.HasBudget { c.usage.RemainingUSD = 0 }
 	}
-	if c.usage.HasBudget {
+	if c.usage.HasBudget && c.usage.HasTokens {
 		c.usage.RemainingUSD = c.usage.BudgetUSD - c.usage.EstimatedUSD
 		if c.usage.RemainingUSD < 0 { c.usage.RemainingUSD = 0 }
 	}
