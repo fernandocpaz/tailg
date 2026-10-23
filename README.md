@@ -533,12 +533,6 @@ the view is paused or the service is quiet.
 | --- | --- |
 | `F1` | Toggle between context view and matching lines only |
 | `F2` | Browse ConfigMaps and Secrets mapped into the pod |
-
-Mapped resource details use a scrollable, wrapped full-document viewer with a visible
-right-side scrollbar. Use **Up/Down**, **PageUp/PageDown**, **Home/End** or the
-**mouse wheel** to move, or click the scrollbar to jump through the document.
-**Enter** still copies the original complete resource (not just visible lines),
-**Esc** returns to the mapped-resource list, and **F2** closes the picker.
 | `F3` | Fetch the selected pod's complete retained ERR / FTL logs, grouped by date |
 | `F4` | Inspect per-container log freshness, replay counts and buffer usage |
 | `F5` | Open heartbeat diagnostics |
@@ -551,6 +545,12 @@ right-side scrollbar. Use **Up/Down**, **PageUp/PageDown**, **Home/End** or the
 | `Enter` | Inspect the full log entry and stack trace; press again to copy |
 | `Esc` | Close the current detail panel |
 | `Ctrl+C` / `Ctrl+Q` | Exit |
+
+Mapped resource details use a scrollable, wrapped full-document viewer with a visible
+right-side scrollbar. Use **Up/Down**, **PageUp/PageDown**, **Home/End** or the
+**mouse wheel** to move, or click the scrollbar to jump through the document.
+**Enter** still copies the original complete resource (not just visible lines),
+**Esc** returns to the mapped-resource list, and **F2** closes the picker.
 
 F1's matching-only mode and the filter text are synchronized across panes and
 tiled windows launched by the same parent process. Secret values are decoded
