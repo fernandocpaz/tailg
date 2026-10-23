@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 )
 
 // SettingsPath is in the OS user configuration directory, never the checkout.
@@ -156,4 +155,3 @@ func DiscoverRepos() []string {
 	return found
 }
 
-var _ = time.Second
