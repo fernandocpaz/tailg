@@ -47,4 +47,5 @@ type Options struct {
 	Theme              string
 	NoUpdateCheck      bool
 	NoIntro            bool
+	AIRepos            []string // local checkout roots to search after pressing A in log details
 }
