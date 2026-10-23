@@ -37,6 +37,8 @@ func TestExplainRedactsLogIncludesRelevantLocalSourcesAndReportsUsage(t *testing
 			t.Errorf("expected source context: %q",prompt)
 		}
 		w.Header().Set("Content-Type","application/json")
+		w.Header().Set("X-Ratelimit-Remaining-Requests", "45")
+		w.Header().Set("X-Ratelimit-Remaining-Tokens", "9000")
 		fmt.Fprint(w,`{"choices":[{"message":{"content":"401 likely indicates invalid application key. Check service account configuration."}}],"usage":{"prompt_tokens":500,"completion_tokens":100,"total_tokens":600}}`)
 	}))
 	defer server.Close()
@@ -49,7 +51,9 @@ func TestExplainRedactsLogIncludesRelevantLocalSourcesAndReportsUsage(t *testing
 	if err!=nil { t.Fatal(err) }
 	if requests!=1 || result.RequestInputTokens!=500 || result.RequestOutputTokens!=100 || len(result.MatchedFiles)!=1 {t.Fatalf("unexpected result: %+v requests=%d",result,requests)}
 	if result.RequestUSD<0.00069 || result.RequestUSD>0.00071 {t.Fatalf("cost=%f",result.RequestUSD)}
-	if result.Usage.Calls!=1 || result.Usage.RemainingUSD>=1 || !strings.Contains(UsageText(result.Usage),"local session allowance left") {
+	if result.Usage.Calls!=1 || result.Usage.RemainingUSD>=1 || !strings.Contains(UsageText(result.Usage),"local session allowance left") ||
+		!result.Usage.HasRateRemainingRequests || result.Usage.RateRemainingRequests != 45 ||
+		!result.Usage.HasRateRemainingTokens || result.Usage.RateRemainingTokens != 9000 {
 		t.Fatalf("usage=%+v",result.Usage)
 	}
 }
