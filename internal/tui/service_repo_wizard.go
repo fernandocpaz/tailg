@@ -63,6 +63,8 @@ func (w *serviceRepoWizard) stop(){
 func (m model) openServiceRepoWizard(service,reason string)(tea.Model,tea.Cmd){
  if service=="" {return m,nil}
  if m.serviceRepoSetup!=nil{m.serviceRepoSetup.stop()}
+ m.cancelAI()
+ m.aiLoading=false
  m.aiView=false
  m.serviceRepoSetup=newServiceRepoWizard(service,reason)
  return m,nil
