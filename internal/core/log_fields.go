@@ -71,7 +71,7 @@ func ParseLogFields(event LogEvent) LogFields {
 	return f
 }
 
-var leadingPlainLogLevel = regexp.MustCompile(`(?i)^\s*(WRN|ERR|FTL|FATAL|CRIT|CRITICAL|INF|DBG|VRB|WARN|ERROR|INFO|DEBUG|VERBOSE|TRACE|TRC)(?:\s+|:\s*|$)`)
+var leadingPlainLogLevel = regexp.MustCompile(`(?i)^\s*(WRN|ERR|FTL|FATAL|CRIT|CRITICAL|INF|DBG|VRB|WARN|WARNING|ERROR|INFO|INFORMATION|DEBUG|VERBOSE|TRACE|TRC)(?:\s+|:\s*|$)`)
 
 func leadingTextLogLevel(message string) string {
 	if match := bracketedLevel.FindStringSubmatch(message); len(match) > 1 {
