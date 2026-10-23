@@ -33,7 +33,8 @@ const (
 	maxOutputTokens = 1200
 )
 
-// Config uses environment variables for secrets: keys are never CLI flags or config files.
+// Config accepts environment variables or the owner-restricted settings file saved by the wizard.
+// API keys are never command-line arguments or stored in repository files.
 // The API must implement POST /chat/completions with standard chat choices and usage.
 type Config struct {
 	APIKey, BaseURL, Model string
@@ -68,6 +69,14 @@ func EnvConfig(extraRepos []string) (Config, error) {
 			}
 			*item.target = number
 		}
+	}
+	// Settings saved by the in-app wizard are authoritative so they can
+	// repair an outdated environment configuration without shell changes.
+	if saved, exists, err := LoadSettings(); err != nil {
+		return cfg, fmt.Errorf("saved AI settings: %w", err)
+	} else if exists {
+		saved.Repos = append(saved.Repos, cfg.Repos...)
+		return saved, nil
 	}
 	return cfg, nil
 }
