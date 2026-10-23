@@ -26,6 +26,7 @@ type savedSettings struct {
 	BaseURL string `json:"base_url"`
 	Model string `json:"model"`
 	Repos []string `json:"repos,omitempty"`
+	ServiceRepos map[string]ServiceRepository `json:"service_repositories,omitempty"`
 	BudgetUSD float64 `json:"budget_usd,omitempty"`
 	InputUSDPerMillion float64 `json:"input_usd_per_million,omitempty"`
 	OutputUSDPerMillion float64 `json:"output_usd_per_million,omitempty"`
@@ -52,7 +53,7 @@ func LoadSettings() (Config, bool, error) {
 	var trailing any
 	if decoder.Decode(&trailing) != io.EOF { return Config{}, false, errors.New("unexpected data after AI settings") }
 	return Config{
-		APIKey:saved.APIKey, BaseURL:saved.BaseURL, Model:saved.Model, Repos:saved.Repos,
+		APIKey:saved.APIKey, BaseURL:saved.BaseURL, Model:saved.Model, Repos:saved.Repos, ServiceRepos:saved.ServiceRepos,
 		BudgetUSD:saved.BudgetUSD, InputUSDPerMillion:saved.InputUSDPerMillion,
 		OutputUSDPerMillion:saved.OutputUSDPerMillion,
 	},true,nil
@@ -62,6 +63,14 @@ func SaveSettings(cfg Config) error {
 	// Validate URLs, model and local repository roots first. Do not persist
 	// unverified or invalid connection parameters.
 	if _,err:=New(cfg);err!=nil{return err}
+	for service,mapping:=range cfg.ServiceRepos {
+		if service=="" || strings.HasPrefix(service,"/") || mapping.Path=="" {
+			return errors.New("invalid service repository mapping")
+		}
+		if _,err:=LocalServiceRepo(mapping.Path);err!=nil {
+			return fmt.Errorf("source mapping for %s: %w",service,err)
+		}
+	}
 	path,err:=SettingsPath()
 	if err!=nil{return err}
 	dir:=filepath.Dir(path)
@@ -74,7 +83,7 @@ func SaveSettings(cfg Config) error {
 		if !existing.Mode().IsRegular(){return errors.New("AI settings destination is not a regular file")}
 	} else if !errors.Is(e,os.ErrNotExist){return e}
 	payload,err:=json.MarshalIndent(savedSettings{
-		APIKey:cfg.APIKey,BaseURL:cfg.BaseURL,Model:cfg.Model,Repos:cfg.Repos,
+		APIKey:cfg.APIKey,BaseURL:cfg.BaseURL,Model:cfg.Model,Repos:cfg.Repos,ServiceRepos:cfg.ServiceRepos,
 		BudgetUSD:cfg.BudgetUSD,InputUSDPerMillion:cfg.InputUSDPerMillion,
 		OutputUSDPerMillion:cfg.OutputUSDPerMillion,
 	},"","  ")
