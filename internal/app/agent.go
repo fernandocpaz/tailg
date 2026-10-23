@@ -346,19 +346,22 @@ func collectAgentReport(parent context.Context, options agentOptions, mode agent
 	if err != nil {
 		return agent.Report{}, fmt.Errorf("invalid container regex: %w", err)
 	}
-	excludes := append([]string(nil), options.Exclude...)
-	if !options.NoDefaultExclude {
-		excludes = append(core.DefaultExcludePatterns, excludes...)
-	}
 	includePatterns, err := core.CompilePatterns(options.Include)
 	if err != nil {
 		return agent.Report{}, err
 	}
-	excludePatterns, err := core.CompilePatterns(excludes)
+	excludePatterns, err := core.CompilePatterns(options.Exclude)
 	if err != nil {
 		return agent.Report{}, err
 	}
-	formatter := core.Formatter{Include: includePatterns, Exclude: excludePatterns, Detail: true}
+	var defaultExcludes []*regexp.Regexp
+	if !options.NoDefaultExclude {
+		defaultExcludes, err = core.CompilePatterns(core.DefaultExcludePatterns)
+		if err != nil {
+			return agent.Report{}, err
+		}
+	}
+	formatter := core.Formatter{Include: includePatterns, Exclude: excludePatterns, DefaultExclude: defaultExcludes, Detail: true}
 
 	runner := kube.NewRunner(options.Namespace, options.Context)
 	effectiveContext, effectiveNamespace, err := runner.CurrentContext(ctx)
