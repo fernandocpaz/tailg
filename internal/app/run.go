@@ -73,21 +73,25 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 		fmt.Fprintln(stderr, "Invalid regex:", err)
 		return 1
 	}
-	excludes := append([]string(nil), options.Exclude...)
-	if !options.NoDefaultExclude {
-		excludes = append(core.DefaultExcludePatterns, excludes...)
-	}
 	includePatterns, err := core.CompilePatterns(options.Include)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	excludePatterns, err := core.CompilePatterns(excludes)
+	excludePatterns, err := core.CompilePatterns(options.Exclude)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	formatter := core.Formatter{Include: includePatterns, Exclude: excludePatterns, Color: !options.NoColor, Detail: options.Detail}
+	var defaultExcludes []*regexp.Regexp
+	if !options.NoDefaultExclude {
+		defaultExcludes, err = core.CompilePatterns(core.DefaultExcludePatterns)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
+	formatter := core.Formatter{Include: includePatterns, Exclude: excludePatterns, DefaultExclude: defaultExcludes, Color: !options.NoColor, Detail: options.Detail}
 	if _, err := exec.LookPath("kubectl"); err != nil {
 		fmt.Fprintln(stderr, "kubectl was not found in PATH.")
 		return 1
