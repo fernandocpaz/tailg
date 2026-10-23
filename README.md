@@ -454,8 +454,10 @@ account balance**, an invoice, or a guarantee against all charges. Running
 multiple tailg processes or restarting creates a new allowance; other clients
 using the same API account are not included. If a provider does not return usage
 tokens, the numbers are shown as unavailable rather than invented. Provider
-credit, monthly allowance, or remaining rate-limit quota cannot be reliably
-inferred from generic chat completion responses.
+credit or monthly allowance cannot be reliably inferred from generic chat
+completion responses. If the provider returns `X-Ratelimit-Remaining-Requests`
+or `X-Ratelimit-Remaining-Tokens` response headers, tailg displays those
+rate-window counters separately. They are not account credits.
 
 **Privacy:** Pressing **A** sends the selected (redacted and truncated) log
 detail and up to three matching snippets from explicitly selected local
