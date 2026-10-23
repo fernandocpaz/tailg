@@ -109,6 +109,8 @@ func (m model) updateLogDetailKey(key string) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case "a", "A":
 		return m.toggleAIExplanation()
+	case "s", "S":
+		return m.openAIWizard("")
 	case "enter":
 		if m.aiView {
 			if !m.aiLoading {
