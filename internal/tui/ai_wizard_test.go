@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
@@ -61,7 +60,8 @@ func TestWizardValidatesSavesAndUsesProviderImmediately(t *testing.T){
 	m.ctx=context.Background()
 	m.width,m.height=120,30
 	m.openDetail("ERROR selected")
-	m,_=m.openAIWizard("")
+	updatedModel,_:=m.openAIWizard("")
+	m=updatedModel.(model)
 	w:=m.aiSetup
 	w.provider=1
 	w.fields[aiStepKey]="key-demo"
@@ -100,7 +100,8 @@ func TestWizardFailedProviderStaysEditableAndSavesNothing(t *testing.T){
 	m.width,m.height=112,29
 	m.ctx=context.Background()
 	m.openDetail("ERROR selected")
-	m,_=m.openAIWizard("credentials expired")
+	updatedModel,_:=m.openAIWizard("credentials expired")
+	m=updatedModel.(model)
 	w:=m.aiSetup
 	w.provider=1
 	w.fields[aiStepKey]="bad-key"
@@ -123,7 +124,8 @@ func TestRepoStepSupportsSelectingAndAddingFolders(t *testing.T){
 	m:=workflowModel()
 	m.width,m.height=120,29
 	m.openDetail("ERROR selected")
-	m,_=m.openAIWizard("")
+	updatedModel,_:=m.openAIWizard("")
+	m=updatedModel.(model)
 	w:=m.aiSetup
 	w.step=aiStepRepositories
 	path:=t.TempDir()
@@ -135,4 +137,3 @@ func TestRepoStepSupportsSelectingAndAddingFolders(t *testing.T){
 	if err!=nil || len(cfg.Repos)==0{t.Fatalf("repo configuration missing: %+v, err %v",cfg.Repos,err)}
 }
 
-var _=os.ErrNotExist
