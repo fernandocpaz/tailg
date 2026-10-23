@@ -25,6 +25,8 @@ import (
 
 type Config struct {
 	AI              *ai.Client
+	AISettings      ai.Config
+	AIProblem       string
 	Updates         *update.Client
 	ErrorLogs       func(context.Context, string) ([][]core.LogEvent, error)
 	LogDetails      func(context.Context, core.LogEvent) ([]core.LogEvent, error)
@@ -107,6 +109,7 @@ type model struct {
 	aiText          string
 	aiGeneration    int
 	aiCancel        context.CancelFunc
+	aiSetup         *aiSetupWizard
 	heartbeatOpen   bool
 	resourceOpen    bool
 	resourceDetail  string
@@ -263,6 +266,12 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	if msg,ok:=message.(aiSetupTestMsg);ok {
+		return m.updateAIWizardTest(msg)
+	}
+	if msg,ok:=message.(tea.KeyMsg);ok && m.aiSetup!=nil {
+		return m.updateAIWizardKey(msg)
+	}
 	if m.updates.receive(message) {
 		if m.updates.restart {
 			return m, tea.Quit
@@ -592,6 +601,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
+	if m.aiSetup!=nil && m.width>0 && m.height>0{
+		return m.renderAIWizard()
+	}
 	if m.showUpdate() && m.width > 0 && m.height > 0 {
 		background := m
 		background.updates.pending = false
@@ -670,6 +682,7 @@ func (m *model) openDetail(value string) {
 }
 
 func (m *model) closeDetail() {
+	if m.aiSetup!=nil{m.aiSetup.stop();m.aiSetup=nil}
 	m.cancelAI()
 	m.aiView, m.aiLoading, m.aiText = false, false, ""
 	if m.detailSearches != nil {
@@ -736,7 +749,7 @@ func (m model) renderDetail() string {
 	if len(allLines) > 0 {
 		position = fmt.Sprintf("%d-%d/%d", start+1, end, len(allLines))
 	}
-	footer := position + " | Up/Down PgUp/PgDn Home/End | Enter copy | R reload | F6 trace | A AI | Esc close"
+	footer := position + " | Up/Down PgUp/PgDn Home/End | Enter copy | R reload | F6 trace | A AI | S setup | Esc close"
 	header := renderWithColor(headerStyle, "tailg", m.config.Formatter.Color) + "  Full log entry"
 	if m.aiView {
 		footer = position + " | Up/Down PgUp/PgDn Home/End | A/Esc back to log"
