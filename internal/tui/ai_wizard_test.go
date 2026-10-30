@@ -63,7 +63,7 @@ func TestWizardValidatesSavesAndUsesProviderImmediately(t *testing.T){
 	updatedModel,_:=m.openAIWizard("")
 	m=updatedModel.(model)
 	w:=m.aiSetup
-	w.provider=1
+	w.provider=aiProviderCompatible
 	w.fields[aiStepKey]="key-demo"
 	w.fields[aiStepModel]="compatible-model"
 	w.fields[aiStepEndpoint]=server.URL
@@ -103,7 +103,7 @@ func TestWizardFailedProviderStaysEditableAndSavesNothing(t *testing.T){
 	updatedModel,_:=m.openAIWizard("credentials expired")
 	m=updatedModel.(model)
 	w:=m.aiSetup
-	w.provider=1
+	w.provider=aiProviderCompatible
 	w.fields[aiStepKey]="bad-key"
 	w.fields[aiStepModel]="model"
 	w.fields[aiStepEndpoint]=server.URL

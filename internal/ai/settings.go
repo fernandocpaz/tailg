@@ -22,6 +22,8 @@ func SettingsPath() (string, error) {
 }
 
 type savedSettings struct {
+	Provider string `json:"provider,omitempty"`
+	WorkspaceID string `json:"workspace_id,omitempty"`
 	APIKey string `json:"api_key"`
 	BaseURL string `json:"base_url"`
 	Model string `json:"model"`
@@ -53,6 +55,8 @@ func LoadSettings() (Config, bool, error) {
 	var trailing any
 	if decoder.Decode(&trailing) != io.EOF { return Config{}, false, errors.New("unexpected data after AI settings") }
 	return Config{
+		Provider:saved.Provider,
+		WorkspaceID:saved.WorkspaceID,
 		APIKey:saved.APIKey, BaseURL:saved.BaseURL, Model:saved.Model, Repos:saved.Repos, ServiceRepos:saved.ServiceRepos,
 		BudgetUSD:saved.BudgetUSD, InputUSDPerMillion:saved.InputUSDPerMillion,
 		OutputUSDPerMillion:saved.OutputUSDPerMillion,
@@ -60,6 +64,7 @@ func LoadSettings() (Config, bool, error) {
 }
 
 func SaveSettings(cfg Config) error {
+	if err:=providerDefaults(&cfg);err!=nil{return err}
 	// Validate URLs, model and local repository roots first. Do not persist
 	// unverified or invalid connection parameters.
 	if _,err:=New(cfg);err!=nil{return err}
@@ -86,6 +91,8 @@ func SaveSettings(cfg Config) error {
 		if !existing.Mode().IsRegular(){return errors.New("AI settings destination is not a regular file")}
 	} else if !errors.Is(e,os.ErrNotExist){return e}
 	payload,err:=json.MarshalIndent(savedSettings{
+		Provider:cfg.Provider,
+		WorkspaceID:cfg.WorkspaceID,
 		APIKey:cfg.APIKey,BaseURL:cfg.BaseURL,Model:cfg.Model,Repos:cfg.Repos,ServiceRepos:cfg.ServiceRepos,
 		BudgetUSD:cfg.BudgetUSD,InputUSDPerMillion:cfg.InputUSDPerMillion,
 		OutputUSDPerMillion:cfg.OutputUSDPerMillion,
@@ -108,15 +115,11 @@ func SaveSettings(cfg Config) error {
 // The validation request can still count against API quota/cost.
 func (c *Client) Check(ctx context.Context) error {
 	if c==nil{return errors.New("AI provider is not configured")}
-	body,_:=json.Marshal(struct {
-		Model string `json:"model"`
-		Messages []chatMessage `json:"messages"`
-		MaxTokens int `json:"max_tokens"`
-	}{Model:c.cfg.Model, Messages:[]chatMessage{{Role:"user",Content:"Reply OK."}},MaxTokens:8})
+	body,err:=c.requestBody([]chatMessage{{Role:"user",Content:"Reply OK."}},8)
+	if err!=nil{return err}
 	request,err:=http.NewRequestWithContext(ctx,http.MethodPost,c.endpoint,strings.NewReader(string(body)))
 	if err!=nil{return err}
-	request.Header.Set("Content-Type","application/json")
-	request.Header.Set("Authorization","Bearer "+c.cfg.APIKey)
+	c.authorize(request)
 	response,err:=c.http.Do(request)
 	if err!=nil{return fmt.Errorf("cannot reach provider: %w",err)}
 	defer response.Body.Close()
@@ -125,13 +128,16 @@ func (c *Client) Check(ctx context.Context) error {
 		case http.StatusUnauthorized,http.StatusForbidden:return errors.New("provider rejected API key or account access (HTTP 401/403)")
 		case http.StatusTooManyRequests:return errors.New("provider rate limit or billing quota reached (HTTP 429)")
 		case http.StatusNotFound:return errors.New("provider endpoint or model was not found (HTTP 404)")
+		case http.StatusBadRequest:
+			if c.cfg.Provider==ProviderAnthropic{return errors.New("Claude rejected the request (HTTP 400); check model ID, workspace ID and API billing/credits at platform.claude.com")}
+			return errors.New("provider rejected the request (HTTP 400); check model and account billing")
 		default:return fmt.Errorf("provider returned HTTP %d; verify endpoint, model, and account",response.StatusCode)
 		}
 	}
-	var completion chatResponse
-	if err=json.NewDecoder(io.LimitReader(response.Body,4096)).Decode(&completion);err!=nil{return errors.New("provider response is not compatible with Chat Completions")}
-	if len(completion.Choices)==0 {return errors.New("provider returned no chat choices")}
-	return nil
+	limited,err:=io.ReadAll(io.LimitReader(response.Body,4097))
+	if err!=nil || len(limited)>4096{return errors.New("provider validation response exceeded size limit or could not be read")}
+	_,err=c.decodeCompletion(limited)
+	return err
 }
 
 // DiscoverRepos offers likely local checkouts to nontechnical users without
