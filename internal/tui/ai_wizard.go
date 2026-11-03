@@ -21,6 +21,7 @@ import (
 const (
 	aiStepProvider = iota
 	aiStepKey
+	aiStepWorkspace
 	aiStepModel
 	aiStepEndpoint
 	aiStepRepositories
@@ -31,10 +32,16 @@ const (
 	aiStepSave
 )
 
+const (
+	aiProviderOpenAI = iota
+	aiProviderClaude
+	aiProviderCompatible
+)
+
 type aiSetupWizard struct {
 	step int
 	provider int
-	fields [8]string
+	fields [aiStepTest]string
 	input textinput.Model
 	repos []string
 	selected map[string]bool
@@ -57,13 +64,18 @@ type aiSetupTestMsg struct {
 
 func wizardModel(cfg ai.Config, reason string) *aiSetupWizard {
 	w := &aiSetupWizard{selected:map[string]bool{}, note:reason}
-	w.provider=0
-	if cfg.BaseURL!="" && strings.TrimRight(cfg.BaseURL,"/")!="https://api.openai.com/v1" {w.provider=1}
+	w.provider=aiProviderOpenAI
+	if strings.EqualFold(cfg.Provider,ai.ProviderAnthropic) || strings.EqualFold(cfg.Provider,"claude") {
+		w.provider=aiProviderClaude
+	} else if cfg.BaseURL!="" && strings.TrimRight(cfg.BaseURL,"/")!="https://api.openai.com/v1" {w.provider=aiProviderCompatible}
 	w.fields[aiStepKey]=cfg.APIKey
+	w.fields[aiStepWorkspace]=cfg.WorkspaceID
 	w.fields[aiStepModel]=cfg.Model
 	if w.fields[aiStepModel]=="" {w.fields[aiStepModel]="gpt-4.1-mini"}
+	if cfg.Model=="" && w.provider==aiProviderClaude {w.fields[aiStepModel]=ai.DefaultClaudeModel}
 	w.fields[aiStepEndpoint]=cfg.BaseURL
 	if w.fields[aiStepEndpoint]=="" {w.fields[aiStepEndpoint]="https://api.openai.com/v1"}
+	if cfg.BaseURL=="" && w.provider==aiProviderClaude {w.fields[aiStepEndpoint]=ai.AnthropicBaseURL}
 	for i,n:=range []float64{cfg.InputUSDPerMillion,cfg.OutputUSDPerMillion,cfg.BudgetUSD} {
 		if n>0 {w.fields[aiStepInputRate+i]=strconv.FormatFloat(n,'f',-1,64)}
 	}
@@ -83,6 +95,25 @@ func wizardModel(cfg ai.Config, reason string) *aiSetupWizard {
 	w.input.Width=55
 	w.loadInput()
 	return w
+}
+
+func (w *aiSetupWizard) selectProvider(provider int) {
+	if w.provider==provider{return}
+	w.provider=provider
+	// A provider switch must not send an old provider's key or use its prices.
+	w.fields[aiStepKey]=""
+	w.fields[aiStepWorkspace]=""
+	for i:=aiStepInputRate;i<=aiStepBudget;i++{w.fields[i]=""}
+	if provider==aiProviderClaude {
+		w.fields[aiStepModel]=ai.DefaultClaudeModel
+		w.fields[aiStepEndpoint]=ai.AnthropicBaseURL
+	} else {
+		w.fields[aiStepModel]="gpt-4.1-mini"
+		w.fields[aiStepEndpoint]="https://api.openai.com/v1"
+		if provider==aiProviderCompatible {w.fields[aiStepModel]="";w.fields[aiStepEndpoint]=""}
+	}
+	w.note=""
+	w.verified=nil
 }
 
 func (w *aiSetupWizard) loadInput() {
@@ -105,7 +136,8 @@ func (w *aiSetupWizard) advance() {
 	w.note=""
 	w.verified=nil
 	w.step++
-	if w.step==aiStepEndpoint && w.provider==0 {w.step=aiStepRepositories}
+	if w.step==aiStepWorkspace && w.provider!=aiProviderClaude {w.step=aiStepModel}
+	if w.step==aiStepEndpoint && w.provider!=aiProviderCompatible {w.step=aiStepRepositories}
 	w.loadInput()
 }
 func (w *aiSetupWizard) back(){
@@ -113,16 +145,23 @@ func (w *aiSetupWizard) back(){
 	w.note=""
 	w.verified=nil
 	if w.step>0 {w.step--}
-	if w.step==aiStepEndpoint && w.provider==0 {w.step=aiStepModel}
+	if w.step==aiStepEndpoint && w.provider!=aiProviderCompatible {w.step=aiStepModel}
+	if w.step==aiStepWorkspace && w.provider!=aiProviderClaude {w.step=aiStepKey}
 	w.loadInput()
 }
 func (w *aiSetupWizard) buildConfig() (ai.Config,error) {
 	cfg:=ai.Config{
+		Provider:ai.ProviderOpenAI,
 		APIKey:strings.TrimSpace(w.fields[aiStepKey]),
 		Model:strings.TrimSpace(w.fields[aiStepModel]),
 		BaseURL:"https://api.openai.com/v1",
 	}
-	if w.provider==1{cfg.BaseURL=strings.TrimSpace(w.fields[aiStepEndpoint])}
+	if w.provider==aiProviderCompatible{cfg.BaseURL=strings.TrimSpace(w.fields[aiStepEndpoint])}
+	if w.provider==aiProviderClaude{
+		cfg.Provider=ai.ProviderAnthropic
+		cfg.BaseURL=strings.TrimSpace(w.fields[aiStepEndpoint])
+		cfg.WorkspaceID=strings.TrimSpace(w.fields[aiStepWorkspace])
+	}
 	for _,root:=range w.repos {
 		if w.selected[root]{cfg.Repos=append(cfg.Repos,root)}
 	}
@@ -166,9 +205,10 @@ func (m model) updateAIWizardKey(msg tea.KeyMsg) (tea.Model,tea.Cmd) {
 	if w.busy {return m,nil}
 	if w.step==aiStepProvider {
 		switch key {
-		case "left","right","space","up","down":
-			w.provider=1-w.provider
-			w.note=""
+		case "right","space","down":
+			w.selectProvider((w.provider+1)%3)
+		case "left","up":
+			w.selectProvider((w.provider+2)%3)
 		case "enter","tab":
 			w.advance()
 		}
@@ -308,10 +348,14 @@ func (m model) renderAIWizard() string {
 	if w==nil{return ""}
 	width:=max(35,min(m.width-4,86))
 	var header strings.Builder
-	fmt.Fprintf(&header,"  AI SETUP  ·  Step %d of 10\n\n",w.step+1)
+	step,total:=w.step+1,aiStepSave+1
+	if w.provider!=aiProviderCompatible{total--;if w.step>aiStepEndpoint{step--}}
+	if w.provider!=aiProviderClaude{total--;if w.step>aiStepWorkspace{step--}}
+	fmt.Fprintf(&header,"  AI SETUP  ·  Step %d of %d\n\n",step,total)
 	labels:=[]string{
 		"Select your AI provider",
 		"API key",
+		"Claude workspace ID (if needed)",
 		"Model name",
 		"API endpoint URL",
 		"Source-code repositories",
@@ -324,13 +368,24 @@ func (m model) renderAIWizard() string {
 	header.WriteString(labels[w.step]+"\n\n")
 	switch w.step{
 	case aiStepProvider:
-		header.WriteString("  ")
-		if w.provider==0{header.WriteString("> [OpenAI]    [Other OpenAI-compatible API]")}else{header.WriteString("  [OpenAI]  > [Other OpenAI-compatible API]")}
-		header.WriteString("\n\nArrow keys to choose. OpenAI automatically fills its endpoint.")
+		for i,name:=range []string{"OpenAI","Claude (Anthropic API)","Other OpenAI-compatible API"}{
+			cursor:="  "
+			if w.provider==i{cursor="> "}
+			header.WriteString(cursor+name+"\n")
+		}
+		header.WriteString("\nArrow keys to choose; Enter continues.\nOpenAI and Claude fill their API endpoint automatically.")
 	case aiStepKey:
-		header.WriteString(w.input.View()+"\n\nYour key stays masked. It will be saved in a user-only file.\nDo not use a key from an untrusted source.")
+		header.WriteString(w.input.View()+"\n\nYour key stays masked. It will be saved in a user-only file.")
+		if w.provider==aiProviderClaude{
+			header.WriteString("\n\nCreate an API key at https://platform.claude.com/settings/keys\nEnable API billing/credits in your Claude Console account.\nA Claude chat subscription does not include API usage.\nPaste your API key here; no client ID or secret is needed.")
+		}
+	case aiStepWorkspace:
+		header.WriteString(w.input.View()+"\n\nLeave blank if your key belongs to a single workspace.\nFor a key covering multiple workspaces, paste the workspace ID.\nFind it at https://platform.claude.com/settings/workspaces")
 	case aiStepModel:
 		header.WriteString(w.input.View()+"\n\nEnter the model ID provided by your API service.")
+		if w.provider==aiProviderClaude{
+			header.WriteString("\nKeep the suggested Claude model or enter another available ID.\nModels: https://platform.claude.com/docs/en/models/overview\nEndpoint: "+w.fields[aiStepEndpoint]+" (automatic)")
+		}
 	case aiStepEndpoint:
 		header.WriteString(w.input.View()+"\n\nUse the provider's HTTPS base URL ending in /v1.")
 	case aiStepRepositories:

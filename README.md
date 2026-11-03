@@ -415,7 +415,7 @@ a request or is unreachable, the same wizard appears with a plain-language
 error and lets you update the connection. Press **S** in the detail inspector
 to reopen setup at any time.
 
-The wizard walks through selecting OpenAI or another OpenAI-compatible API,
+The wizard walks through selecting OpenAI, **Claude (Anthropic API)**, or another OpenAI-compatible API,
 entering an API key (masked), choosing the model and optional endpoint,
 selecting discovered local repository folders (or adding a folder), optionally
 entering actual token prices / a spending allowance, and **testing the API
@@ -423,6 +423,26 @@ before saving**. The test sends only `Reply OK`, not the selected error or
 source files. **Saving is a separate confirmation** after validation, and the
 new settings take effect immediately without restarting tailg. The completed
 settings load on future launches without asking the user to reenter them.
+
+### Set up Claude
+
+1. Open a full log entry and press **S** (or **A** if AI is not configured).
+2. Choose **Claude (Anthropic API)** and press Enter.
+3. Create an API key at <https://platform.claude.com/settings/keys>, enable API
+   billing/credits, and paste the key into the masked field. A Claude chat
+   subscription does not include API usage.
+4. Leave **workspace ID** blank for a key scoped to one workspace. If the key
+   covers multiple workspaces, copy the ID from
+   <https://platform.claude.com/settings/workspaces>.
+5. Keep the suggested model or enter an available Claude model ID from
+   <https://platform.claude.com/docs/en/models/overview>. The endpoint is filled
+   automatically; no client ID or client secret is needed.
+6. Continue through the optional source folders, token prices and session allowance.
+   Press Enter to **test**, then Enter to **save** after validation succeeds.
+
+Claude uses Anthropic's native Messages API (`https://api.anthropic.com/v1/messages`).
+Token usage, rate-limit headroom and optional local cost estimates appear in
+the AI inspector. Press **S** again to edit the saved Claude configuration.
 
 The wizard stores the API key unencrypted in the OS user configuration
 directory, in `tailg/ai.json`. On Unix this file is restricted to the owner
@@ -444,6 +464,22 @@ export TAILG_AI_MODEL='your-model'
 export TAILG_AI_BASE_URL='https://api.openai.com/v1'
 tailg --ai-repo "$HOME/src/PatientApi" --ai-repo "$HOME/src/EncounterService"
 ```
+
+For native Claude without the wizard:
+
+```sh
+export TAILG_AI_PROVIDER='anthropic'
+export ANTHROPIC_API_KEY='your-claude-api-key'
+export TAILG_AI_MODEL='your-available-claude-model-id'
+# Only for keys covering multiple workspaces:
+# export ANTHROPIC_WORKSPACE_ID='your-workspace-id'
+tailg
+```
+
+`TAILG_AI_API_KEY` takes precedence over `ANTHROPIC_API_KEY`, and
+`TAILG_AI_WORKSPACE_ID` over `ANTHROPIC_WORKSPACE_ID`. Existing wizard-saved
+settings take precedence over environment variables; use **S** to update them.
+Configurations without a provider keep using OpenAI-compatible Chat Completions.
 
 ### Service-specific source repositories
 
