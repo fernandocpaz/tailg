@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -153,6 +155,7 @@ func (r Runner) Apps(ctx context.Context) ([]core.AppChoice, error) {
 		ready, total := readyCounts(pod)
 		selected.podChoices = append(selected.podChoices, core.PodChoice{
 			Name: name, Ready: fmt.Sprintf("%d/%d", ready, total), Phase: podPhase(pod), StartedAt: podStartedAt(pod),
+			Sidecars: slices.Sorted(maps.Keys(podSidecars(pod))),
 		})
 		if total > 0 && ready == total {
 			selected.readyPods++
@@ -262,19 +265,30 @@ func inventoryFromPods(pods []any) []core.InventoryItem {
 	for _, raw := range pods {
 		pod := mapValue(raw)
 		name := podName(pod)
-		statuses := map[string]map[string]any{}
-		for _, rawStatus := range sliceValue(mapValue(pod["status"])["containerStatuses"]) {
-			status := mapValue(rawStatus)
-			statuses[stringValue(status["name"])] = status
+		if name == "" {
+			continue
 		}
-		for _, container := range sliceValue(mapValue(pod["spec"])["containers"]) {
-			containerName := stringValue(mapValue(container)["name"])
-			if name != "" && containerName != "" {
+		spec, podStatus := mapValue(pod["spec"]), mapValue(pod["status"])
+		uid := stringValue(mapValue(pod["metadata"])["uid"])
+		completed := podPhase(pod) == "Succeeded"
+		for _, group := range []struct{ specKey, statusKey string }{
+			{"containers", "containerStatuses"}, {"initContainers", "initContainerStatuses"},
+		} {
+			statuses := map[string]map[string]any{}
+			for _, rawStatus := range sliceValue(podStatus[group.statusKey]) {
+				status := mapValue(rawStatus)
+				statuses[stringValue(status["name"])] = status
+			}
+			for _, rawContainer := range sliceValue(spec[group.specKey]) {
+				container := mapValue(rawContainer)
+				containerName := stringValue(container["name"])
+				if containerName == "" || (group.specKey == "initContainers" && !isNativeSidecar(container)) {
+					continue
+				}
 				status := statuses[containerName]
-				result = append(result, core.InventoryItem{Pod: name, Container: containerName,
-					PodUID:      stringValue(mapValue(pod["metadata"])["uid"]),
+				result = append(result, core.InventoryItem{
+					Pod: name, Container: containerName, PodUID: uid, Completed: completed,
 					ContainerID: stringValue(status["containerID"]), RestartCount: intValue(status["restartCount"]),
-					Completed: podPhase(pod) == "Succeeded",
 				})
 			}
 		}

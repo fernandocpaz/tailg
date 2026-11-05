@@ -145,12 +145,14 @@ func (m podPickerModel) View() string {
 		fmt.Sprintf("Selected: %d pods · pinned to these pod names", m.checkedCount()),
 		podMonitorSummary(m.monitorEnabled, m.monitorBusy, m.monitorLastScan, m.monitorError),
 		m.metricsSummary(),
-		"",
 	}
 	if len(m.rows) == 0 {
-		return strings.Join(append(lines, "No pods found in this namespace."), "\n")
+		return strings.Join(append(lines, "", "No pods found in this namespace."), "\n")
 	}
-	lines = append(lines, dimStyle.Render(fmt.Sprintf("%-31s %-53s %-7s %-12s %s", "APPLICATION", "POD", "READY", "PHASE", "STARTED")))
+	if sidecars := m.rows[m.index].pod.Sidecars; len(sidecars) > 0 {
+		lines = append(lines, "Sidecars: "+strings.Join(sidecars, ", "))
+	}
+	lines = append(lines, "", dimStyle.Render(fmt.Sprintf("%-31s %-53s %-7s %-12s %s", "APPLICATION", "POD", "READY", "PHASE", "STARTED")))
 	start := max(0, m.index-visiblePodRows/2)
 	start = min(start, max(0, len(m.rows)-visiblePodRows))
 	end := min(len(m.rows), start+visiblePodRows)

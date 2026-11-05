@@ -68,6 +68,7 @@ type PodChoice struct {
 	Ready     string
 	Phase     string
 	StartedAt time.Time
+	Sidecars  []string
 }
 
 type LogEvent struct {

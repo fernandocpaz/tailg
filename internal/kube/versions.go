@@ -16,6 +16,7 @@ type ImageVersion struct {
 	Tag       string
 	ImageID   string
 	Image     string
+	Sidecar   bool
 }
 
 type ImageVersionSnapshot struct {
@@ -38,9 +39,10 @@ func PodImageVersions(payload map[string]any) []ImageVersion {
 		workload, _ := appIdentity(pod)
 		spec := mapValue(pod["spec"])
 		status := mapValue(pod["status"])
-		result = appendImageVersions(result, podName, workload, "init", spec["initContainers"], containerImageIDs(status["initContainerStatuses"]))
-		result = appendImageVersions(result, podName, workload, "app", spec["containers"], containerImageIDs(status["containerStatuses"]))
-		result = appendImageVersions(result, podName, workload, "ephemeral", spec["ephemeralContainers"], containerImageIDs(status["ephemeralContainerStatuses"]))
+		sidecars := podSidecars(pod)
+		result = appendImageVersions(result, podName, workload, "init", spec["initContainers"], containerImageIDs(status["initContainerStatuses"]), sidecars)
+		result = appendImageVersions(result, podName, workload, "app", spec["containers"], containerImageIDs(status["containerStatuses"]), sidecars)
+		result = appendImageVersions(result, podName, workload, "ephemeral", spec["ephemeralContainers"], containerImageIDs(status["ephemeralContainerStatuses"]), nil)
 	}
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].Pod != result[j].Pod {
@@ -54,7 +56,7 @@ func PodImageVersions(payload map[string]any) []ImageVersion {
 	return result
 }
 
-func appendImageVersions(result []ImageVersion, podName, workload, containerType string, containers any, imageIDs map[string]string) []ImageVersion {
+func appendImageVersions(result []ImageVersion, podName, workload, containerType string, containers any, imageIDs map[string]string, sidecars map[string]bool) []ImageVersion {
 	for _, rawContainer := range sliceValue(containers) {
 		container := mapValue(rawContainer)
 		name := stringValue(container["name"])
@@ -67,6 +69,7 @@ func appendImageVersions(result []ImageVersion, podName, workload, containerType
 			Tag:       imageTag(image),
 			ImageID:   valueOrUnavailable(imageIDs[name]),
 			Image:     valueOrUnknown(image),
+			Sidecar:   sidecars[name],
 		})
 	}
 	return result
@@ -131,10 +134,14 @@ func ImageVersionsReport(payload map[string]any, namespace string) string {
 
 	rows := make([][]string, 0, len(versions))
 	for _, version := range versions {
-		rows = append(rows, []string{version.Pod, version.Container, version.Tag, version.ImageID, version.Image})
+		role := version.Type
+		if version.Sidecar {
+			role = "sidecar"
+		}
+		rows = append(rows, []string{version.Pod, version.Container, role, version.Tag, version.ImageID, version.Image})
 	}
 	report.WriteString("\n")
-	writeImageGrid(&report, []string{"POD", "CONTAINER", "TAG", "IMAGE ID", "IMAGE"}, rows)
+	writeImageGrid(&report, []string{"POD", "CONTAINER", "ROLE", "TAG", "IMAGE ID", "IMAGE"}, rows)
 	return report.String()
 }
 

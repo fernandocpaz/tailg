@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -161,6 +163,15 @@ func (m pickerModel) pickerScreenFooter(width int) []string {
 			limit = 1
 		}
 		footer = append(footer, pickerLimitedLines(detail, width, limit)...)
+		sidecars := map[string]bool{}
+		for _, pod := range app.PodChoices {
+			for _, name := range pod.Sidecars {
+				sidecars[name] = true
+			}
+		}
+		if len(sidecars) > 0 {
+			footer = append(footer, pickerLimitedLines("Sidecars: "+strings.Join(slices.Sorted(maps.Keys(sidecars)), ", "), width, 1)...)
+		}
 		if m.monitorEnabled {
 			footer = append(footer, pickerLimitedLines(m.metricsSummaryForApp(app), width, 1)...)
 		}
