@@ -13,6 +13,8 @@ import (
 	"github.com/fernandocpaz/tailg/internal/core"
 )
 
+const pickerSidecarColumnMinWidth = 70
+
 func (m pickerModel) pickerScreen() string {
 	width := m.width
 	if width <= 0 {
@@ -69,6 +71,14 @@ func (m pickerModel) pickerScreen() string {
 			rows[i].section = 1
 		}
 		values := pickerRowValues(app, now)
+		values["sidecars"] = "-"
+		if count := len(pickerAppSidecars(app)); count > 0 {
+			values["sidecars"] = fmt.Sprint(count)
+			if width < pickerSidecarColumnMinWidth {
+				badge := fmt.Sprintf(" [%d sc]", count)
+				values["name"] = truncatePickerCell(values["name"], columns[0].width-len(badge)) + badge
+			}
+		}
 		if m.monitorEnabled {
 			values["cpu"], values["memory"] = m.resourceCells(app)
 			cpuStyle, memStyle := m.resourceCellStyles(app)
@@ -163,13 +173,7 @@ func (m pickerModel) pickerScreenFooter(width int) []string {
 			limit = 1
 		}
 		footer = append(footer, pickerLimitedLines(detail, width, limit)...)
-		sidecars := map[string]bool{}
-		for _, pod := range app.PodChoices {
-			for _, name := range pod.Sidecars {
-				sidecars[name] = true
-			}
-		}
-		if len(sidecars) > 0 {
+		if sidecars := pickerAppSidecars(app); len(sidecars) > 0 {
 			footer = append(footer, pickerLimitedLines("Sidecars: "+strings.Join(slices.Sorted(maps.Keys(sidecars)), ", "), width, 1)...)
 		}
 		if m.monitorEnabled {
@@ -243,6 +247,7 @@ func pickerColumnsWithMetrics(width int, cronJob, withMetrics bool) []pickerColu
 			columns = append(columns, pickerColumn{id, title, size})
 		}
 	}
+	add(pickerSidecarColumnMinWidth, "sidecars", "SIDECARS", 8)
 	if cronJob {
 		columns[0].title = "CRONJOB"
 		schedule := 12
@@ -318,4 +323,14 @@ func pickerRowValues(app core.AppChoice, now time.Time) map[string]string {
 		values["active"], values["pods"], values["last"] = fmt.Sprint(job.Active), fmt.Sprint(len(app.Pods)), last
 	}
 	return values
+}
+
+func pickerAppSidecars(app core.AppChoice) map[string]bool {
+	sidecars := map[string]bool{}
+	for _, pod := range app.PodChoices {
+		for _, name := range pod.Sidecars {
+			sidecars[name] = true
+		}
+	}
+	return sidecars
 }

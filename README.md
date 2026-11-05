@@ -238,8 +238,10 @@ Columns adapt to the terminal width; the highlighted workload's summary appears
 above the footer. `PgUp`/`PgDn` move through the list and `Home`/`End` jump to
 the first/last row. The picker resizes with the terminal.
 
-The workload summary lists detected sidecars across its current pods. Press
-`P` and highlight a pod to see its sidecars. Tailg detects Kubernetes-native
+The application list shows the number of distinct detected sidecars per
+workload in **SIDECARS**, or as `[n sc]` in a narrow terminal. Press `P` to
+see sidecar names on each pod row, with a count where space is limited.
+Tailg detects Kubernetes-native
 sidecars (`initContainers` with `restartPolicy: Always`) and legacy Istio and
 Linkerd sidecars identified by injector annotations. Other regular containers
 remain available for logs under their container names.
