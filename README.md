@@ -237,6 +237,20 @@ shown when a CronJob is highlighted. Press `?` for scrollable keyboard help.
 Columns adapt to the terminal width; the highlighted workload's summary appears
 above the footer. `PgUp`/`PgDn` move through the list and `Home`/`End` jump to
 the first/last row. The picker resizes with the terminal.
+
+The workload summary lists detected sidecars across its current pods. Press
+`P` and highlight a pod to see its sidecars. Tailg detects Kubernetes-native
+sidecars (`initContainers` with `restartPolicy: Always`) and legacy Istio and
+Linkerd sidecars identified by injector annotations. Other regular containers
+remain available for logs under their container names.
+
+Native sidecars are included when opening logs. To read one sidecar's logs,
+use the existing `--container` filter with its name:
+
+```bash
+tailg pod/my-pod --namespace apollo --container '^linkerd-proxy$'
+```
+
 The picker also lists **all CronJobs**, including ones that have never run or
 whose old Jobs/pods have been removed. CronJobs have their own section below
 the newest 20 applications, with schedule, time zone, suspension state, active
@@ -738,7 +752,8 @@ heartbeat settings.
 ## Image versions
 
 `tailg --versions` prints the configured tag and the running image ID for every
-regular, init, and ephemeral container in the current namespace. The image ID is
+regular, init, and ephemeral container in the current namespace. The `ROLE`
+column identifies detected sidecars. The image ID is
 normalized to its immutable digest when the runtime provides one. Use
 `--namespace` or `--context` to select another namespace or cluster.
 

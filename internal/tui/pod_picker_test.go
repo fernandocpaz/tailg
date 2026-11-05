@@ -49,3 +49,19 @@ func TestPodPickerTogglesWholeAppAndCancels(t *testing.T) {
 		t.Fatal("Esc should return without pod selection")
 	}
 }
+
+func TestPickersShowDetectedSidecarsForHighlightedRows(t *testing.T) {
+	apps := []core.AppChoice{{Name: "api", PodChoices: []core.PodChoice{
+		{Name: "api-1", Sidecars: []string{"logger"}},
+		{Name: "api-2", Sidecars: []string{"istio-proxy", "logger"}},
+	}}}
+	picker := newPickerModel(apps, len(apps), "tkgs-qa", "apollo", nil)
+	picker.width, picker.height = 80, 24
+	if got := picker.View(); !strings.Contains(got, "Sidecars: istio-proxy, logger") {
+		t.Fatalf("workload summary missing distinct sidecars:\n%s", got)
+	}
+	pods := podPickerModel{rows: preparePodPickerRows(apps)}
+	if got := pods.View(); !strings.Contains(got, "Sidecars: logger") || strings.Contains(got, "istio-proxy") {
+		t.Fatalf("pod summary included the wrong sidecars:\n%s", got)
+	}
+}
