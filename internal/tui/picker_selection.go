@@ -276,6 +276,7 @@ func (m pickerModel) pickerSelectionView() string {
 	var rows []string
 	index, count := 0, 0
 	selected := ""
+	var selectedSidecars []string
 	healthReason := ""
 	controls := "↑↓ Move · Enter Choose · Esc Back · R Retry"
 	if state.loading {
@@ -329,9 +330,18 @@ func (m pickerModel) pickerSelectionView() string {
 		}
 		controls = "Space Mark · A App · Enter Logs · M Monitor · Esc Back"
 		for i, row := range child.rows {
-			label := row.pod.Name
+			appLabel := ""
 			if inner >= 70 {
-				label = pickerCell(row.app, 24) + " " + row.pod.Name
+				appLabel = pickerCell(row.app, 24) + " "
+			}
+			label := appLabel + row.pod.Name
+			if len(row.pod.Sidecars) > 0 {
+				width := inner - 6 - lipgloss.Width(appLabel)
+				suffix := fmt.Sprintf(" [%d sc]", len(row.pod.Sidecars))
+				if room := width - 16; room >= 20 {
+					suffix = truncatePickerCell(" · Sidecars: "+strings.Join(row.pod.Sidecars, ", "), room)
+				}
+				label = appLabel + compactPodLabel(row.pod.Name, width-lipgloss.Width(suffix)) + suffix
 			}
 			line := selectionRow(label, inner, i == index, child.checked[row.pod.Name])
 			if m.monitorEnabled {
@@ -344,6 +354,7 @@ func (m pickerModel) pickerSelectionView() string {
 		if count > 0 {
 			row := child.rows[index]
 			selected = row.app + " / " + row.pod.Name + " · " + valueOrDash(row.pod.Ready) + " · " + valueOrDash(row.pod.Phase)
+			selectedSidecars = row.pod.Sidecars
 			if m.monitorEnabled {
 				healthReason = m.monitorHealth[row.pod.Name].reason
 				selected += " · " + podMetricPreview(m.podMonitorState, row.pod.Name)
@@ -358,6 +369,9 @@ func (m pickerModel) pickerSelectionView() string {
 		footer = append(footer, pickerLimitedLines(healthReason, inner, 2)...)
 	}
 	footer = append(footer, pickerLimitedLines(selected, inner, 1)...)
+	if len(selectedSidecars) > 0 && height >= 16 {
+		footer = append(footer, pickerLimitedLines("Sidecars: "+strings.Join(selectedSidecars, ", "), inner, 1)...)
+	}
 	footer = append(footer, strings.Split(ansi.Wrap(controls, inner, ""), "\n")...)
 	// Reserve the border, headings and controls, then scroll around the cursor.
 	capacity := max(1, height-4-len(header)-len(footer))

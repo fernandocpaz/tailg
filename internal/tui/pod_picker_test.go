@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/fernandocpaz/tailg/internal/core"
 )
 
@@ -50,18 +51,41 @@ func TestPodPickerTogglesWholeAppAndCancels(t *testing.T) {
 	}
 }
 
-func TestPickersShowDetectedSidecarsForHighlightedRows(t *testing.T) {
-	apps := []core.AppChoice{{Name: "api", PodChoices: []core.PodChoice{
-		{Name: "api-1", Sidecars: []string{"logger"}},
-		{Name: "api-2", Sidecars: []string{"istio-proxy", "logger"}},
-	}}}
-	picker := newPickerModel(apps, len(apps), "tkgs-qa", "apollo", nil)
-	picker.width, picker.height = 80, 24
-	if got := picker.View(); !strings.Contains(got, "Sidecars: istio-proxy, logger") {
-		t.Fatalf("workload summary missing distinct sidecars:\n%s", got)
+func TestPickerShowsSidecarsOnUnhighlightedRows(t *testing.T) {
+	apps := []core.AppChoice{
+		{Name: "api", Pods: []string{"api-1"}},
+		{Name: "worker", PodChoices: []core.PodChoice{
+			{Name: "worker-1", Sidecars: []string{"logger"}},
+			{Name: "worker-2", Sidecars: []string{"istio-proxy", "logger"}},
+		}},
 	}
-	pods := podPickerModel{rows: preparePodPickerRows(apps)}
-	if got := pods.View(); !strings.Contains(got, "Sidecars: logger") || strings.Contains(got, "istio-proxy") {
-		t.Fatalf("pod summary included the wrong sidecars:\n%s", got)
+	for _, tc := range []struct {
+		name      string
+		width     int
+		workload  string
+		podLabels []string
+	}{
+		{"wide", 100, "worker 2", []string{"worker-1 · Sidecars: logger", "worker-2 · Sidecars: istio-proxy, logger"}},
+		{"narrow", 40, "worker [2 sc]", []string{"worker-1 [1 sc]", "worker-2 [2 sc]"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newPickerModel(apps, len(apps), "tkgs-qa", "apollo", nil)
+			m.width, m.height = tc.width, 24
+			view := ansi.Strip(m.View())
+			if !strings.Contains(strings.Join(strings.Fields(view), " "), tc.workload) {
+				t.Fatalf("workload row missing sidecar count:\n%s", view)
+			}
+			m = pickerTestKey(m, "p")
+			if m.selection == nil || m.selection.pods == nil {
+				t.Fatal("exact pod modal did not open")
+			}
+			view = ansi.Strip(m.View())
+			for _, label := range tc.podLabels {
+				if !strings.Contains(view, label) {
+					t.Errorf("pod row missing %q:\n%s", label, view)
+				}
+			}
+			assertPickerFits(t, m)
+		})
 	}
 }
