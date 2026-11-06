@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -42,6 +43,25 @@ func TestAppMonitorMenuAndDefault(t *testing.T) {
 	m, _ = enableAppMonitor(t, m)
 	if !strings.Contains(m.View(), "Monitor: ON · every 1m · scanning") {
 		t.Fatalf("scan status is missing: %s", m.View())
+	}
+}
+
+func TestAppMonitorStartsOnPickerLaunch(t *testing.T) {
+	m := newPickerModel([]core.AppChoice{{Name: "api", Pods: []string{"api-1"}}}, 1, "qa", "apollo", nil)
+	m.refreshContext = context.Background()
+	m.startMonitoring = true
+	commands := m.Init()().(tea.BatchMsg)
+	updated, cmd := m.Update(commands[len(commands)-1]())
+	m = updated.(pickerModel)
+	if m.monitorCancel != nil {
+		t.Cleanup(m.monitorCancel)
+	}
+	if cmd == nil || !m.monitorEnabled || !m.monitorBusy || !m.metricsBusy || len(m.deploymentInventory) != 1 {
+		t.Fatal("startup must enable log scanning, resource metrics, and deployment monitoring")
+	}
+	updated, _ = m.Update(monitorKey('m'))
+	if updated.(pickerModel).monitorEnabled {
+		t.Fatal("M must turn off monitoring started at launch")
 	}
 }
 

@@ -216,7 +216,7 @@ tailg example-app default --buffer-lines 100000
 tailg
 tailg 'example-*' default --tile-windows
 tailg 'web-api,job-worker' default --split-panes
-tailg --namespace default
+tailg -n apollo
 tailg --status --namespace default
 tailg --status 20 --namespace default
 tailg --versions
@@ -228,10 +228,12 @@ tailg issues example-app default
 tailg diagnose example-app default --output ndjson
 ```
 
-Running `tailg` with no target opens the interactive application picker in the
-current Kubernetes namespace. The picker uses the full terminal screen and
-restores the shell when you leave. Context (`C`) and namespace (`N`) stay at
-the top; **Inspect** groups Changes (`H`) and Events (`E`), beside **Watch**
+Running `tailg` opens the interactive application picker in the current
+Kubernetes namespace with monitoring off. Run `tailg -n apollo` or
+`tailg --namespace apollo` to start with monitoring enabled in `apollo`.
+The picker uses the full terminal screen and restores the shell when you
+leave. Context (`C`) and namespace (`N`) stay at the top. **Inspect** groups
+Changes (`H`) and Events (`E`), beside **Watch**
 and the monitor (`M`). Row actions stay at the bottom, with Run now (`X`)
 shown when a CronJob is highlighted. Press `?` for scrollable keyboard help.
 Columns adapt to the terminal width; the highlighted workload's summary appears
@@ -316,8 +318,8 @@ requests in flight. Permission failures and collection errors show as incomplete
 sources, with full errors available in Details. Successful sources remain usable;
 failed lists retain their previous data and never count as resource deletions.
 
-Press `M` in this main application list to toggle log monitoring (off by
-default). When monitoring is on, tailg also refreshes CPU and memory every
+Press `M` in the main application list to toggle log monitoring. When
+monitoring is on, tailg also refreshes CPU and memory every
 **15 seconds** using the namespace-scoped Kubernetes Metrics API
 (`metrics.k8s.io`). On terminals at least 120 columns wide, normal workload
 rows include **CPU** (millicores) and **MEM** (MiB/GiB), aggregated across its
@@ -334,8 +336,7 @@ unavailable (`—`), never as zero consumption or an application health issue.
 The monitor still functions when metrics cannot be read. Monitoring off means
 no resource polling.
 
-Press `M` in this main application list to toggle log monitoring (off by
-default). It scans all containers in every pod belonging to the displayed
+Monitoring scans all containers in every pod belonging to the displayed
 applications immediately, then polls the previous minute of logs every 60
 seconds. The menu always shows `M Monitor`, and the status line shows
 `Monitor: OFF` or `Monitor: ON · every 1m`, scan progress, the last scan time,
@@ -745,11 +746,10 @@ Use `--no-live-filter` for plain streaming output.
 
 ## Windows Terminal layouts
 
-On Windows, `tailg --namespace default` opens one tab per pod. Add
-`--tile-windows` to create and arrange separate terminal windows, or
-`--split-panes` on a multi-pod target to create one pane per pod. Child sessions
-preserve context, container selection, time window, filters, formatting, and
-heartbeat settings.
+On Windows, use `tailg --namespace default --tile-windows` to create and
+arrange separate terminal windows, or use `--split-panes` on a multi-pod
+target to create one pane per pod. Child sessions preserve context, container
+selection, time window, filters, formatting, and heartbeat settings.
 
 ## Image versions
 
