@@ -197,9 +197,10 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 	}
 
 	pickerMode := usesAppPicker(options)
+	startMonitoring := pickerMode && options.Namespace != ""
 	decorated, _ := terminalPresentation(stdout)
 	playIntro := pickerMode && !options.NoIntro && interactive(stdin) && decorated
-	namespaceMode := options.Target == "" && options.Namespace != ""
+	namespaceMode := !pickerMode && options.Target == "" && options.Namespace != ""
 	pickerLoop := pickerMode && options.LiveFilter && !options.NoFollow && !options.SplitPanes && !options.TileWindows
 	var usage pickerUsage
 	if pickerMode {
@@ -207,8 +208,8 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 	}
 	effectiveNamespace := options.Namespace
 	if pickerMode {
-		effectiveNamespace = contextNamespace
-		runner.Namespace = effectiveNamespace
+		effectiveNamespace = valueOr(effectiveNamespace, contextNamespace)
+		runner = kube.NewRunner(effectiveNamespace, effectiveContext)
 	}
 	var markedApps []string
 	var pickerNotice string
@@ -220,8 +221,9 @@ pickAgain:
 	if !namespaceMode {
 		if pickerMode {
 			apps, appsErr := runner.Apps(ctx)
-			selection, selectErr := tui.PickApp(apps, effectiveContext, effectiveNamespace, appsErr, markedApps, tui.PickerUsage{Contexts: usage.Contexts, Namespaces: usage.Namespaces}, updates, playIntro, pickerNotice)
+			selection, selectErr := tui.PickApp(apps, effectiveContext, effectiveNamespace, appsErr, markedApps, tui.PickerUsage{Contexts: usage.Contexts, Namespaces: usage.Namespaces}, updates, playIntro, startMonitoring, pickerNotice)
 			playIntro = false
+			startMonitoring = false
 			pickerNotice = ""
 			if selectErr != nil {
 				fmt.Fprintln(stderr, selectErr)
@@ -548,7 +550,9 @@ func openStatusErrorLogs(ctx context.Context, base Options, namespace string, se
 }
 
 func usesAppPicker(options Options) bool {
-	return options.Target == "" && options.Namespace == ""
+	return options.Target == "" && (options.Namespace == "" ||
+		(options.LiveFilter && !options.NoFollow && !options.SplitPanes && !options.TileWindows &&
+			!options.DumpRequested && !options.DeploymentDump))
 }
 
 func selectedInventory(ctx context.Context, runner kube.Runner, pods, selectors []string) ([]core.InventoryItem, error) {

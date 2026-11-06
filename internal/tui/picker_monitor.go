@@ -11,6 +11,18 @@ import (
 	"github.com/fernandocpaz/tailg/internal/kube"
 )
 
+type pickerStartMonitorMsg struct{}
+
+func (m *pickerModel) toggleAppMonitor() tea.Cmd {
+	m.monitorApps = nil
+	if m.monitorEnabled {
+		m.clearDeploymentNotifications()
+	} else {
+		m.beginDeploymentNotifications()
+	}
+	return m.podMonitorState.toggle(preparePodPickerRows(m.apps), m.kubeContext, m.namespace)
+}
+
 // Both pickers share polling, cancellation, and stale-message handling.
 type podMonitorState struct {
 	monitorEnabled    bool

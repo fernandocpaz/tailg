@@ -23,8 +23,8 @@ func NewCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) 
 	var refreshSeconds int
 	command := &cobra.Command{
 		Use: "tailg [target] [namespace]", Short: "Human-friendly Kubernetes log tailer built in Go", SilenceUsage: true, SilenceErrors: true, Args: cobra.MaximumNArgs(2),
-		Long:    "tailg follows Kubernetes logs across pods. Run it with no target to open the application picker; explicit targets and wildcard patterns remain supported. It provides synchronized live filtering, heartbeat diagnostics, resource inspection, status recovery monitoring, and Windows Terminal layouts.",
-		Example: strings.Join([]string{"tailg", "tailg example-app default", "tailg 'example-*' default --tile-windows", "tailg example-app default --since 4d", "tailg --status --namespace default", "tailg --status 20 --namespace default", "tailg --versions", "tailg --versions --context tkgs-qa --context tkgs-dev", "tailg --versions --namespace apollo --namespace emr2train", "tailg --network --namespace apollo --context tkgs-qa"}, "\n"),
+		Long:    "tailg follows Kubernetes logs across pods. Run it with no target to open the application picker. Supply -n or --namespace to open the picker with monitoring enabled for that namespace. It provides synchronized live filtering, heartbeat diagnostics, resource inspection, status recovery monitoring, and Windows Terminal layouts.",
+		Example: strings.Join([]string{"tailg", "tailg -n apollo", "tailg example-app default", "tailg 'example-*' default --tile-windows", "tailg example-app default --since 4d", "tailg --status --namespace default", "tailg --status 20 --namespace default", "tailg --versions", "tailg --versions --context tkgs-qa --context tkgs-dev", "tailg --versions --namespace apollo --namespace emr2train", "tailg --network --namespace apollo --context tkgs-qa"}, "\n"),
 		Version: BuildDescription(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !options.Network && (cmd.Flags().Changed("output") || cmd.Flags().Changed("max-bytes")) {
@@ -101,7 +101,7 @@ func NewCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) 
 		},
 	}
 	flags := command.Flags()
-	flags.StringArrayVarP(&namespaces, "namespace", "n", nil, "Kubernetes namespace; repeat with --versions to compare workloads in one context")
+	flags.StringArrayVarP(&namespaces, "namespace", "n", nil, "Kubernetes namespace; starts interactive monitoring when no target is supplied; repeat with --versions to compare workloads")
 	flags.StringArrayVar(&contexts, "context", nil, "kubectl context name; repeat with --versions to compare environments")
 	flags.BoolVar(&options.Status, "status", false, "scan health and recent errors; optional positional argument is lookback minutes (default 120)")
 	flags.BoolVar(&options.Versions, "versions", false, "list pod image versions; always compare running Image IDs across contexts or namespaces")

@@ -20,7 +20,6 @@ func TestChildArgsPreserveDetailHeartbeatAndFilter(t *testing.T) {
 	}
 }
 
-
 func TestUsesAppPickerByDefault(t *testing.T) {
 	if !usesAppPicker(Options{}) {
 		t.Fatal("bare tailg should use the application picker")
@@ -28,8 +27,23 @@ func TestUsesAppPickerByDefault(t *testing.T) {
 	if usesAppPicker(Options{Target: "api"}) {
 		t.Fatal("explicit target should not use the application picker")
 	}
-	if usesAppPicker(Options{Namespace: "default"}) {
-		t.Fatal("--namespace mode should keep its existing behavior")
+	if !usesAppPicker(Options{Namespace: "apollo", LiveFilter: true}) {
+		t.Fatal("a namespace-only invocation should open the application picker")
+	}
+	if usesAppPicker(Options{Target: "api", Namespace: "apollo", LiveFilter: true}) {
+		t.Fatal("a namespace and explicit target should open the target")
+	}
+	for _, options := range []Options{
+		{Namespace: "apollo"},
+		{Namespace: "apollo", LiveFilter: true, NoFollow: true},
+		{Namespace: "apollo", LiveFilter: true, SplitPanes: true},
+		{Namespace: "apollo", LiveFilter: true, TileWindows: true},
+		{Namespace: "apollo", LiveFilter: true, DumpRequested: true},
+		{Namespace: "apollo", LiveFilter: true, DeploymentDump: true},
+	} {
+		if usesAppPicker(options) {
+			t.Fatalf("namespace with an explicit mode opened the picker: %+v", options)
+		}
 	}
 }
 

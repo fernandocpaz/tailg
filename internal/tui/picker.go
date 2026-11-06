@@ -38,6 +38,7 @@ type pickerModel struct {
 	helpVisible       bool
 	introActive       bool
 	introFrame        int
+	startMonitoring   bool
 	helpScroll        int
 	confirmRun        *core.AppChoice
 	confirmRunFocused bool
@@ -75,21 +76,20 @@ type PickerUsage struct {
 	Namespaces map[string]map[string]ChoiceUsage
 }
 
-func PickApp(apps []core.AppChoice, kubeContext, namespace string, loadErr error, previous []string, usage PickerUsage, updates *update.Client, animateIntro bool, notice ...string) (PickerResult, error) {
+func PickApp(apps []core.AppChoice, kubeContext, namespace string, loadErr error, previous []string, usage PickerUsage, updates *update.Client, animateIntro, startMonitoring bool, notice string) (PickerResult, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	prepared, total := preparePickerApps(apps)
 	model := newPickerModel(prepared, total, kubeContext, namespace, previous)
 	model.allApps = apps
 	model.introActive = animateIntro
+	model.startMonitoring = startMonitoring
 	model.usage = usage
 	model.updates.client = updates
 	model.refreshContext = ctx
 	model.activity.busy = true
 	model.activity.request = 1
-	if len(notice) > 0 {
-		model.note = notice[0]
-	}
+	model.note = notice
 	if loadErr != nil {
 		model.loadError = pickerErrorSummary(loadErr)
 	}
@@ -130,6 +130,9 @@ func (m pickerModel) Init() tea.Cmd {
 	if m.introActive {
 		commands = append(commands, startupIntroCmd(0))
 	}
+	if m.startMonitoring {
+		commands = append(commands, func() tea.Msg { return pickerStartMonitorMsg{} })
+	}
 	return tea.Batch(commands...)
 }
 func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -164,6 +167,12 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	switch msg := message.(type) {
+	case pickerStartMonitorMsg:
+		if !m.monitorEnabled {
+			cmd := m.toggleAppMonitor()
+			return m, cmd
+		}
+		return m, nil
 	case startupIntroTick:
 		if !m.introActive || msg.frame != m.introFrame {
 			return m, nil
@@ -293,13 +302,8 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.openPickerSelection("pods")
 		case keyMatches(key, pickerKeys.monitor):
-			m.monitorApps = nil
-			if m.monitorEnabled {
-				m.clearDeploymentNotifications()
-			} else {
-				m.beginDeploymentNotifications()
-			}
-			return m, m.podMonitorState.toggle(preparePodPickerRows(m.apps), m.kubeContext, m.namespace)
+			cmd := m.toggleAppMonitor()
+			return m, cmd
 		case keyMatches(key, pickerKeys.mark):
 			if len(m.apps) > 0 {
 				if m.apps[m.index].CronJob != nil && len(m.apps[m.index].Pods) == 0 {
