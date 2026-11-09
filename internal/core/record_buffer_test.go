@@ -1,9 +1,67 @@
 package core
 
 import (
+	"slices"
 	"testing"
 	"time"
 )
+
+func TestFilterStateWrappedBufferKeepsSelectedErrorBlock(t *testing.T) {
+	state := NewFilterState(5)
+	state.SetFilter("level:error")
+	for i := 0; i < 30; i++ {
+		state.Append("[10:00:00 INF] earlier log")
+	}
+	messages := []string{"[10:00:01 ERR] failure", "   at First()", "   at Second()", "[10:00:02 INF] next"}
+	if added := state.Append(messages...); added != 1 {
+		t.Fatalf("visible arrivals = %d, want 1", added)
+	}
+	selected, ok := state.SelectedRecord(0)
+	if !ok || selected.Text != messages[0] || state.MatchCount() != 1 || state.MatchIndex() != 0 {
+		t.Fatalf("filtered selection = %#v, found=%t, matches=%d, index=%d", selected, ok, state.MatchCount(), state.MatchIndex())
+	}
+	block := state.SelectedBlock(selected)
+	if len(block) != 3 || block[0].Message != messages[0] || block[2].Message != messages[2] {
+		t.Fatalf("selected block lost a line at wraparound: %#v", block)
+	}
+	state.SetFilter("")
+	if got := state.Lines(); len(got) != 5 || !slices.Equal(got[1:], messages) {
+		t.Fatalf("clearing filter did not restore the live window: %v", got)
+	}
+}
+
+func TestFilterStateEvictsInterleavedLiveRowsWhileKeepingPinnedHistory(t *testing.T) {
+	state := NewFilterState(3)
+	record := func(text string, seconds int64) LogRecord {
+		return LogRecord{Text: text, Event: LogEvent{Message: text, ObservedAt: time.Unix(seconds, 0)}}
+	}
+	state.SetFilter("needle")
+	state.AppendRecords(record("needle early", 5), record("live context", 15), record("needle late", 25))
+	history := []LogRecord{record("old context", 10), record("middle context", 20), record("needle history", 30)}
+	if !state.SetSearchRecords("needle", history) {
+		t.Fatal("search result rejected")
+	}
+	state.AppendRecords(record("needle new", 35), record("new context", 40))
+	if want := []string{"old context", "middle context", "needle late", "needle history", "needle new", "new context"}; !slices.Equal(state.Lines(), want) || state.MatchIndex() != 2 || state.MatchCount() != 3 {
+		t.Fatalf("search view = %v, first match = %d, matches = %d", state.Lines(), state.MatchIndex(), state.MatchCount())
+	}
+	state.SetMatchesOnly(true)
+	state.AppendRecords(record("needle latest", 50), record("latest context", 55))
+	if want := []string{"needle history", "needle latest"}; !slices.Equal(state.Lines(), want) || state.MatchIndex() != 0 || state.MatchCount() != 2 {
+		t.Fatalf("matches-only view = %v, first match = %d, matches = %d", state.Lines(), state.MatchIndex(), state.MatchCount())
+	}
+	pinned, ok := state.SelectedRecord(0)
+	if !ok || !state.SetSearchRecords("needle", history) {
+		t.Fatal("pinned match missing or repeated search rejected")
+	}
+	if again, ok := state.SelectedRecord(0); !ok || again.ID != pinned.ID {
+		t.Fatalf("repeated search changed pinned identity: got %#v, want ID %d", again, pinned.ID)
+	}
+	state.SetFilter("")
+	if want := []string{"new context", "needle latest", "latest context"}; !slices.Equal(state.Lines(), want) {
+		t.Fatalf("cleared search view = %v, want %v", state.Lines(), want)
+	}
+}
 
 func TestFilterStateStructuredRecordsAndLiveBounds(t *testing.T) {
 	state := NewFilterState(2)

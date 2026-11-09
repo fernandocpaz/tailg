@@ -11,28 +11,27 @@ var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 func StripANSI(value string) string { return ansiPattern.ReplaceAllString(value, "") }
 
-// FilterState owns the bounded live log buffer and, while a complete-history
-// search is active, a pinned history prefix followed by the bounded live tail.
+// FilterState owns the bounded live log buffer and any pinned history from a
+// complete-history search.
 // Records are kept here instead of just their rendered text so filters can
 // inspect properties that are not displayed in the TUI.
 type FilterState struct {
 	mu       sync.RWMutex
 	maxLines int
 
-	allRecords     []LogRecord
-	visibleRecords []LogRecord
+	allRecords     recordQueue
+	visibleRecords recordList
 
 	filterText  string
 	filterQuery *LogQuery
 	filterErr   error
 
-	// externalRecords is non-nil while a complete-history result is active.
-	externalFilter  string
-	externalRecords []LogRecord
-	externalHistory map[uint64]struct{}
+	// externalHistory identifies pinned rows and is non-nil during a search result.
+	externalHistory   map[uint64]struct{}
+	externalRecords   recordList
+	externalLiveCount int
 
 	matchesOnly bool
-	matchIndex  int
 	matchCount  int
 
 	// nextLiveID is the ID assigned to the next row appended to the live
@@ -43,7 +42,7 @@ type FilterState struct {
 }
 
 func NewFilterState(maxLines int) *FilterState {
-	return &FilterState{maxLines: maxLines, matchIndex: -1, nextLiveID: 1}
+	return &FilterState{maxLines: maxLines, nextLiveID: 1}
 }
 
 // Append is the compatibility API for callers which already have rendered
@@ -61,7 +60,8 @@ func (s *FilterState) Append(lines ...string) int {
 }
 
 // AppendRecords appends live rows and assigns each one a monotonic local ID.
-// The caller's records are copied before IDs are assigned.
+// The return count includes visible arrivals even if later rows in the same
+// batch evict them. The caller's records are left intact.
 func (s *FilterState) AppendRecords(records ...LogRecord) int {
 	if len(records) == 0 {
 		return 0
@@ -69,44 +69,26 @@ func (s *FilterState) AppendRecords(records ...LogRecord) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	appended := make([]LogRecord, len(records))
-	for i, record := range records {
-		record.ID = s.allocateIDLocked()
-		appended[i] = record
-	}
-	s.allRecords = append(s.allRecords, appended...)
-	trimmedLive := s.trimLiveLocked()
-
 	addedVisible := 0
-	if s.externalRecords != nil {
-		s.externalRecords = append(s.externalRecords, appended...)
-		trimmedExternal := s.trimExternalLocked()
-		if trimmedExternal || trimmedLive {
-			for _, record := range appended {
-				if s.filterErr == nil && ((s.externalRecords != nil && !s.matchesOnly) || s.recordVisibleLocked(record)) {
-					addedVisible++
-				}
-			}
-			s.refreshLocked()
-		} else {
-			for _, record := range appended {
-				if s.appendVisibleLocked(record) {
-					addedVisible++
-				}
+	for _, record := range records {
+		record.ID = s.allocateIDLocked()
+		if s.maxLines > 0 && s.allRecords.count == s.maxLines {
+			oldest := s.allRecords.pop()
+			if s.externalHistory == nil {
+				s.removeVisibleLocked(oldest, false)
 			}
 		}
-	} else if trimmedLive {
-		s.refreshLocked()
-		for _, record := range appended {
-			if s.recordVisibleLocked(record) {
-				addedVisible++
+		s.allRecords.push(record)
+
+		if s.externalHistory != nil {
+			if s.maxLines > 0 && s.externalLiveCount == s.maxLines {
+				s.evictExternalLocked()
 			}
+			s.externalRecords.tail.push(record)
+			s.externalLiveCount++
 		}
-	} else {
-		for _, record := range appended {
-			if s.appendVisibleLocked(record) {
-				addedVisible++
-			}
+		if s.appendVisibleLocked(record, false) {
+			addedVisible++
 		}
 	}
 	return addedVisible
@@ -117,10 +99,13 @@ func (s *FilterState) SetFilter(text string) {
 	defer s.mu.Unlock()
 
 	s.filterText = text
-	s.filterQuery, s.filterErr = CompileLogQuery(text)
-	s.externalFilter = ""
-	s.externalRecords = nil
+	s.filterQuery, s.filterErr = nil, nil
+	if strings.TrimSpace(text) != "" {
+		s.filterQuery, s.filterErr = CompileLogQuery(text)
+	}
+	s.externalRecords = recordList{}
 	s.externalHistory = nil
+	s.externalLiveCount = 0
 	s.searchWatermark = s.nextLiveID
 	s.refreshLocked()
 }
@@ -157,9 +142,9 @@ func (s *FilterState) SetSearchRecords(text string, records []LogRecord) bool {
 		id   uint64
 		late bool
 	}
-	candidates := make(map[recordOccurrence][]candidate, len(s.allRecords))
-	candidateIDs := make(map[recordOccurrence]map[uint64]struct{}, len(s.allRecords))
-	usedCandidateIDs := make(map[uint64]struct{}, len(s.allRecords))
+	candidates := make(map[recordOccurrence][]candidate, s.allRecords.count)
+	candidateIDs := make(map[recordOccurrence]map[uint64]struct{}, s.allRecords.count)
+	usedCandidateIDs := make(map[uint64]struct{}, s.allRecords.count)
 	addCandidate := func(record LogRecord, late bool) {
 		if record.ID == 0 {
 			return
@@ -189,19 +174,19 @@ func (s *FilterState) SetSearchRecords(text string, records []LogRecord) bool {
 		usedCandidateIDs[record.ID] = struct{}{}
 		candidates[key] = append(candidates[key], candidate{record.ID, late})
 	}
-	for _, record := range s.allRecords {
+	for _, record := range s.allRecords.view(nil).All {
 		if record.ID < s.searchWatermark {
 			addCandidate(record, false)
 		}
 	}
-	if s.externalRecords != nil {
-		for _, record := range s.externalRecords {
+	if s.externalHistory != nil {
+		for _, record := range s.externalRecords.view().All {
 			if _, ok := s.externalHistory[record.ID]; ok {
 				addCandidate(record, false)
 			}
 		}
 	}
-	for _, record := range s.allRecords {
+	for _, record := range s.allRecords.view(nil).All {
 		if record.ID >= s.searchWatermark {
 			addCandidate(record, true)
 		}
@@ -236,7 +221,7 @@ func (s *FilterState) SetSearchRecords(text string, records []LogRecord) bool {
 	// occurrence for each matching late live row; an excess late occurrence is
 	// appended and remains visible. This is deliberately a full occurrence key,
 	// not a rendered-text key.
-	for _, record := range s.allRecords {
+	for _, record := range s.allRecords.view(nil).All {
 		if record.ID < s.searchWatermark {
 			continue
 		}
@@ -268,9 +253,21 @@ func (s *FilterState) SetSearchRecords(text string, records []LogRecord) bool {
 		})
 	}
 
-	s.externalFilter = normalized
-	s.externalRecords = merged
+	// Install the already contiguous history prefix separately. Any pinned rows
+	// interleaved with live arrivals remain in the queue until eviction reaches them.
+	prefixEnd := 0
+	for _, record := range merged {
+		if _, pinned := newHistory[record.ID]; !pinned {
+			break
+		}
+		prefixEnd++
+	}
+	s.externalRecords = recordList{
+		prefix: merged[:prefixEnd:prefixEnd],
+		tail:   recordQueue{rows: merged[prefixEnd:cap(merged)], count: len(merged) - prefixEnd},
+	}
 	s.externalHistory = newHistory
+	s.externalLiveCount = len(merged) - len(newHistory)
 	s.refreshLocked()
 	return true
 }
@@ -338,7 +335,14 @@ func (s *FilterState) Highlight() string {
 func (s *FilterState) MatchIndex() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.matchIndex
+	if s.matchCount > 0 {
+		for index, record := range s.visibleRecords.view().All {
+			if s.queryMatchesLocked(record) {
+				return index
+			}
+		}
+	}
+	return -1
 }
 
 func (s *FilterState) MatchCount() int {
@@ -347,27 +351,27 @@ func (s *FilterState) MatchCount() int {
 	return s.matchCount
 }
 
-// Records returns the currently visible immutable record snapshots.
 // RenderRecords holds a read lock while a synchronous TUI frame is constructed,
-// avoiding a full log-slice clone for each redraw. The callback must not mutate
-// or retain the records, or invoke methods that lock this FilterState.
-func (s *FilterState) RenderRecords(render func([]LogRecord) []string) []string {
+// avoiding a copy of the ring. The callback must not mutate or retain the view,
+// or invoke methods that lock this FilterState.
+func (s *FilterState) RenderRecords(render func(LogRecordView) []string) []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return render(s.visibleRecords)
+	return render(s.visibleRecords.view())
 }
 
 // VisibleCount returns the displayed row count without allocating a []string.
 func (s *FilterState) VisibleCount() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return len(s.visibleRecords)
+	return len(s.visibleRecords.prefix) + s.visibleRecords.tail.count
 }
 
+// Records returns a snapshot of the currently visible records.
 func (s *FilterState) Records() []LogRecord {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return cloneRecords(s.visibleRecords)
+	return s.visibleRecords.view().clone()
 }
 
 // AllRecords returns the latest bounded live records, independent of filter
@@ -375,7 +379,7 @@ func (s *FilterState) Records() []LogRecord {
 func (s *FilterState) AllRecords() []LogRecord {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return cloneRecords(s.allRecords)
+	return s.allRecords.view(nil).clone()
 }
 
 // SelectedBlock uses unfiltered history/live records so matches-only mode does
@@ -383,12 +387,9 @@ func (s *FilterState) AllRecords() []LogRecord {
 func (s *FilterState) SelectedBlock(record LogRecord) []LogEvent {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	source := s.allRecords
-	if s.externalRecords != nil {
-		source = s.externalRecords
-	}
-	events := make([]LogEvent, 0, len(source))
-	for _, candidate := range source {
+	source := s.sourceLocked()
+	events := make([]LogEvent, 0, source.Len())
+	for _, candidate := range source.All {
 		events = append(events, candidate.Event)
 	}
 	if block, ok := LogBlock(events, record.Event); ok {
@@ -400,19 +401,19 @@ func (s *FilterState) SelectedBlock(record LogRecord) []LogEvent {
 func (s *FilterState) Lines() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return recordTexts(s.visibleRecords)
+	return s.visibleRecords.view().texts()
 }
 
 func (s *FilterState) AllLines() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return recordTexts(s.allRecords)
+	return s.allRecords.view(nil).texts()
 }
 
 func (s *FilterState) BufferUsage() (int, int) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return len(s.allRecords), s.maxLines
+	return s.allRecords.count, s.maxLines
 }
 
 func (s *FilterState) Selected(index int) string {
@@ -426,106 +427,72 @@ func (s *FilterState) Selected(index int) string {
 func (s *FilterState) SelectedRecord(index int) (LogRecord, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if index < 0 || index >= len(s.visibleRecords) {
+	visible := s.visibleRecords.view()
+	if index < 0 || index >= visible.Len() {
 		return LogRecord{}, false
 	}
-	return s.visibleRecords[index], true
+	return visible.at(index), true
 }
 
-func (s *FilterState) trimLiveLocked() bool {
-	if s.maxLines <= 0 || len(s.allRecords) <= s.maxLines {
-		return false
+func (s *FilterState) sourceLocked() LogRecordView {
+	if s.externalHistory != nil {
+		return s.externalRecords.view()
 	}
-	s.allRecords = append([]LogRecord(nil), s.allRecords[len(s.allRecords)-s.maxLines:]...)
-	return true
+	return s.allRecords.view(nil)
 }
 
-func (s *FilterState) trimExternalLocked() bool {
-	if s.maxLines <= 0 {
-		return false
-	}
-	liveCount := 0
-	for _, record := range s.externalRecords {
-		if _, pinned := s.externalHistory[record.ID]; !pinned {
-			liveCount++
+// History and in-flight live arrivals can be interleaved by timestamp. Move
+// pinned rows at the front to a permanent prefix until the oldest live row
+// can be evicted. Each pinned row is moved at most once per search result.
+func (s *FilterState) evictExternalLocked() {
+	for {
+		oldest := s.externalRecords.tail.pop()
+		_, pinned := s.externalHistory[oldest.ID]
+		s.removeVisibleLocked(oldest, pinned)
+		if !pinned {
+			s.externalLiveCount--
+			return
 		}
+		s.externalRecords.prefix = append(s.externalRecords.prefix, oldest)
 	}
-	if liveCount <= s.maxLines {
-		return false
+}
+
+func (s *FilterState) removeVisibleLocked(record LogRecord, pinned bool) {
+	tail := &s.visibleRecords.tail
+	if tail.count == 0 || tail.rows[tail.head].ID != record.ID {
+		return
 	}
-	keepFrom := liveCount - s.maxLines
-	bounded := make([]LogRecord, 0, len(s.externalRecords)-keepFrom)
-	for _, record := range s.externalRecords {
-		if _, pinned := s.externalHistory[record.ID]; pinned {
-			bounded = append(bounded, record)
-			continue
-		}
-		if keepFrom > 0 {
-			keepFrom--
-			continue
-		}
-		bounded = append(bounded, record)
+	tail.pop()
+	if pinned {
+		s.visibleRecords.prefix = append(s.visibleRecords.prefix, record)
+	} else if s.filterQuery != nil && s.queryMatchesLocked(record) {
+		s.matchCount--
 	}
-	s.externalRecords = bounded
-	return true
 }
 
 func (s *FilterState) refreshLocked() {
-	source := s.allRecords
-	if s.externalRecords != nil {
-		source = s.externalRecords
-	}
-	needle := normalizeFilter(s.filterText)
-	s.visibleRecords = s.visibleRecords[:0]
-	s.matchIndex = -1
+	source := s.sourceLocked()
+	s.visibleRecords.reset()
 	s.matchCount = 0
-	for _, record := range source {
-		matched := s.queryMatchesLocked(record)
-		if matched && needle != "" {
-			s.matchCount++
-			if s.matchIndex < 0 && needle != "" {
-				s.matchIndex = len(s.visibleRecords)
-			}
-		}
-		if s.filterErr != nil {
-			continue
-		}
-		if s.externalRecords != nil && !s.matchesOnly {
-			s.visibleRecords = append(s.visibleRecords, record)
-		} else if matched {
-			s.visibleRecords = append(s.visibleRecords, record)
-		}
-	}
-	if needle == "" || s.filterErr != nil {
-		s.matchIndex = -1
+	for index, record := range source.All {
+		s.appendVisibleLocked(record, index < len(source[0]))
 	}
 }
 
-func (s *FilterState) appendVisibleLocked(record LogRecord) bool {
-	needle := normalizeFilter(s.filterText)
+func (s *FilterState) appendVisibleLocked(record LogRecord, pinned bool) bool {
 	matched := s.queryMatchesLocked(record)
-	if matched && needle != "" {
+	if !matched && (s.filterErr != nil || s.externalHistory == nil || s.matchesOnly) {
+		return false
+	}
+	if matched && s.filterQuery != nil {
 		s.matchCount++
 	}
-	if s.filterErr != nil {
-		return false
+	if pinned {
+		s.visibleRecords.prefix = append(s.visibleRecords.prefix, record)
+	} else {
+		s.visibleRecords.tail.push(record)
 	}
-	visible := matched
-	if s.externalRecords != nil && !s.matchesOnly {
-		visible = true
-	}
-	if !visible {
-		return false
-	}
-	if s.matchIndex < 0 && matched && needle != "" {
-		s.matchIndex = len(s.visibleRecords)
-	}
-	s.visibleRecords = append(s.visibleRecords, record)
 	return true
-}
-
-func (s *FilterState) recordVisibleLocked(record LogRecord) bool {
-	return s.queryMatchesLocked(record)
 }
 
 func (s *FilterState) queryMatchesLocked(record LogRecord) bool {

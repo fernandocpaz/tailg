@@ -66,8 +66,8 @@ func TestTimelineAndRetainedErrorsRefreshFadingAtMidnight(t *testing.T) {
 	t.Cleanup(func() { lipgloss.SetColorProfile(profile) })
 	now := time.Date(2026, 10, 15, 23, 59, 0, 0, time.UTC)
 	record := timelineTestRecord("[23:59:00 ERR] midnight failure", now)
-	today := strings.Join(renderLogTimelineRows([]core.LogRecord{record}, "", -1, 5, 100, false, true, true, now), "\n")
-	tomorrow := strings.Join(renderLogTimelineRows([]core.LogRecord{record}, "", -1, 5, 100, false, true, true, now.Add(2*time.Minute)), "\n")
+	today := strings.Join(renderLogTimelineRows(core.LogRecordView{{record}}, "", -1, 5, 100, false, true, true, now), "\n")
+	tomorrow := strings.Join(renderLogTimelineRows(core.LogRecordView{{record}}, "", -1, 5, 100, false, true, true, now.Add(2*time.Minute)), "\n")
 	if strings.Contains(today, errorLineStyle.Faint(true).Render("midnight failure")) || !strings.Contains(tomorrow, errorLineStyle.Faint(true).Render("midnight failure")) {
 		t.Fatal("timeline did not refresh age at midnight")
 	}

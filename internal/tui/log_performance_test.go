@@ -39,9 +39,9 @@ func TestWaitForLogBatchBoundedAndOrdered(t *testing.T) {
 // A batch must retain reconnect/issue semantics and discard replayed records.
 func TestProcessLogBatchPreservesStreamLifecycle(t *testing.T) {
 	m := model{
-		state: core.NewFilterState(100),
-		heartbeat: &core.HeartbeatAnalyzer{},
-		config: Config{Formatter: core.Formatter{}},
+		state:       core.NewFilterState(100),
+		heartbeat:   &core.HeartbeatAnalyzer{},
+		config:      Config{Formatter: core.Formatter{}},
 		followsLive: true,
 	}
 	m.processLogBatch([]core.LogEvent{
@@ -70,11 +70,12 @@ func TestRenderLargeTimelineKeepsViewportAndSelectedRow(t *testing.T) {
 	for index := range records {
 		records[index] = timelineTestRecord(fmt.Sprintf("message-%d", index), now.Add(-time.Duration(count-index)*time.Second))
 	}
-	latest := strings.Join(renderLogTimelineRows(records, "", count-1, 32, 120, false, false, true, now), "\n")
+	view := core.LogRecordView{records[:100], records[100 : count-5], records[count-5:]}
+	latest := strings.Join(renderLogTimelineRows(view, "", count-1, 32, 120, false, false, true, now), "\n")
 	if !strings.Contains(latest, "message-49999") || strings.Contains(latest, "message-100") {
 		t.Fatalf("live viewport not bounded to newest rows: %q", latest)
 	}
-	selected := strings.Join(renderLogTimelineRows(records, "", 50, 32, 120, false, false, false, now), "\n")
+	selected := strings.Join(renderLogTimelineRows(view, "", 50, 32, 120, false, false, false, now), "\n")
 	if !strings.Contains(selected, "message-50") || strings.Contains(selected, "message-49999") {
 		t.Fatalf("paused viewport lost selected entry: %q", selected)
 	}
@@ -89,6 +90,6 @@ func BenchmarkRenderTimeline50000(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for index := 0; index < b.N; index++ {
-		_ = renderLogTimelineRows(records, "", 49_999, 40, 120, false, false, true, now)
+		_ = renderLogTimelineRows(core.LogRecordView{records}, "", 49_999, 40, 120, false, false, true, now)
 	}
 }
