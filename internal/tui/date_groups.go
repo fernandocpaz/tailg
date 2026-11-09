@@ -22,14 +22,14 @@ type logTimelineRow struct {
 // paused or searching.
 // renderLogTimelineRows positions the viewport without formatting off-screen
 // records. This keeps redraw costs bounded even with a large history result.
-func renderLogTimelineRows(records []core.LogRecord, query string, selected, height, width int, showPod, color, followsLive bool, now time.Time) []string {
-	if height <= 0 || len(records) == 0 {
+func renderLogTimelineRows(records core.LogRecordView, query string, selected, height, width int, showPod, color, followsLive bool, now time.Time) []string {
+	if height <= 0 || records.Len() == 0 {
 		return nil
 	}
 
 	selectedRecord := selected
-	if selectedRecord < 0 || selectedRecord >= len(records) {
-		selectedRecord = len(records) - 1
+	if selectedRecord < 0 || selectedRecord >= records.Len() {
+		selectedRecord = records.Len() - 1
 	}
 	contextRecord := max(0, selectedRecord-core.SearchContextLines)
 
@@ -39,7 +39,7 @@ func renderLogTimelineRows(records []core.LogRecord, query string, selected, hei
 	lastDay := 0
 	total, contextPosition, selectedPosition := 0, 0, 0
 	contextStartsGroup := false
-	for index, record := range records {
+	for index, record := range records.All {
 		day := logTimelineDayKey(record.Event.ObservedAt, location)
 		startsGroup := day != 0 && day != lastDay
 		if startsGroup {
@@ -77,13 +77,13 @@ func renderLogTimelineRows(records []core.LogRecord, query string, selected, hei
 	visible := make([]logTimelineRow, 0, height)
 	lastDay = 0
 	position := 0
-	for index, record := range records {
+	for index, record := range records.All {
 		day := logTimelineDayKey(record.Event.ObservedAt, location)
 		if day != 0 && day != lastDay {
 			if position >= start && position < end {
 				visible = append(visible, logTimelineRow{
 					groupLabel: logDateGroupLabel(record.Event.ObservedAt, now),
-					separator: true, recordIndex: -1,
+					separator:  true, recordIndex: -1,
 				})
 			}
 			position++
@@ -91,9 +91,9 @@ func renderLogTimelineRows(records []core.LogRecord, query string, selected, hei
 		}
 		if position >= start && position < end {
 			visible = append(visible, logTimelineRow{
-				text: renderRecordRowAt(record, query, index == selected, width, showPod, color, now),
+				text:        renderRecordRowAt(record, query, index == selected, width, showPod, color, now),
 				recordIndex: index,
-				groupLabel: logDateGroupLabel(record.Event.ObservedAt, now),
+				groupLabel:  logDateGroupLabel(record.Event.ObservedAt, now),
 			})
 		}
 		position++

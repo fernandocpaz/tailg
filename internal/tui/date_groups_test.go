@@ -38,7 +38,7 @@ func TestRenderLogTimelineRowsGroupsDatesAndKeepsNewestVisible(t *testing.T) {
 		timelineTestRecord("newest", now),
 	}
 
-	all := strings.Join(renderLogTimelineRows(records, "", 3, 10, 100, false, false, true, now), "\n")
+	all := strings.Join(renderLogTimelineRows(core.LogRecordView{records}, "", 3, 10, 100, false, false, true, now), "\n")
 	for _, expected := range []string{
 		"2 days ago · 2026-09-12",
 		"1 day ago · 2026-09-13",
@@ -52,7 +52,7 @@ func TestRenderLogTimelineRowsGroupsDatesAndKeepsNewestVisible(t *testing.T) {
 		}
 	}
 
-	tight := strings.Join(renderLogTimelineRows(records, "", 3, 2, 100, false, false, true, now), "\n")
+	tight := strings.Join(renderLogTimelineRows(core.LogRecordView{records}, "", 3, 2, 100, false, false, true, now), "\n")
 	if !strings.Contains(tight, "Today · 2026-09-14") || !strings.Contains(tight, "newest") {
 		t.Fatalf("tight live viewport lost its date or newest log:\n%s", tight)
 	}
@@ -68,7 +68,7 @@ func TestRenderLogTimelineRowsKeepsSelectedLogVisible(t *testing.T) {
 		timelineTestRecord("middle", now.AddDate(0, 0, -1)),
 		timelineTestRecord("newest", now),
 	}
-	rendered := strings.Join(renderLogTimelineRows(records, "", 0, 2, 100, false, false, false, now), "\n")
+	rendered := strings.Join(renderLogTimelineRows(core.LogRecordView{records}, "", 0, 2, 100, false, false, false, now), "\n")
 	if !strings.Contains(rendered, "2 days ago · 2026-09-12") || !strings.Contains(rendered, "selected oldest") {
 		t.Fatalf("paused viewport lost its date or selected log:\n%s", rendered)
 	}

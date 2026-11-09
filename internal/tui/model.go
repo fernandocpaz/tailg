@@ -375,7 +375,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.selected = m.state.MatchIndex()
 			m.scrollToSelection()
 			m.searchMatches = m.state.MatchCount()
-			m.searchLines = len(m.state.Records())
+			m.searchLines = m.state.VisibleCount()
 			m.notice = ""
 		}
 		return m, nil
@@ -423,7 +423,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.searching = strings.TrimSpace(shared.text) != "" && m.hasSearch()
 				m.searchMatches = 0
 				m.searchLines = 0
-				m.selected = len(m.state.Lines()) - 1
+				m.selected = m.state.VisibleCount() - 1
 				m.followsLive = true
 				m.scroll = 0
 				if strings.TrimSpace(shared.text) != "" {
@@ -597,7 +597,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.searchMatches = 0
 			m.searchLines = 0
 			m.state.SetFilter(m.input.Value())
-			m.selected = len(m.state.Lines()) - 1
+			m.selected = m.state.VisibleCount() - 1
 			m.followsLive = true
 			m.scroll = 0
 			return m, nil
@@ -625,7 +625,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.searching = strings.TrimSpace(after) != "" && m.hasSearch()
 			m.searchMatches = 0
 			m.searchLines = 0
-			m.selected = len(m.state.Lines()) - 1
+			m.selected = m.state.VisibleCount() - 1
 			m.followsLive = true
 			m.scroll = 0
 			revision, err := writeSharedText(m.config.FilterFile, after, m.lastTextRev)
@@ -699,7 +699,7 @@ func (m model) View() string {
 	}
 	height := m.logHeight()
 	highlight := m.state.Highlight()
-	visible := m.state.RenderRecords(func(records []core.LogRecord) []string {
+	visible := m.state.RenderRecords(func(records core.LogRecordView) []string {
 		return renderLogTimelineRows(records, highlight, m.selected, height, m.width, m.config.Formatter.ShowPod, m.config.Formatter.Color, m.followsLive, time.Now())
 	})
 	for len(visible) < height {
@@ -1509,7 +1509,7 @@ func truncatePlain(value string, width int) string {
 	return string(runes) + "…"
 }
 func (m *model) moveSelection(delta int) {
-	count := len(m.state.Lines())
+	count := m.state.VisibleCount()
 	if count == 0 {
 		m.selected = -1
 		return
@@ -1523,7 +1523,7 @@ func (m *model) moveSelection(delta int) {
 	m.scrollToSelection()
 }
 func (m *model) scrollToSelection() {
-	count := len(m.state.Lines())
+	count := m.state.VisibleCount()
 	height := m.logHeight()
 	if m.selected < 0 || count == 0 {
 		m.scroll = 0
