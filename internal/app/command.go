@@ -24,9 +24,12 @@ func NewCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) 
 	command := &cobra.Command{
 		Use: "tailg [target] [namespace]", Short: "Human-friendly Kubernetes log tailer built in Go", SilenceUsage: true, SilenceErrors: true, Args: cobra.MaximumNArgs(2),
 		Long:    "tailg follows Kubernetes logs across pods. Run it with no target to open the application picker; explicit targets and wildcard patterns remain supported. It provides synchronized live filtering, heartbeat diagnostics, resource inspection, status recovery monitoring, and Windows Terminal layouts.",
-		Example: strings.Join([]string{"tailg", "tailg example-app default", "tailg 'example-*' default --tile-windows", "tailg example-app default --since 4d", "tailg --status --namespace default", "tailg --status 20 --namespace default", "tailg --versions", "tailg --versions --context tkgs-qa --context tkgs-dev", "tailg --versions --namespace apollo --namespace emr2train", "tailg --network --namespace apollo --context tkgs-qa"}, "\n"),
+		Example: strings.Join([]string{"tailg", "tailg example-app default", "tailg example-pod -f log1.ndjson", "tailg 'example-*' default --tile-windows", "tailg example-app default --since 4d", "tailg --status --namespace default", "tailg --status 20 --namespace default", "tailg --versions", "tailg --versions --context tkgs-qa --context tkgs-dev", "tailg --versions --namespace apollo --namespace emr2train", "tailg --network --namespace apollo --context tkgs-qa"}, "\n"),
 		Version: BuildDescription(),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("file") && strings.TrimSpace(options.LogFile) == "" {
+				return fmt.Errorf("--file requires a path")
+			}
 			if !options.Network && (cmd.Flags().Changed("output") || cmd.Flags().Changed("max-bytes")) {
 				return fmt.Errorf("root --output and --max-bytes require --network; diagnostic subcommands have their own output flags")
 			}
@@ -123,6 +126,7 @@ func NewCommand(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) 
 	flags.BoolVar(&options.NoDefaultExclude, "no-default-exclude", false, "show health, ready, and live probe traffic")
 	flags.StringArrayVar(&options.AIRepos, "ai-repo", nil, "local source checkout for opt-in AI error explanations (repeatable; requires TAILG_AI_API_KEY and TAILG_AI_MODEL)")
 	flags.BoolVar(&options.NoFollow, "no-follow", false, "read recent logs and exit")
+	flags.StringVarP(&options.LogFile, "file", "f", "", "append AI-ready NDJSON logs from a target to a file")
 	flags.StringVar(&options.DumpDirectory, "dump", "", "write a troubleshooting bundle, optionally to DIR")
 	flags.Lookup("dump").NoOptDefVal = "."
 	flags.StringVar(&options.DeploymentDumpPath, "deployment-dump", "", "write a deployment-focused troubleshooting bundle, optionally to DIR")

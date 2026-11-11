@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fernandocpaz/tailg/internal/agent"
 	"github.com/fernandocpaz/tailg/internal/core"
 	"github.com/fernandocpaz/tailg/internal/kube"
 )
@@ -50,12 +51,18 @@ fi
 	defer cancel()
 	stdout := &cancelOnLog{cancel: cancel}
 	var stderr bytes.Buffer
+	var capture bytes.Buffer
+	captureLogs := agent.NewLogCapture(&capture, "test", "default").WriteBatch
 	items := []core.InventoryItem{{Pod: "api", Container: "app"}}
 	code := followPlain(ctx, kube.Runner{Binary: binary}, items,
 		func(context.Context) ([]core.InventoryItem, error) { return items, nil },
-		Options{Tail: 10, RefreshInterval: 10 * time.Millisecond}, core.Formatter{}, stdout, &stderr)
+		Options{Tail: 10, RefreshInterval: 10 * time.Millisecond}, core.Formatter{}, captureLogs, stdout, &stderr)
 	text := stdout.String()
 	if code != 0 || strings.Count(text, "first message") != 1 || strings.Count(text, "second message") != 1 {
 		t.Fatalf("plain reconnect failed: code=%d stdout=%q stderr=%q", code, text, stderr.String())
+	}
+	if text := capture.String(); strings.Count(text, "\"message\":\"first message\"") != 1 ||
+		strings.Count(text, "\"message\":\"second message\"") != 1 {
+		t.Fatalf("plain capture duplicated or missed log: %q", text)
 	}
 }
