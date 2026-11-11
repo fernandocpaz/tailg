@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 	xterm "github.com/charmbracelet/x/term"
+	"github.com/fernandocpaz/tailg/internal/agent"
 	"github.com/fernandocpaz/tailg/internal/ai"
 	"github.com/fernandocpaz/tailg/internal/bundle"
 	"github.com/fernandocpaz/tailg/internal/core"
@@ -403,7 +403,7 @@ pickAgain:
 		fmt.Fprintf(stdout, "Opened Windows Terminal panes for %d pods.\n", len(core.UniquePods(items)))
 		return 0
 	}
-	var logOutput io.Writer
+	var captureLogs func([][]core.LogRecord) error
 	if options.LogFile != "" {
 		file, openErr := os.OpenFile(options.LogFile, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 		if openErr != nil {
@@ -416,20 +416,17 @@ pickAgain:
 				code = 1
 			}
 		}()
-		logOutput = logFileWriter{file: file}
-		if options.NoFollow || !options.LiveFilter {
-			stdout = io.MultiWriter(logOutput, stdout)
-		}
+		captureLogs = agent.NewLogCapture(file, effectiveContext, valueOr(effectiveNamespace, contextNamespace)).WriteBatch
 	}
 	if options.NoFollow {
-		return snapshot(ctx, runner, items, options, formatter, stdout, stderr)
+		return snapshot(ctx, runner, items, options, formatter, captureLogs, stdout, stderr)
 	}
 	if !options.LiveFilter {
-		return followPlain(ctx, runner, items, inventoryProvider, options, formatter, stdout, stderr)
+		return followPlain(ctx, runner, items, inventoryProvider, options, formatter, captureLogs, stdout, stderr)
 	}
 	title := logTitle(items, effectiveNamespace, effectiveContext, resolvedTarget)
 	err = tui.Run(ctx, tui.Config{Updates: updates, AI: aiClient, AISettings: aiConfig, AIProblem: aiProblem, Title: title, Namespace: effectiveNamespace, KubeContext: effectiveContext, Target: resolvedTarget, Items: items, Formatter: formatter, HeartbeatWindow: options.HeartbeatWindow, RefreshInterval: options.RefreshInterval, BufferLines: options.BufferLines, FilterFile: options.FilterFile, Version: BuildDescription(),
-		LogOutput: logOutput,
+		CaptureLogs: captureLogs,
 		Stream: func(streamCtx context.Context, item core.InventoryItem, cursor *core.LogCursor, events chan<- core.LogEvent) error {
 			visible := func(message string) bool {
 				return len(formatter.Format(item.Pod, item.Container, message, true)) > 0
@@ -649,7 +646,7 @@ func filterInventory(items []core.InventoryItem, pattern *regexp.Regexp) []core.
 	}
 	return result
 }
-func snapshot(ctx context.Context, runner kube.Runner, items []core.InventoryItem, options Options, formatter core.Formatter, stdout, stderr io.Writer) int {
+func snapshot(ctx context.Context, runner kube.Runner, items []core.InventoryItem, options Options, formatter core.Formatter, captureLogs func([][]core.LogRecord) error, stdout, stderr io.Writer) int {
 	exit := 0
 	for _, item := range items {
 		events, err := runner.Snapshot(ctx, item, kube.LogOptions{Since: options.Since, Tail: options.Tail})
@@ -659,17 +656,15 @@ func snapshot(ctx context.Context, runner kube.Runner, items []core.InventoryIte
 			continue
 		}
 		for _, event := range events {
-			for _, line := range formatter.Format(event.Pod, event.Container, event.Message, false) {
-				if _, err := fmt.Fprintln(stdout, line); err != nil {
-					fmt.Fprintln(stderr, err)
-					return 1
-				}
+			if err := writePlainLog(stdout, captureLogs, formatter, event); err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
 			}
 		}
 	}
 	return exit
 }
-func followPlain(ctx context.Context, runner kube.Runner, items []core.InventoryItem, inventory func(context.Context) ([]core.InventoryItem, error), options Options, formatter core.Formatter, stdout, stderr io.Writer) int {
+func followPlain(ctx context.Context, runner kube.Runner, items []core.InventoryItem, inventory func(context.Context) ([]core.InventoryItem, error), options Options, formatter core.Formatter, captureLogs func([][]core.LogRecord) error, stdout, stderr io.Writer) int {
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	events := make(chan core.LogEvent, 1024)
@@ -686,29 +681,32 @@ func followPlain(ctx context.Context, runner kube.Runner, items []core.Inventory
 		if event.Started || event.Closed || event.Replayed {
 			continue
 		}
-		for _, line := range formatter.Format(event.Pod, event.Container, event.Message, false) {
-			if _, err := fmt.Fprintln(stdout, line); err != nil {
-				fmt.Fprintln(stderr, err)
-				return 1
-			}
+		if err := writePlainLog(stdout, captureLogs, formatter, event); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
 		}
 	}
 	return 0
 }
 
-type logFileWriter struct {
-	file *os.File
-}
-
-func (w logFileWriter) Write(p []byte) (int, error) {
-	return w.WriteString(string(p))
-}
-
-func (w logFileWriter) WriteString(text string) (int, error) {
-	if _, err := w.file.WriteString(ansi.Strip(text)); err != nil {
-		return 0, fmt.Errorf("write log file: %w", err)
+func writePlainLog(stdout io.Writer, captureLogs func([][]core.LogRecord) error, formatter core.Formatter, event core.LogEvent) error {
+	lines := formatter.Format(event.Pod, event.Container, event.Message, false)
+	if captureLogs != nil && len(lines) > 0 {
+		fields := core.ParseLogFields(event)
+		records := make([]core.LogRecord, len(lines))
+		for index, line := range lines {
+			records[index] = core.LogRecord{Event: event, Text: line, Fields: fields}
+		}
+		if err := captureLogs([][]core.LogRecord{records}); err != nil {
+			return err
+		}
 	}
-	return len(text), nil
+	for _, line := range lines {
+		if _, err := fmt.Fprintln(stdout, line); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func logTitle(items []core.InventoryItem, namespace, kubeContext, target string) string {

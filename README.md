@@ -210,7 +210,7 @@ tailg example-app default
 tailg deployment/example-app default
 tailg example-app default --since 4d
 tailg example-app default --no-follow
-tailg example-pod -n default -f log1.txt
+tailg example-pod -n default -f log1.ndjson
 tailg example-app default --include 'request_id=12345'
 tailg example-app default --exclude 'debug|trace'
 tailg example-app default --buffer-lines 100000
@@ -424,13 +424,20 @@ Repeat `--exclude` to hide additional patterns (including failures), use
 all probe lines. Structured JSON properties appended to readable text are hidden
 unless `--detail` is set; explicitly labeled response bodies remain visible.
 
-Use `tailg example-pod -f log1.txt` (or `--file log1.txt`) to keep the log view
-open and append formatted text to a file. Capture starts with the initial log
-history and continues with new entries as they arrive. It uses the same
-command-line filters and log formatting as the live view, including date
-groups, and keeps the full text of long lines. Scrolling and interactive
-searches do not change what gets recorded. Use `--no-live-filter` for capture
-with plain console output or `--no-follow` for a one-time snapshot.
+Use `tailg example-pod -f log1.ndjson` (or `--file log1.ndjson`) to keep the log
+view open and append AI-readable newline-delimited JSON. Capture starts with
+the initial history and continues as entries arrive. Each line is one
+`tailg.log/v1` record with the Kubernetes UTC timestamp, context, namespace,
+pod, container, and readable message. Severity, trace/span/request IDs, HTTP
+status and duration are included when available. Exceptions stay with their
+event, and the `raw` field preserves additional source details when the
+formatted message differs. Common credential patterns are redacted and
+terminal colors are stripped from the file.
+
+Capture respects the same command-line filters and keeps the full text of long
+lines. Scrolling and interactive searches do not change what gets recorded.
+Use `--no-live-filter` for capture with plain console output or `--no-follow`
+for a one-time snapshot. The file extension is optional.
 
 ## AI-assisted error explanations (optional)
 

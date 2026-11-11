@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"regexp"
@@ -41,7 +40,7 @@ type Config struct {
 	Target          string
 	Items           []core.InventoryItem
 	Formatter       core.Formatter
-	LogOutput       io.Writer
+	CaptureLogs     func([][]core.LogRecord) error
 	HeartbeatWindow time.Duration
 	RefreshInterval time.Duration
 	BufferLines     int
@@ -88,7 +87,6 @@ type model struct {
 	inventory       <-chan inventoryMsg
 	events          <-chan core.LogEvent
 	state           *core.FilterState
-	capture         logCapture
 	captureErr      error
 	heartbeat       *core.HeartbeatAnalyzer
 	input           textinput.Model
@@ -243,7 +241,6 @@ func Run(parent context.Context, config Config) error {
 	m := model{
 		updates: updateState{client: config.Updates},
 		ctx:     ctx, cancel: cancel, config: config, events: events, inventory: inventory, state: state,
-		capture: logCapture{output: config.LogOutput},
 		heartbeat: &core.HeartbeatAnalyzer{}, input: input, items: items,
 		selected: -1, followsLive: true,
 		lastSharedText: shared.text, lastSharedMode: shared.mode,
@@ -1693,6 +1690,7 @@ func (m *model) processLogBatch(events []core.LogEvent) error {
 		previousCount = m.state.VisibleCount()
 	}
 	records := make([]core.LogRecord, 0, len(events))
+	var capturedEvents [][]core.LogRecord
 	var traceRecords []core.LogRecord
 	for _, event := range events {
 		m.recordFreshness(event)
@@ -1745,6 +1743,9 @@ func (m *model) processLogBatch(events []core.LogEvent) error {
 		if len(formatted) > 0 {
 			m.issues.Observe(event)
 			records = append(records, formatted...)
+			if m.config.CaptureLogs != nil {
+				capturedEvents = append(capturedEvents, formatted)
+			}
 			if m.traceOpen && m.traceState != nil {
 				for _, record := range formatted {
 					if record.Fields.TraceID == m.traceID {
@@ -1764,8 +1765,8 @@ func (m *model) processLogBatch(events []core.LogEvent) error {
 	} else if !m.followsLive {
 		m.scroll += max(0, m.state.VisibleCount()-previousCount)
 	}
-	if m.capture.output != nil && len(records) > 0 {
-		return m.capture.write(records, time.Now())
+	if len(capturedEvents) > 0 {
+		return m.config.CaptureLogs(capturedEvents)
 	}
 	return nil
 }
