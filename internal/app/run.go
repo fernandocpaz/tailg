@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	xterm "github.com/charmbracelet/x/term"
 	"github.com/fernandocpaz/tailg/internal/ai"
 	"github.com/fernandocpaz/tailg/internal/bundle"
@@ -24,7 +25,12 @@ import (
 	"github.com/fernandocpaz/tailg/internal/tui"
 )
 
-func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr io.Writer) int {
+func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr io.Writer) (code int) {
+	if options.LogFile != "" && (options.Target == "" || options.Status || options.Versions || options.Network ||
+		options.DumpRequested || options.DeploymentDump || options.SplitPanes || options.TileWindows) {
+		fmt.Fprintln(stderr, "--file requires an explicit log target in a single terminal view")
+		return 2
+	}
 	if err := theme.Validate(options.Theme); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
@@ -397,6 +403,24 @@ pickAgain:
 		fmt.Fprintf(stdout, "Opened Windows Terminal panes for %d pods.\n", len(core.UniquePods(items)))
 		return 0
 	}
+	var logOutput io.Writer
+	if options.LogFile != "" {
+		file, openErr := os.OpenFile(options.LogFile, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+		if openErr != nil {
+			fmt.Fprintf(stderr, "open log file: %v\n", openErr)
+			return 1
+		}
+		defer func() {
+			if closeErr := file.Close(); closeErr != nil {
+				fmt.Fprintf(stderr, "close log file: %v\n", closeErr)
+				code = 1
+			}
+		}()
+		logOutput = logFileWriter{file: file}
+		if options.NoFollow || !options.LiveFilter {
+			stdout = io.MultiWriter(logOutput, stdout)
+		}
+	}
 	if options.NoFollow {
 		return snapshot(ctx, runner, items, options, formatter, stdout, stderr)
 	}
@@ -405,6 +429,7 @@ pickAgain:
 	}
 	title := logTitle(items, effectiveNamespace, effectiveContext, resolvedTarget)
 	err = tui.Run(ctx, tui.Config{Updates: updates, AI: aiClient, AISettings: aiConfig, AIProblem: aiProblem, Title: title, Namespace: effectiveNamespace, KubeContext: effectiveContext, Target: resolvedTarget, Items: items, Formatter: formatter, HeartbeatWindow: options.HeartbeatWindow, RefreshInterval: options.RefreshInterval, BufferLines: options.BufferLines, FilterFile: options.FilterFile, Version: BuildDescription(),
+		LogOutput: logOutput,
 		Stream: func(streamCtx context.Context, item core.InventoryItem, cursor *core.LogCursor, events chan<- core.LogEvent) error {
 			visible := func(message string) bool {
 				return len(formatter.Format(item.Pod, item.Container, message, true)) > 0
@@ -635,7 +660,10 @@ func snapshot(ctx context.Context, runner kube.Runner, items []core.InventoryIte
 		}
 		for _, event := range events {
 			for _, line := range formatter.Format(event.Pod, event.Container, event.Message, false) {
-				fmt.Fprintln(stdout, line)
+				if _, err := fmt.Fprintln(stdout, line); err != nil {
+					fmt.Fprintln(stderr, err)
+					return 1
+				}
 			}
 		}
 	}
@@ -659,10 +687,28 @@ func followPlain(ctx context.Context, runner kube.Runner, items []core.Inventory
 			continue
 		}
 		for _, line := range formatter.Format(event.Pod, event.Container, event.Message, false) {
-			fmt.Fprintln(stdout, line)
+			if _, err := fmt.Fprintln(stdout, line); err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
+			}
 		}
 	}
 	return 0
+}
+
+type logFileWriter struct {
+	file *os.File
+}
+
+func (w logFileWriter) Write(p []byte) (int, error) {
+	return w.WriteString(string(p))
+}
+
+func (w logFileWriter) WriteString(text string) (int, error) {
+	if _, err := w.file.WriteString(ansi.Strip(text)); err != nil {
+		return 0, fmt.Errorf("write log file: %w", err)
+	}
+	return len(text), nil
 }
 
 func logTitle(items []core.InventoryItem, namespace, kubeContext, target string) string {

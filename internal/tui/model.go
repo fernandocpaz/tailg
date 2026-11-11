@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"regexp"
@@ -40,6 +41,7 @@ type Config struct {
 	Target          string
 	Items           []core.InventoryItem
 	Formatter       core.Formatter
+	LogOutput       io.Writer
 	HeartbeatWindow time.Duration
 	RefreshInterval time.Duration
 	BufferLines     int
@@ -86,6 +88,8 @@ type model struct {
 	inventory       <-chan inventoryMsg
 	events          <-chan core.LogEvent
 	state           *core.FilterState
+	capture         logCapture
+	captureErr      error
 	heartbeat       *core.HeartbeatAnalyzer
 	input           textinput.Model
 	items           []core.InventoryItem
@@ -239,6 +243,7 @@ func Run(parent context.Context, config Config) error {
 	m := model{
 		updates: updateState{client: config.Updates},
 		ctx:     ctx, cancel: cancel, config: config, events: events, inventory: inventory, state: state,
+		capture: logCapture{output: config.LogOutput},
 		heartbeat: &core.HeartbeatAnalyzer{}, input: input, items: items,
 		selected: -1, followsLive: true,
 		lastSharedText: shared.text, lastSharedMode: shared.mode,
@@ -251,11 +256,16 @@ func Run(parent context.Context, config Config) error {
 	// captures normal selection gestures across every log and diagnostics view.
 	program := tea.NewProgram(m, tea.WithAltScreen())
 	final, err := program.Run()
-	if result, ok := final.(model); ok && result.updates.restart {
-		return ErrRestart
-	}
-	if result, ok := final.(model); ok && result.updates.quit {
-		return ErrUpdateQuit
+	if result, ok := final.(model); ok {
+		if result.captureErr != nil {
+			return result.captureErr
+		}
+		if result.updates.restart {
+			return ErrRestart
+		}
+		if result.updates.quit {
+			return ErrUpdateQuit
+		}
 	}
 	return err
 }
@@ -338,10 +348,12 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case logMsg:
 		// Keep the single-event message for older callers/tests.
-		m.processLogBatch([]core.LogEvent{core.LogEvent(msg)})
-		return m, waitForLogBatch(m.events)
+		return m.Update(logBatchMsg{core.LogEvent(msg)})
 	case logBatchMsg:
-		m.processLogBatch([]core.LogEvent(msg))
+		if err := m.processLogBatch([]core.LogEvent(msg)); err != nil {
+			m.captureErr = err
+			return m, tea.Quit
+		}
 		return m, waitForLogBatch(m.events)
 	case inventoryMsg:
 		if msg.err != nil {
@@ -1672,7 +1684,7 @@ func waitForLogBatch(events <-chan core.LogEvent) tea.Cmd {
 
 // processLogBatch updates the live buffer once per batch, not once per line.
 // Freshness and issue tracking still observe every underlying Kubernetes event.
-func (m *model) processLogBatch(events []core.LogEvent) {
+func (m *model) processLogBatch(events []core.LogEvent) error {
 	if m.issues == nil {
 		m.issues = core.NewIssueRadar(200)
 	}
@@ -1752,6 +1764,10 @@ func (m *model) processLogBatch(events []core.LogEvent) {
 	} else if !m.followsLive {
 		m.scroll += max(0, m.state.VisibleCount()-previousCount)
 	}
+	if m.capture.output != nil && len(records) > 0 {
+		return m.capture.write(records, time.Now())
+	}
+	return nil
 }
 
 func sharedTick() tea.Cmd {

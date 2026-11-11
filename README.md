@@ -210,6 +210,7 @@ tailg example-app default
 tailg deployment/example-app default
 tailg example-app default --since 4d
 tailg example-app default --no-follow
+tailg example-pod -n default -f log1.txt
 tailg example-app default --include 'request_id=12345'
 tailg example-app default --exclude 'debug|trace'
 tailg example-app default --buffer-lines 100000
@@ -422,6 +423,14 @@ Repeat `--exclude` to hide additional patterns (including failures), use
 `--include` to retain only selected lines, or pass `--no-default-exclude` to show
 all probe lines. Structured JSON properties appended to readable text are hidden
 unless `--detail` is set; explicitly labeled response bodies remain visible.
+
+Use `tailg example-pod -f log1.txt` (or `--file log1.txt`) to keep the log view
+open and append formatted text to a file. Capture starts with the initial log
+history and continues with new entries as they arrive. It uses the same
+command-line filters and log formatting as the live view, including date
+groups, and keeps the full text of long lines. Scrolling and interactive
+searches do not change what gets recorded. Use `--no-live-filter` for capture
+with plain console output or `--no-follow` for a one-time snapshot.
 
 ## AI-assisted error explanations (optional)
 

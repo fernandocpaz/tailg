@@ -34,6 +34,7 @@ type Options struct {
 	Exclude            []string
 	NoDefaultExclude   bool
 	NoFollow           bool
+	LogFile            string
 	DumpRequested      bool
 	DumpDirectory      string
 	DeploymentDump     bool
