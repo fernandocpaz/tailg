@@ -232,9 +232,10 @@ func (m pickerModel) updatePickerSelectionKey(msg tea.KeyMsg) (tea.Model, tea.Cm
 		*state.pods = child.(podPickerModel)
 		if state.pods.done {
 			pods := state.pods.selected
+			logToFile, captureFrom := state.pods.logToFile, state.pods.captureFrom
 			m.closePickerSelection()
 			if len(pods) > 0 {
-				m.result = PickerResult{Action: PickerOpenApp, Pods: pods}
+				m.result = PickerResult{Action: PickerOpenApp, Pods: pods, LogToFile: logToFile, CaptureFrom: captureFrom}
 				m.podMonitorState.stop()
 				return m, tea.Quit
 			}
@@ -328,7 +329,7 @@ func (m pickerModel) pickerSelectionView() string {
 		if m.monitorEnabled {
 			header = append(header, truncatePickerCell(m.metricsSummary(), inner))
 		}
-		controls = "Space Mark · A App · Enter Logs · M Monitor · Esc Back"
+		controls = "Space Mark · A App · Enter Logs · F File · M Monitor · Esc Back"
 		for i, row := range child.rows {
 			appLabel := ""
 			if inner >= 70 {

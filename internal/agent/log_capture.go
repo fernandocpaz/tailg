@@ -34,12 +34,21 @@ type captureRecord struct {
 }
 
 type LogCapture struct {
+	since              time.Time
 	output             io.Writer
 	context, namespace string
 }
 
 func NewLogCapture(output io.Writer, kubeContext, namespace string) LogCapture {
 	return LogCapture{output: output, context: kubeContext, namespace: namespace}
+}
+
+// NewLiveLogCapture excludes history, including delayed backfill and events
+// without a source timestamp, so only data from the keypress onward is saved.
+func NewLiveLogCapture(output io.Writer, kubeContext, namespace string, since time.Time) LogCapture {
+	capture := NewLogCapture(output, kubeContext, namespace)
+	capture.since = since
+	return capture
 }
 
 // WriteBatch writes one JSON object per original log event. Each event can have
@@ -54,6 +63,9 @@ func (c LogCapture) WriteBatch(events [][]core.LogRecord) error {
 		}
 		first := rows[0]
 		event, fields := first.Event, first.Fields
+		if !c.since.IsZero() && (event.ObservedAt.IsZero() || event.ObservedAt.Before(c.since) || event.Replayed) {
+			continue
+		}
 		var display strings.Builder
 		for index, row := range rows {
 			if index > 0 {

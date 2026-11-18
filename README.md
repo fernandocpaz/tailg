@@ -424,6 +424,17 @@ Repeat `--exclude` to hide additional patterns (including failures), use
 all probe lines. Structured JSON properties appended to readable text are hidden
 unless `--detail` is set; explicitly labeled response bodies remain visible.
 
+In the application picker or the **P** exact-pod selector, press **F** to open
+marked rows (or the highlighted row when none are marked) and record live logs.
+The file is created in your current directory, for example
+`tailg-api-1_20261118_103000.123456789.ndjson`. Only entries with a Kubernetes
+source timestamp at or after the F keypress are written; earlier history still
+appears in the console but is excluded from the file. Entries without a source
+timestamp are also excluded from this live capture. The filename appears in the
+log view title and after returning to the picker. Recording ends when you leave
+the log view. Multiple selected pods share one terminal and one file, with each
+record identifying its pod and container. **Enter** continues to open logs as usual.
+
 Use `tailg example-pod -f log1.ndjson` (or `--file log1.ndjson`) to keep the log
 view open and append AI-readable newline-delimited JSON. Capture starts with
 the initial history and continues as entries arrive. Each line is one

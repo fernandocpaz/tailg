@@ -21,6 +21,8 @@ type podPickerModel struct {
 	rows        []podPickerRow
 	checked     map[string]bool
 	index       int
+	logToFile   bool
+	captureFrom time.Time
 	done        bool
 	selected    []string
 	kubeContext string
@@ -109,7 +111,7 @@ func (m podPickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
-		case "enter":
+		case "enter", "f", "F":
 			if len(m.rows) > 0 {
 				for _, row := range m.rows {
 					if m.checked[row.pod.Name] {
@@ -118,6 +120,10 @@ func (m podPickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				if len(m.selected) == 0 {
 					m.selected = []string{m.rows[m.index].pod.Name}
+				}
+				m.logToFile = key.String() != "enter"
+				if m.logToFile {
+					m.captureFrom = time.Now()
 				}
 				m.podMonitorState.stop()
 				m.done = true
@@ -139,6 +145,7 @@ func (m podPickerModel) View() string {
 		),
 		renderPickerShortcuts(
 			shortcut("ENTER", "Open"),
+			shortcut("F", "Log to file"),
 			shortcut("M", "Monitor"),
 			shortcut("ESC", "Applications"),
 		),
