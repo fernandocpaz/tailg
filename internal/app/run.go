@@ -15,7 +15,6 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	xterm "github.com/charmbracelet/x/term"
-	"github.com/fernandocpaz/tailg/internal/agent"
 	"github.com/fernandocpaz/tailg/internal/ai"
 	"github.com/fernandocpaz/tailg/internal/bundle"
 	"github.com/fernandocpaz/tailg/internal/core"
@@ -222,6 +221,8 @@ func Run(ctx context.Context, options Options, stdin io.Reader, stdout, stderr i
 
 pickAgain:
 	resolvedTarget := "pod/*"
+	logFile := options.LogFile
+	var captureFrom time.Time
 	var selectedPods, selectedSelectors []string
 	if !namespaceMode {
 		if pickerMode {
@@ -249,6 +250,10 @@ pickAgain:
 			markedApps = selection.Marked
 			autoSplitSelection = pickerSelectionOpensPanes(selection, runtime.GOOS)
 			selectedPods, selectedSelectors, resolvedTarget = pickerSelectionScope(selection)
+			if selection.LogToFile {
+				captureFrom = selection.CaptureFrom
+				logFile = pickerLogFilename(selection, captureFrom)
+			}
 		} else if strings.ContainsAny(options.Target, "*?[") || strings.Contains(options.Target, ",") {
 			selectedPods, selectedSelectors, effectiveNamespace, err = runner.MatchApps(ctx, options.Target)
 			if err != nil {
@@ -378,7 +383,7 @@ pickAgain:
 		showPod = *options.ShowPod
 	}
 	formatter.ShowPod = showPod
-	if options.TileWindows {
+	if options.TileWindows && captureFrom.IsZero() {
 		if err := prepareSharedFilter(&options); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
@@ -391,7 +396,7 @@ pickAgain:
 		fmt.Fprintf(stdout, "Opened %d Windows Terminal windows; tiled %d.\n", opened, tiled)
 		return 0
 	}
-	if (options.SplitPanes || autoSplitSelection) && len(core.UniquePods(items)) > 1 {
+	if captureFrom.IsZero() && (options.SplitPanes || autoSplitSelection) && len(core.UniquePods(items)) > 1 {
 		if err := prepareSharedFilter(&options); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
@@ -403,21 +408,17 @@ pickAgain:
 		fmt.Fprintf(stdout, "Opened Windows Terminal panes for %d pods.\n", len(core.UniquePods(items)))
 		return 0
 	}
-	var captureLogs func([][]core.LogRecord) error
-	if options.LogFile != "" {
-		file, openErr := os.OpenFile(options.LogFile, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
-		if openErr != nil {
-			fmt.Fprintf(stderr, "open log file: %v\n", openErr)
-			return 1
-		}
-		defer func() {
-			if closeErr := file.Close(); closeErr != nil {
-				fmt.Fprintf(stderr, "close log file: %v\n", closeErr)
-				code = 1
-			}
-		}()
-		captureLogs = agent.NewLogCapture(file, effectiveContext, valueOr(effectiveNamespace, contextNamespace)).WriteBatch
+	captureLogs, closeCapture, openErr := openLogCapture(logFile, effectiveContext, valueOr(effectiveNamespace, contextNamespace), captureFrom)
+	if openErr != nil {
+		fmt.Fprintf(stderr, "open log file: %v\n", openErr)
+		return 1
 	}
+	defer func(closeCapture func() error) {
+		if closeErr := closeCapture(); closeErr != nil {
+			fmt.Fprintf(stderr, "close log file: %v\n", closeErr)
+			code = 1
+		}
+	}(closeCapture)
 	if options.NoFollow {
 		return snapshot(ctx, runner, items, options, formatter, captureLogs, stdout, stderr)
 	}
@@ -425,6 +426,9 @@ pickAgain:
 		return followPlain(ctx, runner, items, inventoryProvider, options, formatter, captureLogs, stdout, stderr)
 	}
 	title := logTitle(items, effectiveNamespace, effectiveContext, resolvedTarget)
+	if logFile != "" {
+		title += " | Recording: " + logFile
+	}
 	err = tui.Run(ctx, tui.Config{Updates: updates, AI: aiClient, AISettings: aiConfig, AIProblem: aiProblem, Title: title, Namespace: effectiveNamespace, KubeContext: effectiveContext, Target: resolvedTarget, Items: items, Formatter: formatter, HeartbeatWindow: options.HeartbeatWindow, RefreshInterval: options.RefreshInterval, BufferLines: options.BufferLines, FilterFile: options.FilterFile, Version: BuildDescription(),
 		CaptureLogs: captureLogs,
 		Stream: func(streamCtx context.Context, item core.InventoryItem, cursor *core.LogCursor, events chan<- core.LogEvent) error {
@@ -455,6 +459,13 @@ pickAgain:
 			records, traceErr := runner.CompleteTrace(traceCtx, current, options.Since, formatter, traceID, options.BufferLines)
 			return records, errors.Join(inventoryErr, traceErr)
 		}, ErrorLogs: runner.PodErrorLogs, LogDetails: runner.LogDetails, ExplainReplicas: runner.ExplainReplicas, MappedResources: runner.MappedResources, ResourceDetail: runner.ResourceDetail})
+	if closeErr := closeCapture(); closeErr != nil {
+		fmt.Fprintf(stderr, "close log file: %v\n", closeErr)
+		return 1
+	}
+	if pickerLoop && logFile != "" {
+		pickerNotice = "Saved log file: " + logFile
+	}
 	if errors.Is(err, tui.ErrRestart) {
 		return RestartExitCode
 	}
@@ -476,7 +487,7 @@ pickAgain:
 // resolved pod. The existing pane launcher uses Windows Terminal; on other
 // platforms the selected streams remain combined in the live view.
 func pickerSelectionOpensPanes(selection tui.PickerResult, goos string) bool {
-	if goos != "windows" {
+	if goos != "windows" || selection.LogToFile {
 		return false
 	}
 	if len(uniqueStrings(selection.Pods)) > 1 {

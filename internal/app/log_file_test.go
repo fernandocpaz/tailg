@@ -9,6 +9,10 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/fernandocpaz/tailg/internal/core"
+	"github.com/fernandocpaz/tailg/internal/tui"
 )
 
 func TestCommandAppendsStructuredSnapshotToFile(t *testing.T) {
@@ -68,5 +72,53 @@ esac
 	}
 	if !strings.Contains(stdout.String(), "request failed") {
 		t.Fatalf("console output missing log: %q", stdout.String())
+	}
+}
+
+func TestLiveCaptureExcludesBackfillAndClosesBetweenSessions(t *testing.T) {
+	start := time.Date(2026, 11, 18, 10, 30, 0, 123456789, time.UTC)
+	selection := tui.PickerResult{Pods: []string{"api-1", "api-2"}, LogToFile: true}
+	name := pickerLogFilename(selection, start)
+	if !strings.HasPrefix(name, "tailg-selection_") || !strings.HasSuffix(name, ".ndjson") || strings.ContainsAny(name, `:/\\`) {
+		t.Fatalf("unsafe filename: %q", name)
+	}
+	path := filepath.Join(t.TempDir(), name)
+	write, closeCapture, err := openLogCapture(path, "qa", "apollo", start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeCapture()
+	var events [][]core.LogRecord
+	for _, event := range []core.LogEvent{
+		{ObservedAt: start.Add(-time.Nanosecond), Message: "old backfill"},
+		{Message: "unknown timestamp"},
+		{ObservedAt: start, Message: "at keypress"},
+		{ObservedAt: start.Add(time.Second), Message: "new data"},
+		{ObservedAt: start.Add(time.Second), Message: "replay", Replayed: true},
+	} {
+		event.Pod, event.Container = "api-1", "api"
+		events = append(events, []core.LogRecord{{Event: event, Text: event.Message}})
+	}
+	if err := write(events); err != nil {
+		t.Fatal(err)
+	}
+	if err := closeCapture(); err != nil {
+		t.Fatal(err)
+	}
+	if err := closeCapture(); err != nil {
+		t.Fatalf("second close: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Count(data, []byte("\n")) != 2 || !bytes.Contains(data, []byte("at keypress")) || !bytes.Contains(data, []byte("new data")) || bytes.Contains(data, []byte("backfill")) {
+		t.Fatalf("unexpected live capture: %s", data)
+	}
+	if _, _, err := openLogCapture(path, "qa", "apollo", start); !os.IsExist(err) {
+		t.Fatalf("live capture must not overwrite existing file: %v", err)
+	}
+	if pickerSelectionOpensPanes(selection, "windows") {
+		t.Fatal("file capture must stay in one terminal")
 	}
 }

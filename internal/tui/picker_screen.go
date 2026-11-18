@@ -189,7 +189,7 @@ func (m pickerModel) pickerScreenFooter(width int) []string {
 	}
 	footer = append(footer, dimStyle.Render(strings.Repeat("─", width)))
 	move := pickerBinding("↑↓", "Move", "up", "down")
-	bindings := []key.Binding{move, pickerKeys.mark, pickerKeys.open, pickerKeys.pods, pickerKeys.refresh}
+	bindings := []key.Binding{move, pickerKeys.mark, pickerKeys.open, pickerKeys.file, pickerKeys.pods, pickerKeys.refresh}
 	isCronJob := m.index >= 0 && m.index < len(m.apps) && m.apps[m.index].CronJob != nil
 	if isCronJob {
 		bindings = append(bindings, pickerKeys.run)

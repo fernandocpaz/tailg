@@ -47,8 +47,8 @@ type pickerModel struct {
 	deploymentInventory   map[string]deploymentVersion
 	deploymentToasts      []deploymentToast
 	nextDeploymentToastID int
-	activity    namespaceActivityState
-	updates     updateState
+	activity              namespaceActivityState
+	updates               updateState
 }
 
 type PickerAction int
@@ -61,6 +61,8 @@ const (
 )
 
 type PickerResult struct {
+	LogToFile   bool
+	CaptureFrom time.Time
 	Action      PickerAction
 	App         core.AppChoice
 	Apps        []core.AppChoice
@@ -337,7 +339,7 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			case keyMatches(key, pickerKeys.end):
 				m.index = max(0, len(m.apps)-1)
 			}
-		case keyMatches(key, pickerKeys.open):
+		case keyMatches(key, pickerKeys.open, pickerKeys.file):
 			if len(m.apps) > 0 {
 				selected := m.checkedChoices()
 				marked := make([]string, 0, len(selected))
@@ -351,7 +353,10 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					m.note = "This CronJob has no retained pods. Press X to run it now."
 					return m, nil
 				}
-				m.result = PickerResult{Action: PickerOpenApp, App: selected[0], Apps: selected, Marked: marked}
+				m.result = PickerResult{Action: PickerOpenApp, App: selected[0], Apps: selected, Marked: marked, LogToFile: keyMatches(key, pickerKeys.file)}
+				if m.result.LogToFile {
+					m.result.CaptureFrom = time.Now()
+				}
 				m.podMonitorState.stop()
 				return m, tea.Quit
 			}

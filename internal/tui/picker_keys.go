@@ -15,7 +15,7 @@ func pickerBinding(label, description string, keys ...string) key.Binding {
 }
 
 var pickerKeys = struct {
-	up, down, pageUp, pageDown, home, end, mark, open, pods                key.Binding
+	up, down, pageUp, pageDown, home, end, mark, open, file, pods          key.Binding
 	context, namespace, changes, events, monitor, refresh, run, help, quit key.Binding
 }{
 	up:        pickerBinding("↑/k", "Move up", "up", "k"),
@@ -26,6 +26,7 @@ var pickerKeys = struct {
 	end:       pickerBinding("End", "Last row", "end"),
 	mark:      pickerBinding("Space", "Mark", " "),
 	open:      pickerBinding("Enter", "Open logs", "enter"),
+	file:      pickerBinding("F", "Log to file", "f", "F"),
 	pods:      pickerBinding("P", "Exact pods", "p", "P"),
 	context:   pickerBinding("C", "Context", "c", "C"),
 	namespace: pickerBinding("N", "Namespace", "n", "N"),
@@ -114,7 +115,7 @@ func (m pickerModel) pickerHelpModal() (string, int) {
 		keys  []key.Binding
 	}{
 		{"NAMESPACE", []key.Binding{pickerKeys.context, pickerKeys.namespace, pickerKeys.changes, pickerKeys.events, pickerKeys.monitor, pickerKeys.refresh}},
-		{"SELECTED ROW", []key.Binding{pickerKeys.mark, pickerKeys.open, pickerKeys.pods, pickerKeys.run}},
+		{"SELECTED ROW", []key.Binding{pickerKeys.mark, pickerKeys.open, pickerKeys.file, pickerKeys.pods, pickerKeys.run}},
 		{"NAVIGATION", []key.Binding{pickerKeys.up, pickerKeys.down, pickerKeys.pageUp, pickerKeys.pageDown, pickerKeys.home, pickerKeys.end, pickerKeys.help, pickerKeys.quit}},
 	}
 	for _, group := range groups {
@@ -124,6 +125,7 @@ func (m pickerModel) pickerHelpModal() (string, int) {
 	}
 	body = append(body, pickerWrapLines([]string{
 		"Enter opens marked applications, or the highlighted row when nothing is marked.",
+		"F opens the same selection and records logs to a timestamped file in the current directory. Only logs timestamped from the F keypress onward are saved. Recording stops when you leave the log view.",
 		"P chooses exact pods after unmarking applications. X asks for confirmation before creating a Job from the highlighted CronJob.",
 		"Only columns that fit are shown; the selected row's summary appears above the footer.",
 		podMonitorLegend(),
