@@ -34,6 +34,7 @@ type Config struct {
 	Version         string
 	SearchRecords   func(context.Context, string) ([]core.LogRecord, error)
 	Trace           func(context.Context, string) ([]core.LogRecord, error)
+	RecordingPath   string
 	Title           string
 	Namespace       string
 	KubeContext     string
@@ -249,8 +250,8 @@ func Run(parent context.Context, config Config) error {
 		searching: strings.TrimSpace(shared.text) != "" && (config.Search != nil || config.SearchRecords != nil),
 		issues:    core.NewIssueRadar(200),
 	}
-	// Mouse reporting is opt-in per mapped resource. When enabled globally it
-	// captures normal selection gestures across every log and diagnostics view.
+	// Recording sessions capture clicks for the path link. Shift-drag retains
+	// native terminal selection; other sessions keep mouse reporting opt-in.
 	program := tea.NewProgram(m, tea.WithAltScreen())
 	final, err := program.Run()
 	if result, ok := final.(model); ok {
@@ -279,6 +280,14 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	updated, cmd := m.update(message)
+	if next, ok := updated.(model); ok && m.config.RecordingPath != "" && m.wantsMouse() != next.wantsMouse() {
+		return next, tea.Sequence(cmd, next.defaultMouseCommand())
+	}
+	return updated, cmd
+}
+
+func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if msg,ok:=message.(serviceCloneMsg);ok {
 		return m.updateServiceClone(msg)
 	}
@@ -414,7 +423,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.resourceOffset = 0
 			m.resourceLayout = &detailLayout{}
 			if wasCaptured {
-				return m, tea.DisableMouse
+				return m, m.defaultMouseCommand()
 			}
 		}
 		return m, nil
@@ -457,13 +466,22 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		commands = append(commands, sharedTick())
 		return m, tea.Batch(commands...)
+	case recordingPathCopiedMsg:
+		m.notice = string(msg)
+		return m, nil
 	case tea.MouseMsg:
+		if m.recordingLinkHit(msg) {
+			return m, m.copyRecordingPath()
+		}
 		if m.resourceMouseCapture && m.resourceOpen && m.resourceDetail != "" && m.aiSetup == nil && !m.showUpdate() {
 			m.scrollMappedResourceMouse(msg)
 		}
 		return m, nil
 	case tea.KeyMsg:
 		key := msg.String()
+		if key == "ctrl+y" && m.recordingVisible() {
+			return m, m.copyRecordingPath()
+		}
 		if key == "ctrl+c" || key == "ctrl+q" {
 			m.cancel()
 			return m, tea.Quit
@@ -714,7 +732,7 @@ func (m model) View() string {
 	for len(visible) < height {
 		visible = append(visible, "")
 	}
-	return strings.Join([]string{m.renderHeader(), m.renderLogSource(), renderRule(m.width, m.config.Formatter.Color), strings.Join(visible, "\n"), renderRule(m.width, m.config.Formatter.Color), m.renderFilterBar(), m.renderFooter()}, "\n")
+	return strings.Join([]string{m.renderHeader(), m.renderRecordingSource(), renderRule(m.width, m.config.Formatter.Color), strings.Join(visible, "\n"), renderRule(m.width, m.config.Formatter.Color), m.renderFilterBar(), m.renderFooter()}, "\n")
 }
 
 func (m model) panel(title, body, footer string) string {
@@ -825,7 +843,7 @@ func (m model) renderDetail() string {
 	}, "\n")
 }
 func (m model) logHeight() int {
-	return max(1, m.height-6-len(strings.Split(m.renderLogSource(), "\n")))
+	return max(1, m.height-6-len(strings.Split(m.renderRecordingSource(), "\n")))
 }
 
 func (m model) renderHeader() string {
@@ -1548,7 +1566,7 @@ func (m model) updateResourceKey(key string) (tea.Model, tea.Cmd) {
 		m.closeResourceDetail()
 		m.resourceOpen = false
 		if mouseCaptured {
-			return m, tea.DisableMouse
+			return m, m.defaultMouseCommand()
 		}
 		return m, nil
 	}
@@ -1557,7 +1575,7 @@ func (m model) updateResourceKey(key string) (tea.Model, tea.Cmd) {
 			mouseCaptured := m.resourceMouseCapture
 			m.closeResourceDetail()
 			if mouseCaptured {
-				return m, tea.DisableMouse
+				return m, m.defaultMouseCommand()
 			}
 		} else {
 			m.resourceOpen = false
@@ -1571,13 +1589,13 @@ func (m model) updateResourceKey(key string) (tea.Model, tea.Cmd) {
 			if m.resourceMouseCapture {
 				return m, tea.EnableMouseCellMotion
 			}
-			return m, tea.DisableMouse
+			return m, m.defaultMouseCommand()
 		case "enter":
 			mouseCaptured := m.resourceMouseCapture
 			m.notice = copyText(m.resourceDetail)
 			m.closeResourceDetail()
 			if mouseCaptured {
-				return m, tea.DisableMouse
+				return m, m.defaultMouseCommand()
 			}
 		default:
 			m.scrollMappedResource(key)
@@ -1989,7 +2007,9 @@ func copyText(text string) string {
 	case "darwin":
 		command = exec.Command("pbcopy")
 	default:
-		if _, err := exec.LookPath("wl-copy"); err == nil {
+		if _, err := exec.LookPath("clip.exe"); err == nil {
+			command = exec.Command("clip.exe")
+		} else if _, err := exec.LookPath("wl-copy"); err == nil {
 			command = exec.Command("wl-copy")
 		} else if _, err := exec.LookPath("xclip"); err == nil {
 			command = exec.Command("xclip", "-selection", "clipboard")

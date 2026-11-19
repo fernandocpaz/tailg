@@ -408,6 +408,13 @@ pickAgain:
 		fmt.Fprintf(stdout, "Opened Windows Terminal panes for %d pods.\n", len(core.UniquePods(items)))
 		return 0
 	}
+	if logFile != "" {
+		logFile, err = filepath.Abs(logFile)
+		if err != nil {
+			fmt.Fprintf(stderr, "resolve log file: %v\n", err)
+			return 1
+		}
+	}
 	captureLogs, closeCapture, openErr := openLogCapture(logFile, effectiveContext, valueOr(effectiveNamespace, contextNamespace), captureFrom)
 	if openErr != nil {
 		fmt.Fprintf(stderr, "open log file: %v\n", openErr)
@@ -430,7 +437,7 @@ pickAgain:
 		title += " | Recording: " + logFile
 	}
 	err = tui.Run(ctx, tui.Config{Updates: updates, AI: aiClient, AISettings: aiConfig, AIProblem: aiProblem, Title: title, Namespace: effectiveNamespace, KubeContext: effectiveContext, Target: resolvedTarget, Items: items, Formatter: formatter, HeartbeatWindow: options.HeartbeatWindow, RefreshInterval: options.RefreshInterval, BufferLines: options.BufferLines, FilterFile: options.FilterFile, Version: BuildDescription(),
-		CaptureLogs: captureLogs,
+		CaptureLogs: captureLogs, RecordingPath: logFile,
 		Stream: func(streamCtx context.Context, item core.InventoryItem, cursor *core.LogCursor, events chan<- core.LogEvent) error {
 			visible := func(message string) bool {
 				return len(formatter.Format(item.Pod, item.Container, message, true)) > 0

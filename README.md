@@ -430,8 +430,10 @@ The file is created in your current directory, for example
 `tailg-api-1_20261118_103000.123456789.ndjson`. Only entries with a Kubernetes
 source timestamp at or after the F keypress are written; earlier history still
 appears in the console but is excluded from the file. Entries without a source
-timestamp are also excluded from this live capture. The filename appears in the
-log view title and after returning to the picker. Recording ends when you leave
+timestamp are also excluded from this live capture. The absolute file path appears in a recording row above the logs and after
+returning to the picker. Click the underlined path or **[Copy path]** to copy it,
+or press **Ctrl+Y**. Long paths wrap; copying always uses the full path. While
+recording, hold **Shift** when dragging to select terminal text. Recording ends when you leave
 the log view. Multiple selected pods share one terminal and one file, with each
 record identifying its pod and container. **Enter** continues to open logs as usual.
 
