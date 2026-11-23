@@ -29,3 +29,17 @@ func TestMatchesTailgStructuredPredicates(t *testing.T){
     found,err=MatchEvents("SQL timeout",data)
     if err!=nil||len(found)!=1{t.Fatalf("plain search: %v %v",found,err)}
 }
+
+func TestErrorBlocksPreserveExceptionFrames(t *testing.T){
+    events:=[]Event{
+        {Pod:"encounter-abc",Container:"api",Message:"[ERR] SQL failure",Level:"ERROR"},
+        {Pod:"encounter-abc",Container:"api",Message:"   at MyHandler.Run()"},
+        {Pod:"encounter-abc",Container:"api",Message:"   at MyRepository.Save()"},
+        {Pod:"encounter-abc",Container:"api",Message:"[INF] Connection alive",Level:"INFO"},
+        {Pod:"encounter-abc",Container:"api",Message:"[FTL] unrecoverable",Level:"FATAL"},
+    }
+    blocks:=ErrorBlocks(events)
+    if len(blocks)!=2||len(blocks[0])!=3||len(blocks[1])!=1{
+        t.Fatalf("exception continuation dropped or merged: %#v",blocks)
+    }
+}
