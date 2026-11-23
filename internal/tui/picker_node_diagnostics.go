@@ -146,7 +146,7 @@ func (m pickerModel) nodeDiagnosticLines() []string {
 		signals:=[]string{}
 		if pod.OOMKilled {signals=append(signals,"OOMKilled")}
 		if pod.Restarts>0 {signals=append(signals,fmt.Sprintf("%d restart(s)",pod.Restarts))}
-		if !pod.Ready && pod.Phase=="Running" {signals=append(signals,"not Ready")}
+		if pod.ReadyKnown && !pod.Ready && pod.Phase=="Running" {signals=append(signals,"not Ready")}
 		signals=append(signals,pod.Waiting...)
 		signals=append(signals,pod.Warnings...)
 		if len(signals)==0 {signals=append(signals,"no reported pod-level warning")}
