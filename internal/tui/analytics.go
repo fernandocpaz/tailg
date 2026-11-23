@@ -36,6 +36,21 @@ func (m model) renderAnalytics() string {
 			counts.StatusKnown,counts.Requests),
 		analyticsErrorTrend(snapshot.LastFive,snapshot.PreviousFive),
 	}
+	if m.width<80 {
+		lines=[]string{
+			fmt.Sprintf("Observed HTTP completion logs | %dm",period),
+			fmt.Sprintf("Requests: %d  4xx: %d  5xx: %d  Slow: %d",
+				counts.Requests,counts.ClientErrors,counts.ServerErrors,counts.Slow),
+			fmt.Sprintf("4xx rate: %s | 5xx rate: %s",
+				analyticsPercent(counts.ClientErrors,counts.StatusKnown),
+				analyticsPercent(counts.ServerErrors,counts.StatusKnown)),
+			fmt.Sprintf("Approx p50/p95/p99: %s / %s / %s",
+				analyticsDuration(counts,.50),analyticsDuration(counts,.95),analyticsDuration(counts,.99)),
+			fmt.Sprintf("HTTP status coverage: %d/%d | timed: %d/%d",
+				counts.StatusKnown,counts.Requests,counts.Timed,counts.Requests),
+			analyticsErrorTrend(snapshot.LastFive,snapshot.PreviousFive),
+		}
+	}
 	if len(m.reconnecting)>0 {
 		lines=append(lines,"INCOMPLETE: log streams reconnecting; request coverage may undercount")
 	}
