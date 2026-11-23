@@ -9,6 +9,7 @@ import (
     "time"
 
     "github.com/fernandocpaz/tailg/internal/core"
+    "github.com/fernandocpaz/tailg/internal/ai"
     "github.com/fernandocpaz/tailg/internal/tui"
 )
 
@@ -33,6 +34,7 @@ type Config struct {
     Title string
     InitialFilter string
     RegexFilter string // optional raw include-regex, like tailg --include
+    UseConfiguredAI bool // opt-in to tailg AI settings; analyses run only by explicit user action
     Namespace string
     Provider string
     Target string
@@ -118,6 +120,15 @@ func Run(ctx context.Context,c Config)error{
                 case <-ctx.Done():return ctx.Err()
                 }
             }
+        }
+    }
+    if c.UseConfiguredAI {
+        aiConfig,err:=ai.EnvConfig(nil)
+        if err!=nil{run.AIProblem=err.Error()}
+        run.AISettings=aiConfig
+        if err==nil && aiConfig.APIKey!="" && aiConfig.Model!="" {
+            run.AI,err=ai.New(aiConfig)
+            if err!=nil{run.AIProblem=err.Error()}
         }
     }
     if c.Inventory!=nil{
