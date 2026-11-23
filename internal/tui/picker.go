@@ -260,10 +260,12 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case keyMatches(key, pickerKeys.help):
 			m.helpVisible, m.helpScroll = true, 0
-		case keyMatches(key, pickerKeys.changes, pickerKeys.events):
+		case keyMatches(key, pickerKeys.changes, pickerKeys.events, pickerKeys.timeline):
 			m.activity.view = "changes"
 			if strings.EqualFold(key.String(), "e") {
 				m.activity.view = "events"
+			} else if strings.EqualFold(key.String(), "i") {
+				m.activity.view = "timeline"
 			}
 			m.activity.selected = 0
 			cmd := m.refreshNamespaceActivity()
