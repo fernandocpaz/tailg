@@ -49,6 +49,7 @@ type pickerModel struct {
 	nextDeploymentToastID int
 	activity              namespaceActivityState
 	nodeDiag              nodeDiagnosticState
+	charts                pickerChartState
 	updates               updateState
 }
 
@@ -224,7 +225,16 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.activity.tracker.Record(core.NamespaceChange{ID: fmt.Sprintf("log-errors/%s/%d", app.Name, at.UnixNano()), At: at, Object: m.activity.tracker.IncidentWorkloadObject(app.Name), Action: "Log errors observed", Detail: fmt.Sprintf("%d errors in the preceding minute across monitored pods of this displayed application; this observation does not establish when the issue began", count), Observed: true})
 			}
 		}
+		m.recordPickerLogScan(msg)
 		return m, cmd
+	}
+	if result, ok := message.(namespaceMetricsResultMsg); ok {
+		if m.monitorEnabled && result.generation == m.monitorGeneration &&
+			result.scope == activityScope(m.kubeContext,m.namespace) {
+			_,cmd := m.podMonitorState.update(message,m.pickerMonitorRows(),m.kubeContext,m.namespace)
+			m.recordPickerMetrics(result)
+			return m,cmd
+		}
 	}
 	if handled, cmd := m.podMonitorState.update(message, m.pickerMonitorRows(), m.kubeContext, m.namespace); handled {
 		return m, cmd
@@ -261,6 +271,9 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.nodeDiag.open {
 			return m.updateNodeDiagnosticKey(key)
 		}
+		if m.charts.open {
+			return m.updatePickerChartsKey(key)
+		}
 		if m.helpVisible {
 			return m.updatePickerHelp(key)
 		}
@@ -279,6 +292,8 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		case keyMatches(key, pickerKeys.nodes):
 			return m,m.openNodeDiagnostics()
+		case keyMatches(key, pickerKeys.charts):
+			return m,m.openPickerCharts()
 		case keyMatches(key, pickerKeys.quit):
 			m.podMonitorState.stop()
 			m.result.Action = PickerQuit
@@ -306,13 +321,7 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.openPickerSelection("pods")
 		case keyMatches(key, pickerKeys.monitor):
-			m.monitorApps = nil
-			if m.monitorEnabled {
-				m.clearDeploymentNotifications()
-			} else {
-				m.beginDeploymentNotifications()
-			}
-			return m, m.podMonitorState.toggle(preparePodPickerRows(m.apps), m.kubeContext, m.namespace)
+			return m, m.togglePickerMonitoring()
 		case keyMatches(key, pickerKeys.mark):
 			if len(m.apps) > 0 {
 				if m.apps[m.index].CronJob != nil && len(m.apps[m.index].Pods) == 0 {
@@ -424,6 +433,10 @@ func (m pickerModel) View() string {
 		dialog, _ := m.nodeDiagnosticModal()
 		return overlayModal(background, dialog, width, height)
 	}
+	if m.charts.open {
+		width,height:=m.modalViewport()
+		return overlayModal(background,m.pickerChartsModal(),width,height)
+	}
 	if m.confirmRun == nil {
 		return background
 	}
@@ -433,7 +446,7 @@ func (m pickerModel) View() string {
 }
 
 func (m pickerModel) showUpdate() bool {
-	return !m.introActive && m.updates.pending && m.selection == nil && !m.helpVisible && m.activity.view == "" && !m.nodeDiag.open && m.confirmRun == nil
+	return !m.introActive && m.updates.pending && m.selection == nil && !m.helpVisible && m.activity.view == "" && !m.nodeDiag.open && !m.charts.open && m.confirmRun == nil
 }
 
 func (m pickerModel) pickerView() string {

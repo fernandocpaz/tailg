@@ -233,7 +233,7 @@ Running `tailg` with no target opens the interactive application picker in the
 current Kubernetes namespace. The picker uses the full terminal screen and
 restores the shell when you leave. Context (`C`) and namespace (`N`) stay at
 the top; **Inspect** groups Changes (`H`), Events (`E`), Incident timeline
-(`I`), and node diagnostics (`D`), beside **Watch**
+(`I`), node diagnostics (`D`), and workload charts (`F9`), beside **Watch**
 and the monitor (`M`). Row actions stay at the bottom, with Run now (`X`)
 shown when a CronJob is highlighted. Press `?` for scrollable keyboard help.
 Columns adapt to the terminal width; the highlighted workload's summary appears
@@ -851,7 +851,34 @@ radar to mark the currently retained groups known and start a new baseline;
 press `C` to clear the groups. Baselines are local to the session and bounded
 by the retained issue groups.
 
-### Rolling HTTP analytics and charts (F9)
+### Workload CPU, memory and log-error charts from the picker (F9)
+
+**You do not need to open the log viewer to see charts.** Start tailg,
+highlight a running application, and press **F9** directly from the application
+list. This opens a chart modal for the highlighted workload. If monitoring
+was off, F9 automatically starts the existing **M** monitor. The initial view
+may say "Collecting monitor samples..." until the Metrics API responds.
+CPU and memory sampling uses the same namespace-scoped, 15-second metrics
+polling already used by the application picker. A separate log scan collects
+observed errors/warnings approximately once a minute.
+
+- **1 / 2 / 3:** CPU millicore usage, memory MiB usage, or observed log
+  error/warning counts; **G:** toggle the wide-screen chart grid; **Up/Down:**
+  choose another running workload without closing the charts.
+- **M:** start/stop monitoring; **F9 / Esc:** close the charts and return to
+  the same highlighted application (monitoring continues unless stopped).
+- Chart history is local to the picker session, bounded to 61 samples per
+  workload and starts when monitoring starts; no historical metrics are
+  invented. The time scale covers the preceding 15 minutes. Scope switches
+  and monitor restarts clear old history; rejected/stale or missing metric
+  readings never masquerade as genuine zeros.
+
+These picker charts show **Kubernetes workload CPU, memory and monitor log
+signals**. They are not the HTTP completion charts below. When Metrics Server
+or RBAC is unavailable, the chart explains the visibility gap instead of
+reporting zero CPU or memory usage.
+
+### Rolling HTTP analytics and charts in the live log viewer (F9)
 
 Press **F9** in the live log viewer to open a local, read-only performance
 dashboard powered by the Bubble Tea v1-compatible **ntcharts** renderer.
