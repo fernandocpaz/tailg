@@ -61,3 +61,15 @@ func TestAnalyticsKeyDoesNotChangeSearchFilter(t *testing.T) {
 		t.Fatalf("F9 toggling changed search state: open=%t filter=%q", got.analyticsOpen, got.input.Value())
 	}
 }
+
+func TestAnalyticsErrorTrendNeedsRealBaselineAndLargeChange(t *testing.T) {
+	if message := analyticsErrorTrend(core.AnalyticsCounts{StatusKnown: 10, ServerErrors: 10}, core.AnalyticsCounts{StatusKnown: 10}); !strings.Contains(message, "insufficient") {
+		t.Fatalf("sparse baseline should be inconclusive: %q", message)
+	}
+	if message := analyticsErrorTrend(core.AnalyticsCounts{StatusKnown: 100, ServerErrors: 20}, core.AnalyticsCounts{StatusKnown: 100, ServerErrors: 1}); !strings.Contains(message, "Possible 5xx spike") {
+		t.Fatalf("strong spike should be flagged: %q", message)
+	}
+	if message := analyticsErrorTrend(core.AnalyticsCounts{StatusKnown: 100, ServerErrors: 2}, core.AnalyticsCounts{StatusKnown: 100, ServerErrors: 1}); strings.Contains(message, "Possible 5xx spike") {
+		t.Fatalf("small random movement should not be flagged: %q", message)
+	}
+}
