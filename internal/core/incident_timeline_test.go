@@ -34,7 +34,7 @@ func incidentFixture(at time.Time) NamespaceActivityTracker {
 		Action: "Image changed", Detail: "not related", Observed: true,
 	})
 	tracker.Record(NamespaceChange{
-		ID: "error-scan", At: at.Add(-30 * time.Second), Object: "Application/api",
+		ID: "error-scan", At: at.Add(-30 * time.Second), Object: tracker.IncidentWorkloadObject("api"),
 		Action: "Log errors observed", Detail: "4 errors in preceding minute", Observed: true,
 	})
 	return tracker
@@ -138,5 +138,23 @@ func TestIncidentTimelineRespectsHorizonAndIncompleteSources(t *testing.T) {
 	// Window expiry is independent of the source's stale-retention failure.
 	if got := tracker.IncidentTimeline(now.Add(25*time.Hour), false); len(got) != 0 {
 		t.Fatalf("old timeline entries should age out: %v", got)
+	}
+}
+
+func TestIncidentWorkloadObjectRequiresVerifiedUnambiguousController(t *testing.T) {
+	now := time.Date(2026, 11, 23, 16, 0, 0, 0, time.UTC)
+	tracker := incidentFixture(now)
+	if got := tracker.IncidentWorkloadObject("api"); got != "Deployment/api" {
+		t.Fatalf("verified app mapping=%q", got)
+	}
+	if got := tracker.IncidentWorkloadObject("missing"); got != "Application/missing" {
+		t.Fatalf("unverified app should not be guessed: %q", got)
+	}
+	tracker.Apply(NamespaceActivitySnapshot{
+		At: now.Add(time.Minute), Complete: map[string]bool{"statefulsets": true},
+		Objects: []NamespaceObject{{Kind: "StatefulSet", Resource: "statefulsets", Name: "api", UID: "stateful"}},
+	})
+	if got := tracker.IncidentWorkloadObject("api"); got != "Application/api" {
+		t.Fatalf("ambiguous same-name controller must not be guessed: %q", got)
 	}
 }
