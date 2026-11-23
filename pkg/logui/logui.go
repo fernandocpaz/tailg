@@ -217,3 +217,24 @@ func MatchEvents(query string,events []Event)([]Event,error){
     }
     return matching,nil
 }
+
+// ErrorBlocks preserves multi-record exception continuations using the same
+// rule as tailg's selected-log detail and F3 exception grouping.
+func ErrorBlocks(events []Event)[][]Event{
+    var blocks [][]Event
+    var current []Event
+    for _,event:=range events{
+        ev:=ToLogEvent(event)
+        level:=core.ParseLogFields(ev).Level
+        severe:=level=="ERR"||level=="FTL"
+        continuation:=core.IsLogContinuation(event.Message)
+        if len(current)>0&&continuation&&event.Pod==current[0].Pod&&event.Container==current[0].Container{
+            current=append(current,event)
+            continue
+        }
+        if len(current)>0 {blocks=append(blocks,current);current=nil}
+        if severe {current=[]Event{event}}
+    }
+    if len(current)>0{blocks=append(blocks,current)}
+    return blocks
+}
