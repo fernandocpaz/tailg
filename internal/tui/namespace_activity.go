@@ -243,38 +243,25 @@ func (m pickerModel) namespaceActivityEntries() []namespaceActivityEntry {
 			} else if item.Observed {
 				source = "Observed by tailg; exact change/error onset time is unknown"
 			}
-			detail := fmt.Sprintf("%s · %s · %s
-Timestamp: %s
-Time source: %s
-
-%s",
+			detail := fmt.Sprintf("%s · %s · %s\nTimestamp: %s\nTime source: %s\n\n%s",
 				item.Kind, item.Heading, item.Object, activityTime(item.At), source, item.Detail)
 			if item.Warning {
-				detail += "
-
-Changes in the 15 minutes preceding the first observed signal:"
+				detail += "\n\nChanges in the 15 minutes preceding the first observed signal:"
 				if len(item.Nearby) == 0 {
-					detail += "
-  No verified same-workload changes found in retained history."
+					detail += "\n  No verified same-workload changes found in retained history."
 				}
 				for _, change := range item.Nearby {
 					origin := "Kubernetes timestamp"
 					if change.Observed {
 						origin = "Tailg observed; actual change time unknown"
 					}
-					detail += fmt.Sprintf("
-  %s · %s · %s
-  %s
-  Time source: %s",
+					detail += fmt.Sprintf("\n  %s · %s · %s\n  %s\n  Time source: %s",
 						activityTime(change.At), change.Action, change.Object, change.Detail, origin)
 				}
-				detail += "
-
-Nearby changes are diagnostic context, not proof of causation. Relatedness uses only current Kubernetes ownerReferences or exact resource identity."
+				detail += "\n\nNearby changes are diagnostic context, not proof of causation. Relatedness uses only current Kubernetes ownerReferences or exact resource identity."
 			}
 			preview := item.Detail
-			if i := strings.IndexByte(preview, '
-'); i >= 0 {
+			if i := strings.IndexByte(preview, '\n'); i >= 0 {
 				preview = preview[:i]
 			}
 			heading := fmt.Sprintf("%s · %s · %s · %s", activityTime(item.At), item.Kind, item.Heading, item.Object)
