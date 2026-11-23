@@ -22,7 +22,7 @@ func pickerChartsDemo() pickerModel {
 	apps:=[]core.AppChoice{
 		{Name:"api",Pods:[]string{"api-1","api-2"}},
 		{Name:"worker",Pods:[]string{"worker-1"}},
-		{Name:"batch",CronJob:&core.CronJobChoice{}},
+		{Name:"batch",CronJob:&core.CronJobInfo{}},
 	}
 	m:=newPickerModel(apps,len(apps),"tkgs-qa","apollo",nil)
 	m.width,m.height=128,34
