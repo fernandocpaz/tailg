@@ -138,7 +138,7 @@ func (m pickerModel) pickerScreenHeader(width int) []string {
 		lines = append(lines, headerStyle.Render("tailg")+"  "+scope(pickerKeys.context, "Context", m.kubeContext, width-7))
 		lines = append(lines, scope(pickerKeys.namespace, "Namespace", m.namespace, width))
 	}
-	inspect := dimStyle.Render("INSPECT  ") + strings.Join(pickerKeyHints(width, pickerKeys.changes, pickerKeys.events, pickerKeys.timeline, pickerKeys.nodes), "  ")
+	inspect := dimStyle.Render("INSPECT  ") + strings.Join(pickerKeyHints(width, pickerKeys.changes, pickerKeys.events, pickerKeys.timeline, pickerKeys.nodes, pickerKeys.charts), "  ")
 	watch := dimStyle.Render("WATCH  ") + headerStyle.Render("M") + " " + podMonitorSummary(m.monitorEnabled, m.monitorBusy, m.monitorLastScan, m.monitorError)
 	if lipgloss.Width(inspect+"    "+watch) <= width {
 		lines = append(lines, inspect+"    "+watch)
@@ -189,14 +189,14 @@ func (m pickerModel) pickerScreenFooter(width int) []string {
 	}
 	footer = append(footer, dimStyle.Render(strings.Repeat("─", width)))
 	move := pickerBinding("↑↓", "Move", "up", "down")
-	bindings := []key.Binding{move, pickerKeys.mark, pickerKeys.open, pickerKeys.file, pickerKeys.pods, pickerKeys.refresh}
+	bindings := []key.Binding{move, pickerKeys.mark, pickerKeys.open, pickerKeys.charts, pickerKeys.file, pickerKeys.pods, pickerKeys.refresh}
 	isCronJob := m.index >= 0 && m.index < len(m.apps) && m.apps[m.index].CronJob != nil
 	if isCronJob {
 		bindings = append(bindings, pickerKeys.run)
 	}
 	bindings = append(bindings, pickerKeys.help, pickerKeys.quit)
 	if width < 60 || (m.height > 0 && m.height < 16) {
-		bindings = []key.Binding{move, pickerKeys.open}
+		bindings = []key.Binding{move, pickerKeys.open, pickerKeys.charts}
 		if isCronJob {
 			bindings = append(bindings, pickerKeys.run)
 		}
