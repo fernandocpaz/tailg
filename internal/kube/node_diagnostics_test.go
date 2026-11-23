@@ -22,7 +22,7 @@ func TestNodeDiagnosticsDetectPodOOMAndWaitingReasons(t *testing.T) {
 			},
 		},
 	})
-	if pod.Name!="api-42" || pod.Node!="worker-1" || pod.Restarts!=4 || !pod.OOMKilled || pod.Ready ||
+	if pod.Name!="api-42" || pod.Node!="worker-1" || pod.Restarts!=4 || !pod.OOMKilled || pod.Ready || !pod.ReadyKnown ||
 		len(pod.Waiting)!=1 || pod.Waiting[0]!="sidecar: CrashLoopBackOff" {
 		t.Fatalf("unexpected pod diagnostic: %+v",pod)
 	}
