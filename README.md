@@ -632,6 +632,51 @@ viewing a security assessment, press **S** or **Esc** to return to the original
 log detail, or **Enter** to copy the report. AI explanation stays on **A**;
 AI provider settings from the detail view have moved from **S** to **O**.
 
+## Stream-wide security radar (F10)
+
+Press **F10** from the live log viewer to open the new passive security
+radar. It watches HTTP completion entries already flowing through the live
+stream, and uses five *calendar-minute* buckets to detect repeated patterns:
+
+- **AUTH-BURST**: at least 20 HTTP 401/403 responses from a source with 30+
+  logged completions and a failure ratio of at least 60% in the window.
+- **PATH-SCAN**: at least 20 HTTP 404 responses covering at least 12 distinct
+  normalized paths from the same source, with at least half its observed
+  requests returning 404.
+- **WEB-SQLI / WEB-TRAVERSAL / WEB-XSS / WEB-COMMAND**: at least three
+  repeated suspicious request-path indicators per source.
+- **WEB-PROBE / WEB-METHOD**: five repeated sensitive-path or unusual-method
+  indicators per source. With *unknown source*, the radar only reports
+  repeated indicators aggregated per workload (at least five); it cannot
+  attribute an authentication burst or scan to an individual client.
+
+These are deterministic **heuristics, not proof of malicious activity**.
+Some legitimate traffic (e.g., automated testing, crawlers, authentication
+integration failures) can look suspicious. A source address must be parseable
+from a server-reported field such as 'RemoteIpAddress', 'remote_addr', or
+'client.ip'; Tailg deliberately does *not* trust 'X-Forwarded-For' or
+'Forwarded' to identify the actor. Validate your own logging/proxy setup
+before relying on the attribution; a load balancer may be the logged source.
+
+**Scope and cost:** the radar runs only while Tailg follows the selected
+pod streams. It neither fetches extra history nor adds Kubernetes watchers,
+cluster permissions, external calls, files, or automatic blocking. It excludes
+replayed, untimestamped, out-of-window, and transport-control events; logs
+with neither status nor duration are not treated as completions. Counts can
+be incomplete because of sampling, logging conventions, source selection,
+proxy aggregation, log rotation, and disconnects. It cannot distinguish
+two duplicated completion lines emitted by the application.
+
+**Memory and privacy:** at most 96 source/workload groups per minute, 48
+normalized 404 paths per group and 20 findings are displayed. Overflow is
+shown explicitly, not silently treated as complete coverage. Only counters,
+signal IDs, validated source addresses, and bounded normalized path sets are
+held temporarily in memory: raw query strings, bodies, and credentials are
+not retained by the radar. Only the **request path** is signature-scanned,
+never an application exception payload. F10 leaves the ordinary log buffer
+and filter unchanged. Press **F10** or **Esc** to close. The original
+single-record **S** inspector remains available.
+
 ## Live view
 
 Following logs opens the full-screen filter by default. Typing in the filter
@@ -704,6 +749,7 @@ the view is paused or the service is quiet.
 | `F7` | Explain the selected pod's replica count and controller |
 | `F8` | Open the Issue Radar for grouped errors and warnings |
 | `F9` | Open rolling HTTP completion analytics and latency distributions |
+| `F10` | Open rolling stream-wide suspicious-request detection (passive) |
 | `Up` / `Down` | Move the selected log line |
 | `PageUp` / `PageDown` | Move by one screen |
 | `Home` / `End` | Jump to the start or resume live tailing |
