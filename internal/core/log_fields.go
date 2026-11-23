@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"math"
+	"net/netip"
 	"regexp"
 	"sort"
 	"strconv"
@@ -44,6 +45,19 @@ func ParseLogFields(event LogEvent) LogFields {
 	}
 	f.SpanID = validSpanID(logEntryString(entries, "@sp", "spanid", "span_id", "span-id", "span"))
 	f.RequestID = logEntryString(entries, "requestid", "request_id", "request-id", "requestId", "x-request-id", "correlationid", "correlation_id")
+	// These are server-observed remote-address fields. Never infer source
+	// identity from X-Forwarded-For/Forwarded because clients can spoof them
+	// unless a trusted proxy contract has been configured elsewhere.
+	for _, entry := range orderedLogEntries(entries, "remoteipaddress", "remote_addr", "remote_ip", "client.ip", "clientip", "client_ip") {
+		raw, ok := logValueString(entry.value)
+		if !ok {
+			continue
+		}
+		if ip := validLogClientIP(raw); ip != "" {
+			f.ClientIP = ip
+			break
+		}
+	}
 
 	// Serilog's conventional HTTP text format supplies these values even when
 	// the trailing properties object is unavailable.
@@ -356,4 +370,25 @@ func normalizeLogLevel(value string) string {
 	default:
 		return text
 	}
+}
+
+
+func validLogClientIP(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if len(raw) > 128 || strings.Contains(raw, ",") {
+		return ""
+	}
+	if addr, err := netip.ParseAddr(raw); err == nil {
+		if addr.IsUnspecified() {
+			return ""
+		}
+		return addr.Unmap().WithoutZone().String()
+	}
+	if addr, err := netip.ParseAddrPort(raw); err == nil {
+		if addr.Addr().IsUnspecified() {
+			return ""
+		}
+		return addr.Addr().Unmap().WithoutZone().String()
+	}
+	return ""
 }
