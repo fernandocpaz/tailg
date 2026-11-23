@@ -681,6 +681,7 @@ the view is paused or the service is quiet.
 | `F6` | Follow the selected request's trace across the selected workloads |
 | `F7` | Explain the selected pod's replica count and controller |
 | `F8` | Open the Issue Radar for grouped errors and warnings |
+| `F9` | Open rolling HTTP completion analytics and latency distributions |
 | `Up` / `Down` | Move the selected log line |
 | `PageUp` / `PageDown` | Move by one screen |
 | `Home` / `End` | Jump to the start or resume live tailing |
@@ -755,6 +756,39 @@ session baseline; historical or undated records are `KNOWN`. Press `B` in the
 radar to mark the currently retained groups known and start a new baseline;
 press `C` to clear the groups. Baselines are local to the session and bounded
 by the retained issue groups.
+
+### Rolling HTTP analytics (F9)
+
+In the live log view, press **F9** to open a read-only analytics dashboard. It
+computes recent HTTP completion counts and 4xx/5xx rates from timestamped log
+entries already being streamed by tailg. The dashboard includes:
+
+- Fifteen wall-clock minute buckets, with sparkline trends for request counts
+  and HTTP 5xx responses. The current minute is partial.
+- Observed requests/minute for the most recent five buckets and the preceding
+  five, plus approximate p50/p95/p99 latency from bounded histogram bins.
+- Slow-request counts (>250 ms), HTTP status/duration sample coverage, and the
+  eight most active normalized endpoint groups (including requests, 5xx and ~p95).
+- An indicative 5xx-spike hint comparing the two most recent five-minute groups
+  only when both have at least 30 status samples and the increase is substantial.
+- An explicit warning if log streams are reconnecting.
+
+Press **F9** again or **Esc** to return without altering the search filter or
+live-follow state. The standard F1–F8, S, and other log shortcuts are unchanged.
+
+**Interpretation:** This is log-derived diagnostics, not complete HTTP traffic
+telemetry or an SLO measurement. A completion is counted only when its event has
+an HTTP method, path and status or duration; events lacking Kubernetes source
+timestamps, replayed events, stream-control messages, and older history are
+excluded. Health/probe suppression and upstream logging/sampling may reduce
+coverage. Counts are exact for accepted completion events, but error percentages use only
+completions with recognized HTTP status codes. Percentiles use
+coarse histogram upper bounds and are labeled approximate; the rolling window
+uses fifteen calendar-minute buckets rather than a second-accurate 900-second
+window. Numeric/UUID URL path segments are grouped; per-minute endpoint
+cardinality is bounded to 64 distinct groups plus a shared overflow bucket.
+No external services, background agents, metrics-server access, or additional
+Kubernetes permissions are required.
 
 ### Structured filters and request timelines
 

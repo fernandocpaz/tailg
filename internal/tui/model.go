@@ -135,6 +135,8 @@ type model struct {
 	reconnecting    map[string]struct{} // real kubectl transport failures
 	reattaching     map[string]struct{} // clean EOF while pod remains active
 	issues          *core.IssueRadar
+	analytics       *core.RollingAnalytics
+	analyticsOpen   bool
 	issueOpen       bool
 	issueIndex      int
 	issueLineOffset int
@@ -251,6 +253,7 @@ func Run(parent context.Context, config Config) error {
 		searches:  &searchController{},
 		searching: strings.TrimSpace(shared.text) != "" && (config.Search != nil || config.SearchRecords != nil),
 		issues:    core.NewIssueRadar(200),
+		analytics: core.NewRollingAnalytics(),
 	}
 	// Recording sessions capture clicks for the path link. Shift-drag retains
 	// native terminal selection; other sessions keep mouse reporting opt-in.
@@ -508,6 +511,8 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.closeErrorLogs()
 			} else if m.traceOpen {
 				m.closeTrace()
+			} else if m.analyticsOpen {
+				m.analyticsOpen = false
 			} else if m.issueOpen {
 				m.issueOpen = false
 			} else if m.freshnessOpen {
@@ -541,6 +546,12 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.issueOpen {
 			return m.updateIssueKey(key)
+		}
+		if m.analyticsOpen {
+			if key == "f9" {
+				m.analyticsOpen = false
+			}
+			return m, nil
 		}
 		if m.resourceOpen {
 			return m.updateResourceKey(key)
@@ -599,6 +610,9 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.issueIndex = 0
 			m.issueLineOffset = 0
 			m.notice = ""
+			return m, nil
+		case "f9":
+			m.analyticsOpen = true
 			return m, nil
 		case "f7":
 			cmd := m.openReplicaExplanation()
@@ -716,6 +730,9 @@ func (m model) View() string {
 	}
 	if m.issueOpen {
 		return m.renderIssueRadar()
+	}
+	if m.analyticsOpen {
+		return m.renderAnalytics()
 	}
 	if m.resourceOpen {
 		if m.resourceDetail != "" {
@@ -971,6 +988,7 @@ func (m model) renderFooter() string {
 		renderKey("F2", "resources", m.config.Formatter.Color),
 		renderKey("F3", "errors", m.config.Formatter.Color),
 		m.renderIssueKey(),
+		renderKey("F9", "analytics", m.config.Formatter.Color),
 		renderKey("F4", "streams", m.config.Formatter.Color),
 		m.renderHeartbeatKey(),
 		renderKey("F6", "trace", m.config.Formatter.Color),
@@ -1721,6 +1739,9 @@ func (m *model) processLogBatch(events []core.LogEvent) error {
 	if m.issues == nil {
 		m.issues = core.NewIssueRadar(200)
 	}
+	if m.analytics == nil {
+		m.analytics = core.NewRollingAnalytics()
+	}
 	previousCount := 0
 	if !m.followsLive {
 		previousCount = m.state.VisibleCount()
@@ -1778,6 +1799,7 @@ func (m *model) processLogBatch(events []core.LogEvent) error {
 		formatted := core.RecordsForEvent(m.config.Formatter, event, true)
 		if len(formatted) > 0 {
 			m.issues.Observe(event)
+			m.analytics.Observe(event)
 			records = append(records, formatted...)
 			if m.config.CaptureLogs != nil {
 				capturedEvents = append(capturedEvents, formatted)
