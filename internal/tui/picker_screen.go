@@ -59,6 +59,10 @@ func (m pickerModel) pickerScreen() string {
 	}
 	rows := make([]pickerViewportRow, len(m.apps))
 	appColumns, jobColumns := pickerColumnsWithMetrics(width, false, m.monitorEnabled), pickerColumnsWithMetrics(width, true, m.monitorEnabled)
+    if m.external{
+        appColumns=externalPickerColumns(width)
+        jobColumns=appColumns
+    }
 	var headers [2][]string
 	for section, columns := range [][]pickerColumn{appColumns, jobColumns} {
 		headers[section] = []string{dimStyle.Render(pickerTableLine("      ", columns, nil)), dimStyle.Render(strings.Repeat("─", width))}
@@ -71,6 +75,7 @@ func (m pickerModel) pickerScreen() string {
 			rows[i].section = 1
 		}
 		values := pickerRowValues(app, now)
+        if m.external{values["lastlog"]=formatPickerAge(now,app.LastLogAt)}
 		values["sidecars"] = "-"
 		if count := len(pickerAppSidecars(app)); count > 0 {
 			values["sidecars"] = fmt.Sprint(count)
@@ -342,4 +347,14 @@ func pickerAppSidecars(app core.AppChoice) map[string]bool {
 		}
 	}
 	return sidecars
+}
+
+func externalPickerColumns(width int)[]pickerColumn{
+    remaining:=max(1,width-6)
+    if width<46{return []pickerColumn{{id:"name",title:"APPLICATION",width:remaining}}}
+    ageWidth:=16
+    return []pickerColumn{
+        {id:"name",title:"APPLICATION",width:max(1,remaining-ageWidth-1)},
+        {id:"lastlog",title:"LAST LOG",width:ageWidth},
+    }
 }

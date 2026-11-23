@@ -15,6 +15,7 @@ const (
 var DefaultExcludePatterns = []string{"health|ready|live"}
 
 type InventoryItem struct {
+    Workload string // optional logical workload for non-Kubernetes providers
 	Pod          string
 	Container    string
 	PodUID       string
@@ -40,6 +41,7 @@ type MappedResource struct {
 }
 
 type AppChoice struct {
+    LastLogAt time.Time // provider-supplied observation, never a deployment timestamp
 	Namespace  string
 	Name       string
 	Pods       []string

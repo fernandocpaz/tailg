@@ -31,6 +31,7 @@ type Event struct{
 }
 type Config struct {
     Title string
+    InitialFilter string
     Namespace string
     Provider string
     Target string
@@ -64,7 +65,7 @@ func inventory(items []Source)[]core.InventoryItem{
     seen:=make(map[string]bool,len(items))
     for _,s:=range items{
         if s.Pod==""||s.Container==""||seen[s.Key()]{continue}
-        out=append(out,core.InventoryItem{Pod:s.Pod,Container:s.Container})
+        out=append(out,core.InventoryItem{Workload:s.Workload,Pod:s.Pod,Container:s.Container})
         seen[s.Key()]=true
     }
     return out
@@ -83,7 +84,7 @@ func Run(ctx context.Context,c Config)error{
     if c.Stream==nil{return errors.New("log provider Stream is required")}
     f:=formatter(c)
     run:=tui.Config{
-        AppName:"DynaR",
+        AppName:"DynaR", InitialFilter:c.InitialFilter,
         Title:c.Title,Namespace:c.Namespace,KubeContext:c.Provider,Target:c.Target,
         Items:inventory(c.Sources),Formatter:f,
         RefreshInterval:c.RefreshInterval,BufferLines:c.BufferLines,
@@ -174,7 +175,7 @@ type Selection struct {
 func PickApps(apps []App,source,namespace string)(Selection,error){
     choices:=make([]core.AppChoice,0,len(apps))
     for _,app:=range apps{
-        choices=append(choices,core.AppChoice{Name:app.Name,Namespace:namespace,Pods:append([]string(nil),app.Pods...),DeployedAt:app.LastSeen,Ready:"-",Phases:"Logs"})
+        choices=append(choices,core.AppChoice{Name:app.Name,Namespace:namespace,Pods:append([]string(nil),app.Pods...),LastLogAt:app.LastSeen,Ready:"-",Phases:"Logs"})
     }
     result,err:=tui.PickExternalApps(choices,source,namespace)
     if err!=nil{return Selection{},err}
@@ -182,4 +183,20 @@ func PickApps(apps []App,source,namespace string)(Selection,error){
     selected:=Selection{}
     for _,choice:=range result.Apps{selected.Workloads=append(selected.Workloads,choice.Name)}
     return selected,nil
+}
+
+// MatchEvents applies the exact same structured query syntax used by tailg's
+// local and full-history search (level:, service:, pod:, trace:, duration:, ...).
+func MatchEvents(query string,events []Event)([]Event,error){
+    compiled,err:=core.CompileLogQuery(query)
+    if err!=nil{return nil,err}
+    f:=core.Formatter{Color:false,ShowPod:false}
+    var matching []Event
+    for _,e:=range events{
+        records:=core.RecordsForEvent(f,ToLogEvent(e),false)
+        for _,r:=range records{
+            if compiled.Matches(r){matching=append(matching,e);break}
+        }
+    }
+    return matching,nil
 }

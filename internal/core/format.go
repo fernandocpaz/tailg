@@ -223,10 +223,12 @@ func ServiceNames(items []InventoryItem) []string {
 	seen := map[string]bool{}
 	var services []string
 	for _, item := range items {
-		if !seen[item.Container] {
-			seen[item.Container] = true
-			services = append(services, item.Container)
-		}
+		name := item.Container
+        if item.Workload!=""{name=item.Workload}
+        if !seen[name] {
+            seen[name]=true
+            services=append(services,name)
+        }
 	}
 	sort.Strings(services)
 	return services

@@ -25,6 +25,7 @@ import (
 
 type Config struct {
     AppName string // optional branding; defaults to tailg
+    InitialFilter string // optional provider-supplied starting filter
 	AI              *ai.Client
 	AISettings      ai.Config
 	AIProblem       string
@@ -247,9 +248,12 @@ func Run(parent context.Context, config Config) error {
 	state := core.NewFilterState(bufferLines)
 	shared := readShared(config.FilterFile)
 	if shared.textValid && shared.text != "" {
-		input.SetValue(shared.text)
-		state.SetFilter(shared.text)
-	}
+        input.SetValue(shared.text)
+        state.SetFilter(shared.text)
+    } else if strings.TrimSpace(config.InitialFilter)!="" {
+        input.SetValue(config.InitialFilter)
+        state.SetFilter(config.InitialFilter)
+    }
 	state.SetMatchesOnly(shared.modeValid && shared.mode)
 	m := model{
 		updates: updateState{client: config.Updates},
@@ -259,7 +263,7 @@ func Run(parent context.Context, config Config) error {
 		lastSharedText: shared.text, lastSharedMode: shared.mode,
 		lastTextRev: shared.textRevision, lastModeRev: shared.modeRevision,
 		searches:  &searchController{},
-		searching: strings.TrimSpace(shared.text) != "" && (config.Search != nil || config.SearchRecords != nil),
+		searching: strings.TrimSpace(input.Value()) != "" && (config.Search != nil || config.SearchRecords != nil),
 		issues:    core.NewIssueRadar(200),
 		analytics: core.NewRollingAnalytics(),
 		securityRadar: core.NewSecurityRadar(),
@@ -926,7 +930,9 @@ func (m model) renderHeader() string {
 	headerParts := []string{renderWithColor(headerStyle, m.brandName(), m.config.Formatter.Color)}
 	if m.config.KubeContext != "" {
 		// Keep context near the front so it remains visible when split panes are narrow.
-		headerParts = append(headerParts, renderWithColor(dimStyle, "context "+m.config.KubeContext, m.config.Formatter.Color))
+		label:="context"
+        if m.config.AppName!="" && m.config.AppName!="tailg"{label="source"}
+        headerParts = append(headerParts, renderWithColor(dimStyle,label+" "+m.config.KubeContext,m.config.Formatter.Color))
 	}
 	headerParts = append(headerParts,
 		truncate(services, 32),
