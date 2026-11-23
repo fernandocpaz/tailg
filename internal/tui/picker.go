@@ -217,7 +217,7 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				if at.IsZero() {
 					at = time.Now()
 				}
-				m.activity.tracker.Record(core.NamespaceChange{ID: fmt.Sprintf("log-errors/%s/%d", app.Name, at.UnixNano()), At: at, Object: app.Name, Action: "Log errors observed", Detail: fmt.Sprintf("%d errors in the preceding minute across monitored pods of this displayed application; this observation does not establish when the issue began", count), Observed: true})
+				m.activity.tracker.Record(core.NamespaceChange{ID: fmt.Sprintf("log-errors/%s/%d", app.Name, at.UnixNano()), At: at, Object: m.activity.tracker.IncidentWorkloadObject(app.Name), Action: "Log errors observed", Detail: fmt.Sprintf("%d errors in the preceding minute across monitored pods of this displayed application; this observation does not establish when the issue began", count), Observed: true})
 			}
 		}
 		return m, cmd
@@ -260,10 +260,12 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case keyMatches(key, pickerKeys.help):
 			m.helpVisible, m.helpScroll = true, 0
-		case keyMatches(key, pickerKeys.changes, pickerKeys.events):
+		case keyMatches(key, pickerKeys.changes, pickerKeys.events, pickerKeys.timeline):
 			m.activity.view = "changes"
 			if strings.EqualFold(key.String(), "e") {
 				m.activity.view = "events"
+			} else if strings.EqualFold(key.String(), "i") {
+				m.activity.view = "timeline"
 			}
 			m.activity.selected = 0
 			cmd := m.refreshNamespaceActivity()

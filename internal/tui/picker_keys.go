@@ -16,7 +16,7 @@ func pickerBinding(label, description string, keys ...string) key.Binding {
 
 var pickerKeys = struct {
 	up, down, pageUp, pageDown, home, end, mark, open, file, pods          key.Binding
-	context, namespace, changes, events, monitor, refresh, run, help, quit key.Binding
+	context, namespace, changes, events, timeline, monitor, refresh, run, help, quit key.Binding
 }{
 	up:        pickerBinding("↑/k", "Move up", "up", "k"),
 	down:      pickerBinding("↓/j", "Move down", "down", "j"),
@@ -32,6 +32,7 @@ var pickerKeys = struct {
 	namespace: pickerBinding("N", "Namespace", "n", "N"),
 	changes:   pickerBinding("H", "Changes", "h", "H"),
 	events:    pickerBinding("E", "Events", "e", "E"),
+	timeline:  pickerBinding("I", "Incidents", "i", "I"),
 	monitor:   pickerBinding("M", "Monitor", "m", "M"),
 	refresh:   pickerBinding("R", "Refresh", "r", "R"),
 	run:       pickerBinding("X", "Run now", "x", "X"),
@@ -114,7 +115,7 @@ func (m pickerModel) pickerHelpModal() (string, int) {
 		title string
 		keys  []key.Binding
 	}{
-		{"NAMESPACE", []key.Binding{pickerKeys.context, pickerKeys.namespace, pickerKeys.changes, pickerKeys.events, pickerKeys.monitor, pickerKeys.refresh}},
+		{"NAMESPACE", []key.Binding{pickerKeys.context, pickerKeys.namespace, pickerKeys.changes, pickerKeys.events, pickerKeys.timeline, pickerKeys.monitor, pickerKeys.refresh}},
 		{"SELECTED ROW", []key.Binding{pickerKeys.mark, pickerKeys.open, pickerKeys.file, pickerKeys.pods, pickerKeys.run}},
 		{"NAVIGATION", []key.Binding{pickerKeys.up, pickerKeys.down, pickerKeys.pageUp, pickerKeys.pageDown, pickerKeys.home, pickerKeys.end, pickerKeys.help, pickerKeys.quit}},
 	}

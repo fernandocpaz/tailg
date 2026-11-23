@@ -27,6 +27,7 @@ type namespaceActivityState struct {
 	filter       string
 	editing      bool
 	warningsOnly bool
+	timelineShowNormal bool
 }
 type namespaceActivityEntry struct {
 	id, heading, preview, detail string
@@ -79,7 +80,7 @@ func (m *pickerModel) updateNamespaceActivity(message tea.Msg) (bool, tea.Cmd) {
 		}
 		selectedID := ""
 		oldRows := m.namespaceActivityEntries()
-		if m.activity.selected > 0 && m.activity.selected < len(oldRows) {
+		if m.activity.selected >= 0 && m.activity.selected < len(oldRows) {
 			selectedID = oldRows[m.activity.selected].id
 		}
 		m.activity.tracker.Apply(msg.snapshot)
@@ -137,10 +138,12 @@ func (m pickerModel) updateNamespaceActivityKey(key tea.KeyMsg) (tea.Model, tea.
 		} else {
 			state.view = ""
 		}
-	case "h", "H", "e", "E":
+	case "h", "H", "e", "E", "i", "I":
 		state.view = "changes"
 		if strings.EqualFold(key.String(), "e") {
 			state.view = "events"
+		} else if strings.EqualFold(key.String(), "i") {
+			state.view = "timeline"
 		}
 		state.selected = 0
 		state.detail = nil
@@ -154,6 +157,10 @@ func (m pickerModel) updateNamespaceActivityKey(key tea.KeyMsg) (tea.Model, tea.
 	case "w", "W":
 		if state.view == "events" {
 			state.warningsOnly = !state.warningsOnly
+			state.selected = 0
+			state.detail = nil
+		} else if state.view == "timeline" {
+			state.timelineShowNormal = !state.timelineShowNormal
 			state.selected = 0
 			state.detail = nil
 		}
@@ -228,7 +235,45 @@ func (m pickerModel) namespaceActivityEntries() []namespaceActivityEntry {
 		result = append(result, namespaceActivityEntry{id: "collection-errors", heading: fmt.Sprintf("INCOMPLETE · %d sources unavailable", len(errors)), preview: activityText(errors[0]), detail: "Sources unavailable\n" + text + "\n\nOther successful sources remain available. Previous data is retained when a source fails.", warning: true})
 	}
 
-	if m.activity.view == "events" {
+	if m.activity.view == "timeline" {
+		for _, item := range m.activity.tracker.IncidentTimeline(time.Now(), m.activity.timelineShowNormal) {
+			source := "Kubernetes timestamp"
+			if item.Kind == "EVENT" {
+				source = "Kubernetes Event last-observed time; repeated Events are aggregated"
+			} else if item.Observed {
+				source = "Observed by tailg; exact change/error onset time is unknown"
+			}
+			detail := fmt.Sprintf("%s · %s · %s\nTimestamp: %s\nTime source: %s\n\n%s",
+				item.Kind, item.Heading, item.Object, activityTime(item.At), source, item.Detail)
+			if item.Warning {
+				detail += "\n\nChanges in the 15 minutes preceding the first observed signal:"
+				if len(item.Nearby) == 0 {
+					detail += "\n  No verified same-workload changes found in retained history."
+				}
+				for _, change := range item.Nearby {
+					origin := "Kubernetes timestamp"
+					if change.Observed {
+						origin = "Tailg observed; actual change time unknown"
+					}
+					detail += fmt.Sprintf("\n  %s · %s · %s\n  %s\n  Time source: %s",
+						activityTime(change.At), change.Action, change.Object, change.Detail, origin)
+				}
+				detail += "\n\nNearby changes are diagnostic context, not proof of causation. Relatedness uses only current Kubernetes ownerReferences or exact resource identity."
+			}
+			preview := item.Detail
+			if i := strings.IndexByte(preview, '\n'); i >= 0 {
+				preview = preview[:i]
+			}
+			heading := fmt.Sprintf("%s · %s · %s · %s", activityTime(item.At), item.Kind, item.Heading, item.Object)
+			if item.Count > 1 {
+				heading += fmt.Sprintf(" ×%d", item.Count)
+			}
+			result = append(result, namespaceActivityEntry{
+				id: "timeline/" + item.ID, heading: activityText(heading),
+				preview: activityText(preview), detail: activityText(detail), warning: item.Warning,
+			})
+		}
+	} else if m.activity.view == "events" {
 		for _, event := range m.activity.tracker.Events {
 			warning := strings.EqualFold(event.Type, "Warning")
 			if m.activity.warningsOnly && !warning {
@@ -271,7 +316,16 @@ func (m pickerModel) namespaceActivityModal() (string, int) {
 	title := "Recent changes · last 24h"
 	info := "Retained timestamps + session observations; M adds log markers for displayed apps"
 	updated := m.activity.tracker.LastSnapshot
-	if m.activity.view == "events" {
+	if m.activity.view == "timeline" {
+		title = "Incident timeline · last 24h"
+		info = "Changes + Warning events + monitored log errors · timestamps indicate source, not causation"
+		if m.activity.timelineShowNormal {
+			info += " · NORMAL EVENTS SHOWN"
+		}
+		if m.activity.tracker.ChangesTruncated {
+			info += " · history capped"
+		}
+	} else if m.activity.view == "events" {
 		title = "Kubernetes events · retained by the cluster"
 		info = fmt.Sprintf("Newest %d of %d events · all namespace resources", len(m.activity.tracker.Events), m.activity.tracker.EventTotal)
 		if m.activity.warningsOnly {
@@ -293,12 +347,14 @@ func (m pickerModel) namespaceActivityModal() (string, int) {
 		status = "INCOMPLETE · " + status
 	}
 	prefix := []string{headerStyle.Render(truncatePlain(title, inner)), truncatePlain(activityText(m.namespace+" · "+m.kubeContext), inner), truncatePlain(status, inner), truncatePlain(info, inner)}
-	controls := "↑↓ Move · Enter Details · / Filter · R Refresh · H/E Switch · Esc Close"
+	controls := "↑↓ Move · Enter Details · / Filter · R Refresh · H/E/I Switch · Esc Close"
 	if m.activity.view == "events" {
 		controls += " · W Warnings"
+	} else if m.activity.view == "timeline" {
+		controls += " · W Normal events"
 	}
 	if inner < 60 || height < 18 {
-		controls = "↑↓ Enter / R H/E W · Esc Close"
+		controls = "↑↓ Enter / R H/E/I W · Esc Close"
 	}
 	if m.activity.detail != nil {
 		controls = "↑↓ PgUp/PgDn Home/End · Esc Back"

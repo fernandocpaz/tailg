@@ -232,7 +232,8 @@ tailg diagnose example-app default --output ndjson
 Running `tailg` with no target opens the interactive application picker in the
 current Kubernetes namespace. The picker uses the full terminal screen and
 restores the shell when you leave. Context (`C`) and namespace (`N`) stay at
-the top; **Inspect** groups Changes (`H`) and Events (`E`), beside **Watch**
+the top; **Inspect** groups Changes (`H`), Events (`E`), and the integrated
+Incident timeline (`I`), beside **Watch**
 and the monitor (`M`). Row actions stay at the bottom, with Run now (`X`)
 shown when a CronJob is highlighted. Press `?` for scrollable keyboard help.
 Columns adapt to the terminal width; the highlighted workload's summary appears
@@ -282,7 +283,7 @@ show an inventory warning while the existing applications stay available.
 Failed or timed-out creates are not retried automatically: check the displayed
 Job name before trying again to avoid duplicate execution.
 
-Press **H — Changes** or **E — Events** in the main application picker to
+Press **H — Changes**, **E — Events**, or **I — Incident timeline** in the main application picker to
 open a namespace-wide activity modal. Both views preserve the highlighted and
 checked applications. Collection starts when the picker opens, refreshes every
 15 seconds after the preceding scan finishes, and stops when you leave it.
@@ -300,6 +301,27 @@ session. With `M` monitoring enabled, the timeline also adds timestamped log
 error-count markers for the displayed applications; those markers do not cover
 unmonitored workloads or establish causation.
 
+**Incident timeline (I)** combines the last 24 hours of retained change records,
+Kubernetes Warning events, and optional error-count observations from monitoring
+(`M`) into one newest-first view. Unlike the separate H and E views, timeline
+entries are interleaved chronologically. Press **W** to show or hide Normal
+Kubernetes events. Open a warning or log-error observation with **Enter** to
+see up to three preceding changes within 15 minutes for the same verified
+controller chain (e.g., Pod → ReplicaSet → Deployment), along with source
+provenance. This is contextual evidence only, **not proven causation**. The
+linker never guesses owners based on pod naming patterns; if there is no
+unambiguous controller or no prior same-workload change, it reports none.
+
+Kubernetes Event series are aggregated: their latest occurrence appears on the
+timeline, while change associations use the first available occurrence to avoid
+mistaking a later repeat for the beginning of a failure. Exact Kubernetes
+timestamps are distinguished from when Tailg happened to notice a change or
+error during this picker session. Log markers appear only for displayed apps
+actively monitored with `M`; no new log collection is started by `I`.
+Retained Kubernetes events and change evidence may be incomplete because of
+RBAC, expired retention, incomplete inventory, or starting monitoring late.
+Source errors stay visible, and the view remains read-only.
+
 **Kubernetes events** shows Normal and Warning events, newest first, with reason,
 affected object, occurrence count, first/last occurrence, source, and the complete
 message. It retains the newest 500 entries returned by the cluster and displays
@@ -308,7 +330,7 @@ the total. Event history is limited by Kubernetes retention.
 Use `Up`/`Down`, `PageUp`/`PageDown`, or `Home`/`End` to navigate; `Enter` opens
 full, wrapped details. `/` filters by object, reason, or message (`Enter` applies,
 `Ctrl+U` clears); `W` toggles warnings in Events; `R` refreshes immediately;
-`H`/`E` switches views. `Esc` returns from details to the list, then to the
+`H`/`E`/`I` switches views. `Esc` returns from details to the list, then to the
 namespace picker. The modals resize with the terminal.
 
 Activity discovery uses read-only list requests for deployments, StatefulSets,
