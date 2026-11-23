@@ -169,7 +169,7 @@ func (m pickerModel) Init() tea.Cmd {
 func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
     if m.external {
         if key,ok:=message.(tea.KeyMsg);ok{
-            if keyMatches(key,pickerKeys.context,pickerKeys.namespace,pickerKeys.changes,pickerKeys.events,pickerKeys.timeline,pickerKeys.nodes,pickerKeys.charts,pickerKeys.monitor,pickerKeys.refresh,pickerKeys.run,pickerKeys.pods,pickerKeys.file){
+            if keyMatches(key,pickerKeys.context,pickerKeys.namespace,pickerKeys.changes,pickerKeys.events,pickerKeys.timeline,pickerKeys.nodes,pickerKeys.charts,pickerKeys.monitor,pickerKeys.refresh,pickerKeys.run,pickerKeys.pods){
                 m.note="This action requires Kubernetes and is unavailable for "+m.providerName+" logs."
                 return m,nil
             }
