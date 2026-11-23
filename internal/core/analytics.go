@@ -123,6 +123,8 @@ type RollingAnalytics struct {
 	buckets [analyticsMinutes]analyticsBucket
 }
 
+func NewRollingAnalytics() *RollingAnalytics { return &RollingAnalytics{} }
+
 // Observe accepts one actual streamed event. Replayed lines, stream status,
 // old history, and records lacking HTTP completion metadata are ignored.
 func (a *RollingAnalytics) Observe(event LogEvent) bool {
