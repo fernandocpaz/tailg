@@ -107,6 +107,8 @@ type model struct {
 	detailGen       int
 	detailSearches  *searchController
 	detailLayout    *detailLayout
+	securityView    bool
+	securityText    string
 	aiView          bool
 	aiLoading       bool
 	aiText          string
@@ -495,7 +497,9 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if m.detail != "" {
-				if m.aiView {
+				if m.securityView {
+					m.closeSecurityAssessment()
+				} else if m.aiView {
 					m.closeAIView()
 				} else {
 					m.closeDetail()
@@ -545,6 +549,15 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateLogDetailKey(key)
 		}
 		switch key {
+		case "S":
+			record, ok := m.state.SelectedRecord(m.selected)
+			if !ok {
+				m.notice = "No selected log entry to evaluate"
+				return m, nil
+			}
+			cmd := m.openRecordDetail(record)
+			m.showSecurityAssessment()
+			return m, cmd
 		case "f1":
 			if strings.TrimSpace(m.input.Value()) == "" {
 				m.notice = "Type a filter before using F1 matches-only mode"
@@ -760,6 +773,7 @@ func (m *model) closeDetail() {
 	if m.aiSetup!=nil{m.aiSetup.stop();m.aiSetup=nil}
 	m.cancelAI()
 	m.aiView, m.aiLoading, m.aiText = false, false, ""
+	m.securityView, m.securityText = false, ""
 	if m.detailSearches != nil {
 		m.detailSearches.stop()
 	}
@@ -824,9 +838,12 @@ func (m model) renderDetail() string {
 	if len(allLines) > 0 {
 		position = fmt.Sprintf("%d-%d/%d", start+1, end, len(allLines))
 	}
-	footer := position + " | Up/Down PgUp/PgDn Home/End | Enter copy | R reload | F6 trace | A AI | P repos | S setup | Esc close"
+	footer := position + " | Up/Down PgUp/PgDn Home/End | Enter copy | R reload | F6 trace | A AI | P repos | S security | O setup | Esc close"
 	header := renderWithColor(headerStyle, "tailg", m.config.Formatter.Color) + "  Full log entry"
-	if m.aiView {
+	if m.securityView {
+		footer = position + " | Up/Down PgUp/PgDn Home/End | Enter copy report | S/Esc back to log"
+		header = renderWithColor(headerStyle, "tailg", m.config.Formatter.Color) + "  Security assessment"
+	} else if m.aiView {
 		footer = position + " | Up/Down PgUp/PgDn Home/End | A/Esc back to log"
 		header = renderWithColor(headerStyle, "tailg", m.config.Formatter.Color) + "  AI error explanation"
 	}
@@ -959,6 +976,7 @@ func (m model) renderFooter() string {
 		renderKey("F6", "trace", m.config.Formatter.Color),
 		renderKey("F7", "replicas", m.config.Formatter.Color),
 		renderKey("Enter", "inspect", m.config.Formatter.Color),
+		renderKey("S", "security", m.config.Formatter.Color),
 		renderKey("Ctrl+Q", "quit", m.config.Formatter.Color),
 	}
 	return truncate(strings.Join(shortcuts, "  "), m.width)
