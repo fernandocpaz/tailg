@@ -168,3 +168,31 @@ func incidentSameWorkload(owners map[string]string, left, right string) bool {
 	}
 	return false
 }
+
+// IncidentWorkloadObject resolves a picker application name to a current,
+// unambiguous Kubernetes controller identity. Unknown or ambiguous app names
+// stay Application/name and must not be linked to a guessed controller.
+func (t *NamespaceActivityTracker) IncidentWorkloadObject(name string) string {
+	fallback := "Application/" + name
+	if t == nil || name == "" {
+		return fallback
+	}
+	var match string
+	for _, object := range t.previous {
+		if object.Name != name {
+			continue
+		}
+		switch object.Kind {
+		case "Deployment", "StatefulSet", "DaemonSet", "CronJob", "Job":
+			identity := object.Kind + "/" + object.Name
+			if match != "" && match != identity {
+				return fallback
+			}
+			match = identity
+		}
+	}
+	if match == "" {
+		return fallback
+	}
+	return match
+}
