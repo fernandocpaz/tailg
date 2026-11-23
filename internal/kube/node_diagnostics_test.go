@@ -94,8 +94,7 @@ esac
 	}
 	calls,err:=os.ReadFile(log)
 	if err!=nil {t.Fatal(err)}
-	lines:=strings.Split(strings.TrimSpace(string(calls)),"
-")
+	lines:=strings.Split(strings.TrimSpace(string(calls)),"\n")
 	if len(lines)!=3 {
 		t.Fatalf("expected 3 bounded read-only calls, got %d: %q",len(lines),calls)
 	}
