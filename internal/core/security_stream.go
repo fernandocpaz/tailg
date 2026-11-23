@@ -91,7 +91,7 @@ func (r *SecurityRadar) ObserveRecord(record LogRecord, now time.Time) bool {
 	if service == "" {
 		service = "(unknown workload)"
 	}
-	source := fields.ClientIP
+	source := validLogClientIP(fields.ClientIP)
 	if source == "" {
 		source = securityRadarUnknownSource
 	}
