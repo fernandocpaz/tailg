@@ -33,6 +33,7 @@ var analyticsLatencyBounds = [...]time.Duration{
 // It is not evidence that all incoming requests were logged.
 type AnalyticsCounts struct {
 	Requests     int
+	StatusKnown  int
 	ClientErrors int
 	ServerErrors int
 	Slow         int
@@ -42,6 +43,7 @@ type AnalyticsCounts struct {
 
 func (c *AnalyticsCounts) add(other AnalyticsCounts) {
 	c.Requests += other.Requests
+	c.StatusKnown += other.StatusKnown
 	c.ClientErrors += other.ClientErrors
 	c.ServerErrors += other.ServerErrors
 	c.Slow += other.Slow
@@ -53,6 +55,9 @@ func (c *AnalyticsCounts) add(other AnalyticsCounts) {
 
 func (c *AnalyticsCounts) addRequest(fields LogFields) {
 	c.Requests++
+	if fields.StatusCode >= 100 && fields.StatusCode <= 599 {
+		c.StatusKnown++
+	}
 	switch {
 	case fields.StatusCode >= 500 && fields.StatusCode <= 599:
 		c.ServerErrors++
