@@ -35,6 +35,8 @@ type Config struct {
     InitialFilter string
     RegexFilter string // optional raw include-regex, like tailg --include
     UseConfiguredAI bool // opt-in to tailg AI settings; analyses run only by explicit user action
+    RecordingPath string
+    Capture func([]Event) error // each source event once, never each formatted line
     Namespace string
     Provider string
     Target string
@@ -92,7 +94,7 @@ func Run(ctx context.Context,c Config)error{
         f.Include=patterns
     }
     run:=tui.Config{
-        AppName:"DynaR", InitialFilter:c.InitialFilter,
+        AppName:"DynaR", InitialFilter:c.InitialFilter,RecordingPath:c.RecordingPath,
         Title:c.Title,Namespace:c.Namespace,KubeContext:c.Provider,Target:c.Target,
         Items:inventory(c.Sources),Formatter:f,
         RefreshInterval:c.RefreshInterval,BufferLines:c.BufferLines,
@@ -129,6 +131,22 @@ func Run(ctx context.Context,c Config)error{
         if err==nil && aiConfig.APIKey!="" && aiConfig.Model!="" {
             run.AI,err=ai.New(aiConfig)
             if err!=nil{run.AIProblem=err.Error()}
+        }
+    }
+    if c.Capture!=nil{
+        run.CaptureLogs=func(blocks [][]core.LogRecord)error{
+            events:=make([]Event,0,len(blocks))
+            for _,block:=range blocks{
+                if len(block)==0{continue}
+                e:=block[0].Event
+                events=append(events,Event{
+                    Workload:e.Workload,Pod:e.Pod,Container:e.Container,
+                    Message:e.Message,Level:e.Level,TraceID:e.TraceID,
+                    RequestID:e.RequestID,Timestamp:e.ObservedAt,
+                })
+            }
+            if len(events)==0{return nil}
+            return c.Capture(events)
         }
     }
     if c.Inventory!=nil{
@@ -188,6 +206,8 @@ type App struct {
 type Selection struct {
     Workloads []string
     Quit bool
+    Record bool
+    RecordFrom time.Time
 }
 func PickApps(apps []App,source,namespace string)(Selection,error){
     choices:=make([]core.AppChoice,0,len(apps))
@@ -197,7 +217,7 @@ func PickApps(apps []App,source,namespace string)(Selection,error){
     result,err:=tui.PickExternalApps(choices,source,namespace)
     if err!=nil{return Selection{},err}
     if result.Action==tui.PickerQuit{return Selection{Quit:true},nil}
-    selected:=Selection{}
+    selected:=Selection{Record:result.LogToFile,RecordFrom:result.CaptureFrom}
     for _,choice:=range result.Apps{selected.Workloads=append(selected.Workloads,choice.Name)}
     return selected,nil
 }

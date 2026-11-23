@@ -165,7 +165,7 @@ func (m pickerModel) pickerScreenHeader(width int) []string {
 
 func (m pickerModel) pickerScreenFooter(width int) []string {
     if m.external {
-        return append([]string{dimStyle.Render(strings.Repeat("─",width))},pickerKeyHints(width,pickerKeys.up,pickerKeys.down,pickerKeys.mark,pickerKeys.open,pickerKeys.help,pickerKeys.quit)...)
+        return append([]string{dimStyle.Render(strings.Repeat("─",width))},pickerKeyHints(width,pickerKeys.up,pickerKeys.down,pickerKeys.mark,pickerKeys.open,pickerKeys.file,pickerKeys.help,pickerKeys.quit)...)
     }
 	var footer []string
 	if m.index >= 0 && m.index < len(m.apps) {
