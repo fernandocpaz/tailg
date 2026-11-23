@@ -16,7 +16,7 @@ func pickerBinding(label, description string, keys ...string) key.Binding {
 
 var pickerKeys = struct {
 	up, down, pageUp, pageDown, home, end, mark, open, file, pods          key.Binding
-	context, namespace, changes, events, timeline, nodes, monitor, refresh, run, help, quit key.Binding
+	context, namespace, changes, events, timeline, nodes, charts, monitor, refresh, run, help, quit key.Binding
 }{
 	up:        pickerBinding("↑/k", "Move up", "up", "k"),
 	down:      pickerBinding("↓/j", "Move down", "down", "j"),
@@ -34,6 +34,7 @@ var pickerKeys = struct {
 	events:    pickerBinding("E", "Events", "e", "E"),
 	timeline:  pickerBinding("I", "Incidents", "i", "I"),
 	nodes:     pickerBinding("D", "Node diag", "d", "D"),
+	charts:    pickerBinding("F9", "Charts", "f9"),
 	monitor:   pickerBinding("M", "Monitor", "m", "M"),
 	refresh:   pickerBinding("R", "Refresh", "r", "R"),
 	run:       pickerBinding("X", "Run now", "x", "X"),
@@ -116,7 +117,7 @@ func (m pickerModel) pickerHelpModal() (string, int) {
 		title string
 		keys  []key.Binding
 	}{
-		{"NAMESPACE", []key.Binding{pickerKeys.context, pickerKeys.namespace, pickerKeys.changes, pickerKeys.events, pickerKeys.timeline, pickerKeys.nodes, pickerKeys.monitor, pickerKeys.refresh}},
+		{"NAMESPACE", []key.Binding{pickerKeys.context, pickerKeys.namespace, pickerKeys.changes, pickerKeys.events, pickerKeys.timeline, pickerKeys.nodes, pickerKeys.charts, pickerKeys.monitor, pickerKeys.refresh}},
 		{"SELECTED ROW", []key.Binding{pickerKeys.mark, pickerKeys.open, pickerKeys.file, pickerKeys.pods, pickerKeys.run}},
 		{"NAVIGATION", []key.Binding{pickerKeys.up, pickerKeys.down, pickerKeys.pageUp, pickerKeys.pageDown, pickerKeys.home, pickerKeys.end, pickerKeys.help, pickerKeys.quit}},
 	}
@@ -127,6 +128,7 @@ func (m pickerModel) pickerHelpModal() (string, int) {
 	}
 	body = append(body, pickerWrapLines([]string{
 		"Enter opens marked applications, or the highlighted row when nothing is marked.",
+		"F9 charts CPU, memory and sampled log error/warning trends for the highlighted workload without leaving the picker. It activates M monitoring on first use; charts fill as readings arrive.",
 		"F opens the same selection and records logs to a timestamped file in the current directory. Only logs timestamped from the F keypress onward are saved. Recording stops when you leave the log view.",
 		"P chooses exact pods after unmarking applications. X asks for confirmation before creating a Job from the highlighted CronJob.",
 		"Only columns that fit are shown; the selected row's summary appears above the footer.",
