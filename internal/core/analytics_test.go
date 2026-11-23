@@ -124,3 +124,21 @@ func TestRollingAnalyticsIndependentMinuteAndTimeBounds(t *testing.T) {
 		t.Fatalf("stale buckets persisted: %d", got)
 	}
 }
+
+func TestRollingAnalyticsTracksMissingStatusCoverageSeparately(t *testing.T) {
+	now := time.Date(2026, 11, 23, 16, 0, 0, 0, time.UTC)
+	analytics := NewRollingAnalytics()
+	for _, message := range []string{
+		"{\"method\":\"GET\",\"path\":\"/timed\",\"elapsed\":50}",
+		"HTTP GET /timed responded 503 in 700 ms",
+		"HTTP GET /timed responded 200 in 12 ms",
+	} {
+		if !analytics.ObserveAt(LogEvent{Message: message, ObservedAt: now}, now) {
+			t.Fatalf("missing completion: %s", message)
+		}
+	}
+	got := analytics.Snapshot(now).Total
+	if got.Requests != 3 || got.StatusKnown != 2 || got.ServerErrors != 1 || got.Timed != 3 {
+		t.Fatalf("HTTP status/duration coverage: %+v", got)
+	}
+}
