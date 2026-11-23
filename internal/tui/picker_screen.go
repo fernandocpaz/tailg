@@ -138,7 +138,7 @@ func (m pickerModel) pickerScreenHeader(width int) []string {
 		lines = append(lines, headerStyle.Render("tailg")+"  "+scope(pickerKeys.context, "Context", m.kubeContext, width-7))
 		lines = append(lines, scope(pickerKeys.namespace, "Namespace", m.namespace, width))
 	}
-	inspect := dimStyle.Render("INSPECT  ") + strings.Join(pickerKeyHints(width, pickerKeys.changes, pickerKeys.events, pickerKeys.timeline), "  ")
+	inspect := dimStyle.Render("INSPECT  ") + strings.Join(pickerKeyHints(width, pickerKeys.changes, pickerKeys.events, pickerKeys.timeline, pickerKeys.nodes), "  ")
 	watch := dimStyle.Render("WATCH  ") + headerStyle.Render("M") + " " + podMonitorSummary(m.monitorEnabled, m.monitorBusy, m.monitorLastScan, m.monitorError)
 	if lipgloss.Width(inspect+"    "+watch) <= width {
 		lines = append(lines, inspect+"    "+watch)
