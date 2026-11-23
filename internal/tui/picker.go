@@ -217,7 +217,7 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				if at.IsZero() {
 					at = time.Now()
 				}
-				m.activity.tracker.Record(core.NamespaceChange{ID: fmt.Sprintf("log-errors/%s/%d", app.Name, at.UnixNano()), At: at, Object: app.Name, Action: "Log errors observed", Detail: fmt.Sprintf("%d errors in the preceding minute across monitored pods of this displayed application; this observation does not establish when the issue began", count), Observed: true})
+				m.activity.tracker.Record(core.NamespaceChange{ID: fmt.Sprintf("log-errors/%s/%d", app.Name, at.UnixNano()), At: at, Object: m.activity.tracker.IncidentWorkloadObject(app.Name), Action: "Log errors observed", Detail: fmt.Sprintf("%d errors in the preceding minute across monitored pods of this displayed application; this observation does not establish when the issue began", count), Observed: true})
 			}
 		}
 		return m, cmd
