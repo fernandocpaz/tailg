@@ -124,6 +124,9 @@ func renderAnalyticsTimeChart(snapshot core.AnalyticsSnapshot, period int, metri
 		return []string{data.title+": resize terminal to view chart"}
 	}
 	lines := []string{data.title}
+	if metric==analyticsThroughput && snapshot.Total.Requests==0 {
+		return append(lines,"No parsed samples for this metric and time range.",data.legend)
+	}
 	haveData := false
 	for _,series:=range data.series {
 		haveData=haveData||len(series.values)>0
