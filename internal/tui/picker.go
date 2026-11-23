@@ -48,6 +48,7 @@ type pickerModel struct {
 	deploymentToasts      []deploymentToast
 	nextDeploymentToastID int
 	activity              namespaceActivityState
+	nodeDiag              nodeDiagnosticState
 	updates               updateState
 }
 
@@ -165,6 +166,9 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if handled, cmd := m.updateNamespaceActivity(message); handled {
 		return m, cmd
 	}
+	if handled, cmd := m.updateNodeDiagnostics(message); handled {
+		return m, cmd
+	}
 	switch msg := message.(type) {
 	case startupIntroTick:
 		if !m.introActive || msg.frame != m.introFrame {
@@ -254,6 +258,9 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.activity.view != "" {
 			return m.updateNamespaceActivityKey(key)
 		}
+		if m.nodeDiag.open {
+			return m.updateNodeDiagnosticKey(key)
+		}
 		if m.helpVisible {
 			return m.updatePickerHelp(key)
 		}
@@ -270,6 +277,8 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.activity.selected = 0
 			cmd := m.refreshNamespaceActivity()
 			return m, cmd
+		case keyMatches(key, pickerKeys.nodes):
+			return m,m.openNodeDiagnostics()
 		case keyMatches(key, pickerKeys.quit):
 			m.podMonitorState.stop()
 			m.result.Action = PickerQuit
@@ -410,6 +419,11 @@ func (m pickerModel) View() string {
 		dialog, _ := m.namespaceActivityModal()
 		return overlayModal(background, dialog, width, height)
 	}
+	if m.nodeDiag.open {
+		width, height := m.modalViewport()
+		dialog, _ := m.nodeDiagnosticModal()
+		return overlayModal(background, dialog, width, height)
+	}
 	if m.confirmRun == nil {
 		return background
 	}
@@ -419,7 +433,7 @@ func (m pickerModel) View() string {
 }
 
 func (m pickerModel) showUpdate() bool {
-	return !m.introActive && m.updates.pending && m.selection == nil && !m.helpVisible && m.activity.view == "" && m.confirmRun == nil
+	return !m.introActive && m.updates.pending && m.selection == nil && !m.helpVisible && m.activity.view == "" && !m.nodeDiag.open && m.confirmRun == nil
 }
 
 func (m pickerModel) pickerView() string {
