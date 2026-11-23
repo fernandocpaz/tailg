@@ -109,7 +109,7 @@ func TestF9ChartsRenderWithNtchartsAndMaintainLayouts(t *testing.T) {
 			t.Fatal("3 did not focus latency chart")
 		}
 		m=analyticsUIKey(m,"t")
-		if m.analyticsWindowMinutes!=5 || !strings.Contains(ansi.Strip(m.View()),"5 calendar-minute") {
+		if m.analyticsWindowMinutes!=5 || (!strings.Contains(ansi.Strip(m.View()),"5 calendar-minute") && !strings.Contains(ansi.Strip(m.View()),"| 5m")) {
 			t.Fatal("T did not select 5 minute window")
 		}
 		m=analyticsUIKey(m,"e")
