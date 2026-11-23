@@ -10,7 +10,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/fernandocpaz/tailg/internal/core"
 	"github.com/fernandocpaz/tailg/internal/kube"
 )
 
@@ -221,6 +220,3 @@ func (m pickerModel) nodeDiagnosticModal() (string,int) {
 	return panel.Render(strings.Join(all,"\n")),maximum
 }
 
-// Compile-time usage ensures selected application snapshots are stable across
-// list refreshes and do not mutate the shared picker inventory.
-var _ = core.AppChoice{}
