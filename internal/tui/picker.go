@@ -96,7 +96,8 @@ func PickExternalApps(apps []core.AppChoice, provider, namespace string) (Picker
         return strings.ToLower(ordered[i].Name)<strings.ToLower(ordered[j].Name)
     })
     total:=len(ordered)
-    if len(ordered)>maxPickerApps{ordered=ordered[:maxPickerApps]}
+    // Unlike the Kubernetes picker, Grail inventory is already bounded by
+    // the requested namespace/time range. Show every discovered workload.
     m:=newPickerModel(ordered,total,provider,namespace,nil)
     m.external=true
     m.providerName=provider
