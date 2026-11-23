@@ -86,8 +86,18 @@ type PickerUsage struct {
 func PickExternalApps(apps []core.AppChoice, provider, namespace string) (PickerResult,error) {
     ctx,cancel:=context.WithCancel(context.Background())
     defer cancel()
-    prepared,total:=preparePickerApps(apps)
-    m:=newPickerModel(prepared,total,provider,namespace,nil)
+    // The source has no Kubernetes deployment timestamp. Rank workloads by
+    // last *observed log*, and never mislabel this as deployment age.
+    ordered:=append([]core.AppChoice(nil),apps...)
+    sort.SliceStable(ordered,func(i,j int)bool{
+        if !ordered[i].LastLogAt.Equal(ordered[j].LastLogAt) {
+            return ordered[i].LastLogAt.After(ordered[j].LastLogAt)
+        }
+        return strings.ToLower(ordered[i].Name)<strings.ToLower(ordered[j].Name)
+    })
+    total:=len(ordered)
+    if len(ordered)>maxPickerApps{ordered=ordered[:maxPickerApps]}
+    m:=newPickerModel(ordered,total,provider,namespace,nil)
     m.external=true
     m.providerName=provider
     m.refreshContext=ctx

@@ -9,6 +9,7 @@ import (
     "time"
 
     "github.com/fernandocpaz/tailg/internal/core"
+    "github.com/fernandocpaz/tailg/internal/ai"
     "github.com/fernandocpaz/tailg/internal/tui"
 )
 
@@ -31,6 +32,9 @@ type Event struct{
 }
 type Config struct {
     Title string
+    InitialFilter string
+    RegexFilter string // optional raw include-regex, like tailg --include
+    UseConfiguredAI bool // opt-in to tailg AI settings; analyses run only by explicit user action
     Namespace string
     Provider string
     Target string
@@ -64,7 +68,7 @@ func inventory(items []Source)[]core.InventoryItem{
     seen:=make(map[string]bool,len(items))
     for _,s:=range items{
         if s.Pod==""||s.Container==""||seen[s.Key()]{continue}
-        out=append(out,core.InventoryItem{Pod:s.Pod,Container:s.Container})
+        out=append(out,core.InventoryItem{Workload:s.Workload,Pod:s.Pod,Container:s.Container})
         seen[s.Key()]=true
     }
     return out
@@ -82,8 +86,13 @@ func records(c Config,items []Event)[]core.LogRecord{
 func Run(ctx context.Context,c Config)error{
     if c.Stream==nil{return errors.New("log provider Stream is required")}
     f:=formatter(c)
+    if c.RegexFilter!=""{
+        patterns,err:=core.CompilePatterns([]string{c.RegexFilter})
+        if err!=nil{return err}
+        f.Include=patterns
+    }
     run:=tui.Config{
-        AppName:"DynaR",
+        AppName:"DynaR", InitialFilter:c.InitialFilter,
         Title:c.Title,Namespace:c.Namespace,KubeContext:c.Provider,Target:c.Target,
         Items:inventory(c.Sources),Formatter:f,
         RefreshInterval:c.RefreshInterval,BufferLines:c.BufferLines,
@@ -111,6 +120,15 @@ func Run(ctx context.Context,c Config)error{
                 case <-ctx.Done():return ctx.Err()
                 }
             }
+        }
+    }
+    if c.UseConfiguredAI {
+        aiConfig,err:=ai.EnvConfig(nil)
+        if err!=nil{run.AIProblem=err.Error()}
+        run.AISettings=aiConfig
+        if err==nil && aiConfig.APIKey!="" && aiConfig.Model!="" {
+            run.AI,err=ai.New(aiConfig)
+            if err!=nil{run.AIProblem=err.Error()}
         }
     }
     if c.Inventory!=nil{
@@ -174,7 +192,7 @@ type Selection struct {
 func PickApps(apps []App,source,namespace string)(Selection,error){
     choices:=make([]core.AppChoice,0,len(apps))
     for _,app:=range apps{
-        choices=append(choices,core.AppChoice{Name:app.Name,Namespace:namespace,Pods:append([]string(nil),app.Pods...),DeployedAt:app.LastSeen,Ready:"-",Phases:"Logs"})
+        choices=append(choices,core.AppChoice{Name:app.Name,Namespace:namespace,Pods:append([]string(nil),app.Pods...),LastLogAt:app.LastSeen,Ready:"-",Phases:"Logs"})
     }
     result,err:=tui.PickExternalApps(choices,source,namespace)
     if err!=nil{return Selection{},err}
@@ -182,4 +200,41 @@ func PickApps(apps []App,source,namespace string)(Selection,error){
     selected:=Selection{}
     for _,choice:=range result.Apps{selected.Workloads=append(selected.Workloads,choice.Name)}
     return selected,nil
+}
+
+// MatchEvents applies the exact same structured query syntax used by tailg's
+// local and full-history search (level:, service:, pod:, trace:, duration:, ...).
+func MatchEvents(query string,events []Event)([]Event,error){
+    compiled,err:=core.CompileLogQuery(query)
+    if err!=nil{return nil,err}
+    f:=core.Formatter{Color:false,ShowPod:false}
+    var matching []Event
+    for _,e:=range events{
+        records:=core.RecordsForEvent(f,ToLogEvent(e),false)
+        for _,r:=range records{
+            if compiled.Matches(r){matching=append(matching,e);break}
+        }
+    }
+    return matching,nil
+}
+
+// ErrorBlocks preserves multi-record exception continuations using the same
+// rule as tailg's selected-log detail and F3 exception grouping.
+func ErrorBlocks(events []Event)[][]Event{
+    var blocks [][]Event
+    var current []Event
+    for _,event:=range events{
+        ev:=ToLogEvent(event)
+        level:=core.ParseLogFields(ev).Level
+        severe:=level=="ERR"||level=="FTL"
+        continuation:=core.IsLogContinuation(event.Message)
+        if len(current)>0&&continuation&&event.Pod==current[0].Pod&&event.Container==current[0].Container{
+            current=append(current,event)
+            continue
+        }
+        if len(current)>0 {blocks=append(blocks,current);current=nil}
+        if severe {current=[]Event{event}}
+    }
+    if len(current)>0{blocks=append(blocks,current)}
+    return blocks
 }
