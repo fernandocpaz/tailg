@@ -851,38 +851,44 @@ radar to mark the currently retained groups known and start a new baseline;
 press `C` to clear the groups. Baselines are local to the session and bounded
 by the retained issue groups.
 
-### Rolling HTTP analytics (F9)
+### Rolling HTTP analytics and charts (F9)
 
-In the live log view, press **F9** to open a read-only analytics dashboard. It
-computes recent HTTP completion counts and 4xx/5xx rates from timestamped log
-entries already being streamed by tailg. The dashboard includes:
+Press **F9** in the live log viewer to open a local, read-only performance
+dashboard powered by the Bubble Tea v1-compatible **ntcharts** renderer.
+It uses the same fixed-size minute-ring as before; charting does not add
+cluster queries, storage, agents, or log-processing work per paint.
 
-- Fifteen wall-clock minute buckets, with sparkline trends for request counts
-  and HTTP 5xx responses. The current minute is partial.
-- Observed requests/minute for the most recent five buckets and the preceding
-  five, plus approximate p50/p95/p99 latency from bounded histogram bins.
-- Slow-request counts (>250 ms), HTTP status/duration sample coverage, and the
-  eight most active normalized endpoint groups (including requests, 5xx and ~p95).
-- An indicative 5xx-spike hint comparing the two most recent five-minute groups
-  only when both have at least 30 status samples and the increase is substantial.
-- An explicit warning if log streams are reconnecting.
+- Braille time-series graphs for **observed requests per minute**, **HTTP 4xx
+  and 5xx rates** (denominator: status-known completions), and **approximate
+  p50/p95/p99 latency** (histogram upper bounds). Time labels use the local
+  terminal clock. Missing status/duration samples are excluded from those
+  series, not treated as genuine zero rates/latencies; a chart warns when
+  lines may bridge gaps.
+- Press **T** to switch the last **15** versus **5** calendar-minute buckets.
+  Summary counts and endpoint rankings follow that range; the 5m versus
+  previous-5m comparison always uses two independent five-minute groups.
+- Wide/tall terminals automatically show a **three-chart grid**. Press
+  **1** for a focused throughput plot, **2** for 4xx/5xx, **3** for latency,
+  or **G** to toggle between focused and grid layouts. Narrow terminals
+  gracefully use a focused chart.
+- Press **E** for a scrollable top-endpoint table, and use arrow keys,
+  PageUp/PageDown, Home/End to navigate. **E** returns to charts.
+- The original slow-request counts (>250 ms), approximate percentiles,
+  status/timing coverage, guarded 5xx-spike hint, and reconnect warnings
+  remain visible. **F9** or **Esc** closes without altering the live log
+  filter, buffer, selection or follow state.
 
-Press **F9** again or **Esc** to return without altering the search filter or
-live-follow state. The standard F1–F8, S, and other log shortcuts are unchanged.
-
-**Interpretation:** This is log-derived diagnostics, not complete HTTP traffic
-telemetry or an SLO measurement. A completion is counted only when its event has
-an HTTP method, path and status or duration; events lacking Kubernetes source
-timestamps, replayed events, stream-control messages, and older history are
-excluded. Health/probe suppression and upstream logging/sampling may reduce
-coverage. Counts are exact for accepted completion events, but error percentages use only
-completions with recognized HTTP status codes. Percentiles use
-coarse histogram upper bounds and are labeled approximate; the rolling window
-uses fifteen calendar-minute buckets rather than a second-accurate 900-second
-window. Numeric/UUID URL path segments are grouped; per-minute endpoint
-cardinality is bounded to 64 distinct groups plus a shared overflow bucket.
-No external services, background agents, metrics-server access, or additional
-Kubernetes permissions are required.
+**Interpretation:** These are sampled *log observations*, not a complete HTTP
+traffic meter or authoritative SLOs. A completion needs method, path and
+status or duration. Replayed, stale, undated and stream-control records are
+excluded. Upstream logging policies and probe suppression can reduce
+coverage. Minute buckets (including the current partial minute) do not
+represent an exact sliding-second window. Latency quantiles are approximate
+histogram upper bounds, and open-ended bins are clipped in chart displays at
+5 minutes; the underlying stored counts are unchanged. URL path IDs are
+normalized, endpoint groups are bounded to 64 per minute plus overflow, and
+no request bodies or query values are retained by analytics. Existing
+single-record security inspection and F1–F8/F10 controls are unchanged.
 
 ### Structured filters and request timelines
 
