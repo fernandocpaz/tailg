@@ -3,11 +3,13 @@ module github.com/fernandocpaz/tailg
 go 1.25.0
 
 require (
+	github.com/NimbleMarkets/ntcharts v0.5.1
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/ansi v0.11.6
 	github.com/charmbracelet/x/term v0.2.2
+	github.com/lrstanley/bubblezone v0.0.0-20240914071701-b48c55a5e78e // indirect
 	github.com/lucasb-eyer/go-colorful v1.3.0
 	github.com/muesli/termenv v0.16.0
 	github.com/spf13/cobra v1.10.2
