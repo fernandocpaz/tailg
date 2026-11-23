@@ -382,13 +382,13 @@ func validLogClientIP(raw string) string {
 		if addr.IsUnspecified() {
 			return ""
 		}
-		return addr.Unmap().WithoutZone().String()
+		return addr.Unmap().WithZone("").String()
 	}
 	if addr, err := netip.ParseAddrPort(raw); err == nil {
 		if addr.Addr().IsUnspecified() {
 			return ""
 		}
-		return addr.Addr().Unmap().WithoutZone().String()
+		return addr.Addr().Unmap().WithZone("").String()
 	}
 	return ""
 }
