@@ -142,3 +142,33 @@ func TestRollingAnalyticsTracksMissingStatusCoverageSeparately(t *testing.T) {
 		t.Fatalf("HTTP status/duration coverage: %+v", got)
 	}
 }
+
+
+func TestAnalyticsSnapshotWindowScopesTotalsEndpointsAndMinuteSeries(t *testing.T) {
+	now:=time.Date(2026,11,23,20,42,0,0,time.UTC)
+	analytics:=NewRollingAnalytics()
+	add:=func(at time.Time,path string,n int) {
+		for i:=0;i<n;i++ {
+			if !analytics.ObserveAt(LogEvent{
+				ObservedAt:at,Workload:"api",Pod:"api-0",
+				Message:fmt.Sprintf("HTTP GET %s responded 500 in 50 ms",path),
+			},now) {t.Fatalf("could not observe %s",path)}
+		}
+	}
+	add(now.Add(-12*time.Minute),"/old",8)
+	add(now.Add(-6*time.Minute),"/baseline",3)
+	add(now.Add(-2*time.Minute),"/recent",5)
+	all:=analytics.Snapshot(now)
+	five:=analytics.SnapshotWindow(now,5)
+	if len(all.Minutes)!=15 || all.Total.Requests!=16 {
+		t.Fatalf("15m regression: %+v",all)
+	}
+	if len(five.Minutes)!=5 || five.Total.Requests!=5 ||
+		five.LastFive.Requests!=5 || five.PreviousFive.Requests!=3 ||
+		len(five.Endpoints)!=1 || five.Endpoints[0].Path!="/recent" ||
+		five.Window!=5*time.Minute {
+		t.Fatalf("5m scope or comparison invalid: %+v",five)
+	}
+	if got:=analytics.SnapshotWindow(now,42);got.Total.Requests!=all.Total.Requests ||
+		got.Window!=AnalyticsWindow {t.Fatal("unsupported period should use 15m")}
+}

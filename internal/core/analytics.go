@@ -183,8 +183,18 @@ func (a *RollingAnalytics) ObserveAt(event LogEvent, now time.Time) bool {
 	return true
 }
 
+// Snapshot retains the original 15-minute behavior for existing callers.
 func (a *RollingAnalytics) Snapshot(now time.Time) AnalyticsSnapshot {
-	snapshot := AnalyticsSnapshot{Window: AnalyticsWindow, Minutes: make([]AnalyticsMinute, 0, analyticsMinutes)}
+	return a.SnapshotWindow(now, analyticsMinutes)
+}
+
+// SnapshotWindow scopes summary and endpoint groups to 5 or 15 calendar-minute
+// buckets while preserving both five-minute baselines for anomaly comparison.
+func (a *RollingAnalytics) SnapshotWindow(now time.Time, windowMinutes int) AnalyticsSnapshot {
+	if windowMinutes != 5 {
+		windowMinutes = analyticsMinutes
+	}
+	snapshot := AnalyticsSnapshot{Window: time.Duration(windowMinutes)*time.Minute, Minutes: make([]AnalyticsMinute, 0, windowMinutes)}
 	if a == nil {
 		return snapshot
 	}
@@ -200,17 +210,21 @@ func (a *RollingAnalytics) Snapshot(now time.Time) AnalyticsSnapshot {
 		bucket := &a.buckets[index]
 		if bucket.endpoints != nil && bucket.minute == minute.Unix() {
 			counts = bucket.counts
-			for key, partial := range bucket.endpoints {
+			if offset < windowMinutes {
+				for key, partial := range bucket.endpoints {
 				counter := endpoints[key]
 				if counter == nil {
 					counter = &AnalyticsCounts{}
 					endpoints[key] = counter
 				}
-				counter.add(*partial)
+					counter.add(*partial)
+				}
 			}
 		}
-		snapshot.Minutes = append(snapshot.Minutes, AnalyticsMinute{Minute: minute, Counts: counts})
-		snapshot.Total.add(counts)
+		if offset < windowMinutes {
+			snapshot.Minutes = append(snapshot.Minutes, AnalyticsMinute{Minute: minute, Counts: counts})
+			snapshot.Total.add(counts)
+		}
 		switch {
 		case offset < 5:
 			snapshot.LastFive.add(counts)

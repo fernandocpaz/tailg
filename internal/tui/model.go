@@ -137,6 +137,11 @@ type model struct {
 	issues          *core.IssueRadar
 	analytics       *core.RollingAnalytics
 	analyticsOpen   bool
+	analyticsWindowMinutes int
+	analyticsMetric int
+	analyticsGrid bool
+	analyticsEndpointExpanded bool
+	analyticsEndpointOffset int
 	securityRadar    *core.SecurityRadar
 	securityRadarOpen bool
 	issueOpen       bool
@@ -559,10 +564,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.analyticsOpen {
-			if key == "f9" {
-				m.analyticsOpen = false
-			}
-			return m, nil
+			return m.updateAnalyticsKey(key)
 		}
 		if m.resourceOpen {
 			return m.updateResourceKey(key)
@@ -624,6 +626,11 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "f9":
 			m.analyticsOpen = true
+			m.analyticsWindowMinutes=15
+			m.analyticsGrid=true
+			m.analyticsMetric=0
+			m.analyticsEndpointExpanded=false
+			m.analyticsEndpointOffset=0
 			return m, nil
 		case "f10":
 			m.securityRadarOpen = true
