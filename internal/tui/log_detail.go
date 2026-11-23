@@ -90,10 +90,24 @@ func (m model) updateLogDetail(msg logDetailMsg) (tea.Model, tea.Cmd) {
 	m.detail = logBlockDetails(msg.events)
 	root := msg.events[0]
 	m.detailRecord = &core.LogRecord{Event: root, Fields: core.ParseLogFields(root)}
+	if m.securityView {
+		m.showSecurityAssessment()
+	}
 	return m, nil
 }
 
 func (m model) updateLogDetailKey(key string) (tea.Model, tea.Cmd) {
+	if m.securityView {
+		switch key {
+		case "s", "S":
+			m.closeSecurityAssessment()
+		case "enter":
+			m.notice = copyText(m.securityText)
+		default:
+			m.updateDetailScroll(key)
+		}
+		return m, nil
+	}
 	switch key {
 	case "f6":
 		if m.traceOpen {
@@ -110,6 +124,9 @@ func (m model) updateLogDetailKey(key string) (tea.Model, tea.Cmd) {
 	case "a", "A":
 		return m.toggleAIExplanation()
 	case "s", "S":
+		m.showSecurityAssessment()
+		return m, nil
+	case "o", "O":
 		return m.openAIWizard("")
 	case "p", "P":
 		if m.config.AI==nil{return m.openAIWizard("Configure an AI provider before mapping repositories.")}
@@ -133,6 +150,9 @@ func (m model) updateLogDetailKey(key string) (tea.Model, tea.Cmd) {
 }
 
 func (m model) wrappedDetailLines() []string {
+	if m.securityView {
+		return wrapDetailText(m.detailLayout, m.securityText, "", m.width)
+	}
 	if m.aiView {
 		status := ""
 		if m.aiLoading { status = "Analyzing selected error with the configured AI provider..." }

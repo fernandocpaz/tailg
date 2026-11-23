@@ -588,6 +588,28 @@ information, including patient data. Do not use this feature on protected
 logs or code unless your organization's policy and your provider agreement
 permit sharing it. The model's answer is a hypothesis, not a verified fix.
 
+## On-demand security assessment (S)
+
+In the live log viewer, highlight a log and press **uppercase S** to evaluate that entry
+locally. Press **S** from inside a log-detail panel as well. The report lists
+possible SQL injection, path traversal, cross-site scripting, shell command
+injection, sensitive-endpoint probing, and unusual TRACE/TRACK method indicators.
+Risk is an indicative 0–100 heuristic, not proof of an attack. HTTP status
+codes alone (including 401, 403, 404 and 500) do not trigger a finding.
+
+This feature is **read-only**, bounded to 64 KiB of source text, and sends no
+data to AI or external services. It deliberately omits raw URLs and request
+bodies from the assessment report, which can contain secrets or patient data.
+The inspector considers **one event only**: it cannot determine IP-based request
+rates, coordinated scans, or behavior across the log stream. If HTTP request
+metadata is unavailable it reports insufficient context. Confirm suspected
+attacks using ingress access logs and correlated requests.
+
+The normal lowercase **s** is retained as a search-filter character. While
+viewing a security assessment, press **S** or **Esc** to return to the original
+log detail, or **Enter** to copy the report. AI explanation stays on **A**;
+AI provider settings from the detail view have moved from **S** to **O**.
+
 ## Live view
 
 Following logs opens the full-screen filter by default. Typing in the filter
@@ -663,6 +685,7 @@ the view is paused or the service is quiet.
 | `PageUp` / `PageDown` | Move by one screen |
 | `Home` / `End` | Jump to the start or resume live tailing |
 | `Enter` | Inspect the full log entry and stack trace; press again to copy |
+| `S` (uppercase) | Assess the selected log for suspicious request indicators; press `S`/`Esc` to return |
 | `Esc` | Close the current detail panel |
 | `Ctrl+C` / `Ctrl+Q` | Exit |
 
