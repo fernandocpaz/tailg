@@ -17,6 +17,8 @@ import (
 const maxPickerApps = 20
 
 type pickerModel struct {
+    external bool // external log providers must never invoke Kubernetes API commands
+    providerName string
 	refreshContext    context.Context
 	apps              []core.AppChoice
 	allApps           []core.AppChoice
@@ -79,6 +81,23 @@ type PickerUsage struct {
 	Namespaces map[string]map[string]ChoiceUsage
 }
 
+// PickExternalApps reuses tailg's actual workload picker for non-Kubernetes
+// providers. All kubectl-backed actions are disabled in this mode.
+func PickExternalApps(apps []core.AppChoice, provider, namespace string) (PickerResult,error) {
+    ctx,cancel:=context.WithCancel(context.Background())
+    defer cancel()
+    prepared,total:=preparePickerApps(apps)
+    m:=newPickerModel(prepared,total,provider,namespace,nil)
+    m.external=true
+    m.providerName=provider
+    m.refreshContext=ctx
+    m.note="External log source: "+provider+" — select a workload (Space multi-select, Enter open). Kubernetes actions unavailable."
+    result,err:=tea.NewProgram(m,tea.WithAltScreen()).Run()
+    if err!=nil{return PickerResult{},err}
+    final:=result.(pickerModel)
+    final.result.KubeContext,final.result.Namespace=provider,namespace
+    return final.result,nil
+}
 func PickApp(apps []core.AppChoice, kubeContext, namespace string, loadErr error, previous []string, usage PickerUsage, updates *update.Client, animateIntro bool, notice ...string) (PickerResult, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -127,6 +146,7 @@ func newPickerModel(apps []core.AppChoice, total int, kubeContext, namespace str
 	return model
 }
 func (m pickerModel) Init() tea.Cmd {
+    if m.external{return nil}
 	if m.refreshContext == nil {
 		return nil
 	}
@@ -137,6 +157,14 @@ func (m pickerModel) Init() tea.Cmd {
 	return tea.Batch(commands...)
 }
 func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+    if m.external {
+        if key,ok:=message.(tea.KeyMsg);ok{
+            if keyMatches(key,pickerKeys.context,pickerKeys.namespace,pickerKeys.changes,pickerKeys.events,pickerKeys.timeline,pickerKeys.nodes,pickerKeys.charts,pickerKeys.monitor,pickerKeys.refresh,pickerKeys.run,pickerKeys.pods,pickerKeys.file){
+                m.note="This action requires Kubernetes and is unavailable for "+m.providerName+" logs."
+                return m,nil
+            }
+        }
+    }
 	if m.updates.receive(message) {
 		if m.updates.restart {
 			m.podMonitorState.stop()

@@ -80,9 +80,15 @@ func ParseLogFields(event LogEvent) LogFields {
 		f.StatusCode = value
 	}
 	if value, ok := logEntryMilliseconds(entries, "elapsed", "elapsedmilliseconds", "elapsed_ms"); ok {
-		f.Duration, f.HasDuration = value, true
-	}
-	return f
+        f.Duration, f.HasDuration = value, true
+    }
+    // Preserve the source's structured metadata when raw log content does not
+    // redundantly embed it. Existing Kubernetes messages remain authoritative.
+    if f.Level=="" && event.Level!="" {f.Level=normalizeLogLevel(event.Level)}
+    if f.TraceID=="" && event.TraceID!="" {f.TraceID=validTraceID(event.TraceID)}
+    if f.RequestID=="" && event.RequestID!="" {f.RequestID=event.RequestID}
+    if event.Workload!="" && (f.Service=="" || f.Service==event.Container){f.Service=event.Workload}
+    return f
 }
 
 var leadingPlainLogLevel = regexp.MustCompile(`(?i)^\s*(WRN|ERR|FTL|FATAL|CRIT|CRITICAL|INF|DBG|VRB|WARN|WARNING|ERROR|INFO|INFORMATION|DEBUG|VERBOSE|TRACE|TRC)(?:\s+|:\s*|$)`)

@@ -24,6 +24,7 @@ import (
 )
 
 type Config struct {
+    AppName string // optional branding; defaults to tailg
 	AI              *ai.Client
 	AISettings      ai.Config
 	AIProblem       string
@@ -798,7 +799,7 @@ func (m model) panel(title, body, footer string) string {
 	for len(lines) < height {
 		lines = append(lines, "")
 	}
-	header := renderWithColor(headerStyle, "tailg", m.config.Formatter.Color) + "  " + title
+	header := renderWithColor(headerStyle, m.brandName(), m.config.Formatter.Color) + "  " + title
 	return strings.Join([]string{truncate(header, m.width), renderRule(m.width, m.config.Formatter.Color), strings.Join(lines, "\n"), truncate(renderWithColor(dimStyle, footer, m.config.Formatter.Color), m.width)}, "\n")
 }
 
@@ -880,13 +881,13 @@ func (m model) renderDetail() string {
 		position = fmt.Sprintf("%d-%d/%d", start+1, end, len(allLines))
 	}
 	footer := position + " | Up/Down PgUp/PgDn Home/End | Enter copy | R reload | F6 trace | A AI | P repos | S security | O setup | Esc close"
-	header := renderWithColor(headerStyle, "tailg", m.config.Formatter.Color) + "  Full log entry"
+	header := renderWithColor(headerStyle, m.brandName(), m.config.Formatter.Color) + "  Full log entry"
 	if m.securityView {
 		footer = position + " | Up/Down PgUp/PgDn Home/End | Enter copy report | S/Esc back to log"
-		header = renderWithColor(headerStyle, "tailg", m.config.Formatter.Color) + "  Security assessment"
+		header = renderWithColor(headerStyle, m.brandName(), m.config.Formatter.Color) + "  Security assessment"
 	} else if m.aiView {
 		footer = position + " | Up/Down PgUp/PgDn Home/End | A/Esc back to log"
-		header = renderWithColor(headerStyle, "tailg", m.config.Formatter.Color) + "  AI error explanation"
+		header = renderWithColor(headerStyle, m.brandName(), m.config.Formatter.Color) + "  AI error explanation"
 	}
 	if m.detailLoading {
 		header += " | Loading..."
@@ -904,6 +905,10 @@ func (m model) logHeight() int {
 	return max(1, m.height-6-len(strings.Split(m.renderRecordingSource(), "\n")))
 }
 
+func(m model) brandName()string {
+    if m.config.AppName!="" {return m.config.AppName}
+    return "tailg"
+}
 func (m model) renderHeader() string {
 	services := strings.Join(core.ServiceNames(m.items), ",")
 	if services == "" {
@@ -918,7 +923,7 @@ func (m model) renderHeader() string {
 	if podCount == 1 {
 		podLabel = "1 pod"
 	}
-	headerParts := []string{renderWithColor(headerStyle, "tailg", m.config.Formatter.Color)}
+	headerParts := []string{renderWithColor(headerStyle, m.brandName(), m.config.Formatter.Color)}
 	if m.config.KubeContext != "" {
 		// Keep context near the front so it remains visible when split panes are narrow.
 		headerParts = append(headerParts, renderWithColor(dimStyle, "context "+m.config.KubeContext, m.config.Formatter.Color))
@@ -1059,7 +1064,7 @@ func (m model) activeIssues() []core.Issue {
 func (m model) renderIssueRadar() string {
 	issues := m.activeIssues()
 	stats := m.issueStats()
-	header := renderWithColor(headerStyle, "tailg", m.config.Formatter.Color) + "  Issue radar"
+	header := renderWithColor(headerStyle, m.brandName(), m.config.Formatter.Color) + "  Issue radar"
 	status := "No active issues"
 	if stats.Groups > 0 {
 		status = fmt.Sprintf("%d active • %d events • %d new", stats.Groups, stats.Events, stats.New)

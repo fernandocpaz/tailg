@@ -21,7 +21,7 @@ func (m pickerModel) pickerScreen() string {
 		width = 160
 	}
 	if m.height > 0 && (m.height < 10 || width < 24) {
-		return pickerScreenFrame([]string{headerStyle.Render("tailg"), "Resize terminal to browse workloads."},
+		return pickerScreenFrame([]string{headerStyle.Render(func()string{if m.external{return "DynaR"};return "tailg"}()), "Resize terminal to browse workloads."},
 			[]string{"? Help · Q Quit"}, width, m.height)
 	}
 	header := m.pickerScreenHeader(width)
@@ -49,7 +49,7 @@ func (m pickerModel) pickerScreen() string {
 		if m.loadError == "" {
 			header = append(header, pickerWrapLines([]string{"No applications found in this namespace."}, width)...)
 		}
-		header = append(header, pickerWrapLines([]string{"Press C to switch context, N to choose namespace, or R to retry."}, width)...)
+		if !m.external{header = append(header, pickerWrapLines([]string{"Press C to switch context, N to choose namespace, or R to retry."}, width)...)}
 		return pickerScreenFrame(header, footer, width, m.height)
 	}
 	// Always leave room for a section heading, the cursor row and a scroll hint.
@@ -123,6 +123,12 @@ func (m pickerModel) pickerScreen() string {
 }
 
 func (m pickerModel) pickerScreenHeader(width int) []string {
+    if m.external{
+        provider:=m.providerName
+        if provider==""{provider="external"}
+        title:=headerStyle.Render("DynaR")+"   "+headerStyle.Render("Source: ")+truncatePickerCell(provider,max(1,width/2-14))+"  "+headerStyle.Render("Namespace: ")+truncatePickerCell(m.namespace,max(1,width/2-20))
+        return []string{truncatePickerCell(title,width),dimStyle.Render(strings.Repeat("─",width))}
+    }
 	scope := func(binding key.Binding, label, value string, available int) string {
 		return headerStyle.Render(binding.Help().Key) + " " + label + ": " + truncatePickerCell(value, max(1, available-lipgloss.Width(label)-4))
 	}
@@ -153,6 +159,9 @@ func (m pickerModel) pickerScreenHeader(width int) []string {
 }
 
 func (m pickerModel) pickerScreenFooter(width int) []string {
+    if m.external {
+        return append([]string{dimStyle.Render(strings.Repeat("─",width))},pickerKeyHints(width,pickerKeys.up,pickerKeys.down,pickerKeys.mark,pickerKeys.open,pickerKeys.help,pickerKeys.quit)...)
+    }
 	var footer []string
 	if m.index >= 0 && m.index < len(m.apps) {
 		app := m.apps[m.index]

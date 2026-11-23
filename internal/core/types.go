@@ -72,6 +72,11 @@ type PodChoice struct {
 }
 
 type LogEvent struct {
+    // Provider-supplied log metadata (e.g. from Dynatrace Grail). These fields
+    // are optional: Kubernetes tailg continues parsing its raw log messages.
+    Level string
+    TraceID string
+    RequestID string
 	Workload   string // verified controller identity, optional for legacy callers
 	Pod        string
 	Container  string
