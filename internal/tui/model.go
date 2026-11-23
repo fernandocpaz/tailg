@@ -137,6 +137,8 @@ type model struct {
 	issues          *core.IssueRadar
 	analytics       *core.RollingAnalytics
 	analyticsOpen   bool
+	securityRadar    *core.SecurityRadar
+	securityRadarOpen bool
 	issueOpen       bool
 	issueIndex      int
 	issueLineOffset int
@@ -254,6 +256,7 @@ func Run(parent context.Context, config Config) error {
 		searching: strings.TrimSpace(shared.text) != "" && (config.Search != nil || config.SearchRecords != nil),
 		issues:    core.NewIssueRadar(200),
 		analytics: core.NewRollingAnalytics(),
+		securityRadar: core.NewSecurityRadar(),
 	}
 	// Recording sessions capture clicks for the path link. Shift-drag retains
 	// native terminal selection; other sessions keep mouse reporting opt-in.
@@ -511,6 +514,8 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.closeErrorLogs()
 			} else if m.traceOpen {
 				m.closeTrace()
+			} else if m.securityRadarOpen {
+				m.securityRadarOpen = false
 			} else if m.analyticsOpen {
 				m.analyticsOpen = false
 			} else if m.issueOpen {
@@ -546,6 +551,12 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.issueOpen {
 			return m.updateIssueKey(key)
+		}
+		if m.securityRadarOpen {
+			if key == "f10" {
+				m.securityRadarOpen = false
+			}
+			return m, nil
 		}
 		if m.analyticsOpen {
 			if key == "f9" {
@@ -613,6 +624,9 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "f9":
 			m.analyticsOpen = true
+			return m, nil
+		case "f10":
+			m.securityRadarOpen = true
 			return m, nil
 		case "f7":
 			cmd := m.openReplicaExplanation()
@@ -733,6 +747,9 @@ func (m model) View() string {
 	}
 	if m.analyticsOpen {
 		return m.renderAnalytics()
+	}
+	if m.securityRadarOpen {
+		return m.renderSecurityRadar()
 	}
 	if m.resourceOpen {
 		if m.resourceDetail != "" {
@@ -989,6 +1006,7 @@ func (m model) renderFooter() string {
 		renderKey("F3", "errors", m.config.Formatter.Color),
 		m.renderIssueKey(),
 		renderKey("F9", "analytics", m.config.Formatter.Color),
+		renderKey("F10", "security radar", m.config.Formatter.Color),
 		renderKey("F4", "streams", m.config.Formatter.Color),
 		m.renderHeartbeatKey(),
 		renderKey("F6", "trace", m.config.Formatter.Color),
@@ -1742,6 +1760,9 @@ func (m *model) processLogBatch(events []core.LogEvent) error {
 	if m.analytics == nil {
 		m.analytics = core.NewRollingAnalytics()
 	}
+	if m.securityRadar == nil {
+		m.securityRadar = core.NewSecurityRadar()
+	}
 	previousCount := 0
 	if !m.followsLive {
 		previousCount = m.state.VisibleCount()
@@ -1800,6 +1821,7 @@ func (m *model) processLogBatch(events []core.LogEvent) error {
 		if len(formatted) > 0 {
 			m.issues.Observe(event)
 			m.analytics.Observe(event)
+			m.securityRadar.ObserveRecord(formatted[0], time.Now())
 			records = append(records, formatted...)
 			if m.config.CaptureLogs != nil {
 				capturedEvents = append(capturedEvents, formatted)

@@ -10,6 +10,7 @@ type LogFields struct {
 	TraceID     string
 	SpanID      string
 	RequestID   string
+	ClientIP    string // validated server-emitted remote address; never trust forwarded headers implicitly
 	Duration    time.Duration
 	HasDuration bool
 	StatusCode  int
