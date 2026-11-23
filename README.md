@@ -767,8 +767,10 @@ entries already being streamed by tailg. The dashboard includes:
   and HTTP 5xx responses. The current minute is partial.
 - Observed requests/minute for the most recent five buckets and the preceding
   five, plus approximate p50/p95/p99 latency from bounded histogram bins.
-- Slow-request counts (>250 ms), duration sample coverage, and the eight most
-  active normalized endpoint groups (including requests, 5xx and ~p95).
+- Slow-request counts (>250 ms), HTTP status/duration sample coverage, and the
+  eight most active normalized endpoint groups (including requests, 5xx and ~p95).
+- An indicative 5xx-spike hint comparing the two most recent five-minute groups
+  only when both have at least 30 status samples and the increase is substantial.
 - An explicit warning if log streams are reconnecting.
 
 Press **F9** again or **Esc** to return without altering the search filter or
@@ -779,7 +781,8 @@ telemetry or an SLO measurement. A completion is counted only when its event has
 an HTTP method, path and status or duration; events lacking Kubernetes source
 timestamps, replayed events, stream-control messages, and older history are
 excluded. Health/probe suppression and upstream logging/sampling may reduce
-coverage. Counts are exact for accepted completion events, but percentiles use
+coverage. Counts are exact for accepted completion events, but error percentages use only
+completions with recognized HTTP status codes. Percentiles use
 coarse histogram upper bounds and are labeled approximate; the rolling window
 uses fifteen calendar-minute buckets rather than a second-accurate 900-second
 window. Numeric/UUID URL path segments are grouped; per-minute endpoint
