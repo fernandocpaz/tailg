@@ -19,6 +19,7 @@ type PodNodeDiagnostic struct {
 	Phase        string
 	Restarts     int
 	Ready        bool
+	ReadyKnown   bool
 	OOMKilled    bool
 	Waiting      []string
 	Warnings     []string
@@ -156,7 +157,10 @@ func parsePodNodeDiagnostic(item map[string]any) PodNodeDiagnostic {
 	ready:=false
 	for _,raw:=range sliceValue(status["conditions"]) {
 		condition:=mapValue(raw)
-		if stringValue(condition["type"])=="Ready" && stringValue(condition["status"])=="True" {ready=true}
+		if stringValue(condition["type"])=="Ready" {
+			pod.ReadyKnown=true
+			if stringValue(condition["status"])=="True" {ready=true}
+		}
 	}
 	pod.Ready=ready
 	for _,group:=range []string{"containerStatuses","initContainerStatuses"} {
