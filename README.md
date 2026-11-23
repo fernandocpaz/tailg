@@ -232,8 +232,8 @@ tailg diagnose example-app default --output ndjson
 Running `tailg` with no target opens the interactive application picker in the
 current Kubernetes namespace. The picker uses the full terminal screen and
 restores the shell when you leave. Context (`C`) and namespace (`N`) stay at
-the top; **Inspect** groups Changes (`H`), Events (`E`), and the integrated
-Incident timeline (`I`), beside **Watch**
+the top; **Inspect** groups Changes (`H`), Events (`E`), Incident timeline
+(`I`), and node diagnostics (`D`), beside **Watch**
 and the monitor (`M`). Row actions stay at the bottom, with Run now (`X`)
 shown when a CronJob is highlighted. Press `?` for scrollable keyboard help.
 Columns adapt to the terminal width; the highlighted workload's summary appears
@@ -284,7 +284,7 @@ Failed or timed-out creates are not retried automatically: check the displayed
 Job name before trying again to avoid duplicate execution.
 
 Press **H — Changes**, **E — Events**, or **I — Incident timeline** in the main application picker to
-open a namespace-wide activity modal. Both views preserve the highlighted and
+open a namespace-wide activity modal. These views preserve the highlighted and
 checked applications. Collection starts when the picker opens, refreshes every
 15 seconds after the preceding scan finishes, and stops when you leave it.
 It includes all workloads in the namespace, beyond the newest-20 application
@@ -321,6 +321,32 @@ actively monitored with `M`; no new log collection is started by `I`.
 Retained Kubernetes events and change evidence may be incomplete because of
 RBAC, expired retention, incomplete inventory, or starting monitoring late.
 Source errors stay visible, and the view remains read-only.
+
+### Workload node diagnostics (D)
+
+In the application picker, highlight a workload with active pods and press **D**
+to investigate **only its current pods and their assigned nodes**. Tailg reads
+one namespaced pod inventory, then gets up to six assigned node objects by
+name using the selected Kubernetes context. No cluster-wide node inventory,
+all-namespaces pod listing, or Kubernetes write operation is required.
+
+The modal shows each pod's phase, restarts, OOMKilled last/current container
+termination, container waiting reasons (including CrashLoopBackOff), Ready
+status and assigned node. For each node, it reports Kubernetes **Ready**,
+**MemoryPressure**, **DiskPressure**, and **PIDPressure** conditions,
+unschedulable state, taints, allocatable CPU/memory, and optional current node
+CPU/memory usage. When usage is available, Tailg highlights readings at or
+above 90% of allocatable capacity; an instantaneous utilization percentage
+does **not** prove throttling or that a specific pod caused pressure.
+
+Use arrows, PgUp/PgDn, Home/End to inspect long reports; **R** reloads without
+overlapping a pending query; **D** or **Esc** closes while preserving the
+application selection. The feature is read-only and can be used without **M**.
+Node object visibility may require Kubernetes RBAC allowing `get nodes`;
+the optional node metrics endpoint may require additional permission and a
+running Metrics Server. Inaccessible or stale evidence is labeled
+**INCOMPLETE**, not as zero usage or a healthy node. Reports are point-in-time,
+limited to six assigned nodes, and do not assert the root cause of failures.
 
 **Kubernetes events** shows Normal and Warning events, newest first, with reason,
 affected object, occurrence count, first/last occurrence, source, and the complete
