@@ -32,6 +32,7 @@ type Event struct{
 type Config struct {
     Title string
     InitialFilter string
+    RegexFilter string // optional raw include-regex, like tailg --include
     Namespace string
     Provider string
     Target string
@@ -83,6 +84,11 @@ func records(c Config,items []Event)[]core.LogRecord{
 func Run(ctx context.Context,c Config)error{
     if c.Stream==nil{return errors.New("log provider Stream is required")}
     f:=formatter(c)
+    if c.RegexFilter!=""{
+        patterns,err:=core.CompilePatterns([]string{c.RegexFilter})
+        if err!=nil{return err}
+        f.Include=patterns
+    }
     run:=tui.Config{
         AppName:"DynaR", InitialFilter:c.InitialFilter,
         Title:c.Title,Namespace:c.Namespace,KubeContext:c.Provider,Target:c.Target,
