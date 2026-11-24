@@ -128,6 +128,13 @@ func (m *pickerModel) recordPickerLogScan(result podHealthScanMsg) {
 }
 
 func (m pickerModel) pickerChartSeries(name string, metric int) ([]pickerLineSeries,string) {
+    if m.external&&metric==0{
+        series:=pickerLineSeries{name:"CPU % limit",color:"42"}
+        for _,point:=range m.charts.resources[name]{
+            if point.cpuKnown{series.points=append(series.points,tslc.TimePoint{Time:point.at,Value:point.cpu})}
+        }
+        return []pickerLineSeries{series},"CPU usage as % of configured workload limit (unknown when unset)"
+    }
 	switch metric {
 	case 1:
 		s:=pickerLineSeries{name:"Memory MiB",color:"39"}

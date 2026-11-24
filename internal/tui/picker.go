@@ -19,6 +19,9 @@ const maxPickerApps = 20
 type pickerModel struct {
     external bool // external log providers must never invoke Kubernetes API commands
     providerName string
+    externalMonitor ExternalMonitor
+    externalSamples map[string]ExternalWorkloadSample
+    externalMonitorOnStart bool
 	refreshContext    context.Context
 	apps              []core.AppChoice
 	allApps           []core.AppChoice
@@ -84,6 +87,11 @@ type PickerUsage struct {
 // PickExternalApps reuses tailg's actual workload picker for non-Kubernetes
 // providers. All kubectl-backed actions are disabled in this mode.
 func PickExternalApps(apps []core.AppChoice, provider, namespace string) (PickerResult,error) {
+ return PickExternalAppsWithMonitor(apps,provider,namespace,nil,false)
+}
+// PickExternalAppsWithMonitor uses the same native tailg picker, with external
+// metrics callbacks replacing Kubernetes metrics and kubectl log scans.
+func PickExternalAppsWithMonitor(apps []core.AppChoice, provider, namespace string, monitor ExternalMonitor, start bool) (PickerResult,error) {
     ctx,cancel:=context.WithCancel(context.Background())
     defer cancel()
     // The source has no Kubernetes deployment timestamp. Rank workloads by
@@ -100,6 +108,8 @@ func PickExternalApps(apps []core.AppChoice, provider, namespace string) (Picker
     // the requested namespace/time range. Show every discovered workload.
     m:=newPickerModel(ordered,total,provider,namespace,nil)
     m.external=true
+    m.externalMonitor=monitor
+    m.externalMonitorOnStart=start
     m.providerName=provider
     m.refreshContext=ctx
     m.note="External log source: "+provider+" — select a workload (Space multi-select, Enter open). Kubernetes actions unavailable."
@@ -157,7 +167,10 @@ func newPickerModel(apps []core.AppChoice, total int, kubeContext, namespace str
 	return model
 }
 func (m pickerModel) Init() tea.Cmd {
-    if m.external{return nil}
+    if m.external {
+        if m.externalMonitorOnStart{return func()tea.Msg{return externalStartMonitorMsg{}}}
+        return nil
+    }
 	if m.refreshContext == nil {
 		return nil
 	}
@@ -169,10 +182,26 @@ func (m pickerModel) Init() tea.Cmd {
 }
 func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
     if m.external {
+        if handled,cmd:=m.updateExternalMonitor(message);handled{return m,cmd}
         if key,ok:=message.(tea.KeyMsg);ok{
-            if keyMatches(key,pickerKeys.context,pickerKeys.namespace,pickerKeys.changes,pickerKeys.events,pickerKeys.timeline,pickerKeys.nodes,pickerKeys.charts,pickerKeys.monitor,pickerKeys.refresh,pickerKeys.run,pickerKeys.pods){
-                m.note="This action requires Kubernetes and is unavailable for "+m.providerName+" logs."
+            if keyMatches(key,pickerKeys.context,pickerKeys.namespace,pickerKeys.changes,pickerKeys.events,pickerKeys.timeline,pickerKeys.nodes,pickerKeys.run,pickerKeys.pods){
+                m.note="This operation requires Kubernetes and is unavailable from Dynatrace logs."
                 return m,nil
+            }
+            if m.charts.open { // Existing tailg F9 modal handles chart navigation.
+            }else if keyMatches(key,pickerKeys.monitor){
+                return m,m.toggleExternalMonitor()
+            }else if keyMatches(key,pickerKeys.charts){
+                if len(m.apps)==0{return m,nil}
+                m.charts.open=true
+                m.charts.grid=true
+                m.charts.metric=0
+                if !m.monitorEnabled{return m,m.toggleExternalMonitor()}
+                return m,nil
+            }else if keyMatches(key,pickerKeys.refresh){
+                if !m.monitorEnabled{return m,m.toggleExternalMonitor()}
+                m.monitorBusy=true
+                return m,m.readExternalMonitor()
             }
         }
     }
