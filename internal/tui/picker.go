@@ -112,7 +112,7 @@ func PickExternalAppsWithMonitor(apps []core.AppChoice, provider, namespace stri
     m.externalMonitorOnStart=start
     m.providerName=provider
     m.refreshContext=ctx
-    m.note="External log source: "+provider+" — select a workload (Space multi-select, Enter open). Kubernetes actions unavailable."
+    m.note="External log source: "+provider+" — Space selects workloads; P selects exact pods. Enter opens live logs."
     result,err:=tea.NewProgram(m,tea.WithAltScreen()).Run()
     if err!=nil{return PickerResult{},err}
     final:=result.(pickerModel)
@@ -183,8 +183,8 @@ func (m pickerModel) Init() tea.Cmd {
 func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
     if m.external {
         if handled,cmd:=m.updateExternalMonitor(message);handled{return m,cmd}
-        if key,ok:=message.(tea.KeyMsg);ok{
-            if keyMatches(key,pickerKeys.context,pickerKeys.namespace,pickerKeys.changes,pickerKeys.events,pickerKeys.timeline,pickerKeys.nodes,pickerKeys.run,pickerKeys.pods){
+        if key,ok:=message.(tea.KeyMsg);ok&&m.selection==nil{
+            if keyMatches(key,pickerKeys.context,pickerKeys.namespace,pickerKeys.changes,pickerKeys.events,pickerKeys.timeline,pickerKeys.nodes,pickerKeys.run){
                 m.note="This operation requires Kubernetes and is unavailable from Dynatrace logs."
                 return m,nil
             }
