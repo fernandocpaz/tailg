@@ -139,6 +139,7 @@ func(m *model)timeSnapshot(records []core.LogRecord)*core.FilterState{
  if limit<=0{limit=core.DefaultBufferLines}
  next:=core.NewFilterState(limit)
  next.SetHideRoutineNoise(m.state.HideRoutineNoise())
+ next.SetExclusions(m.exclusions.patterns)
  next.SetMatchesOnly(m.state.MatchesOnly())
  next.SetFilter(m.input.Value())
  from,to:=m.timeState.selection.Bounds(time.Now())

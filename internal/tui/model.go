@@ -25,6 +25,7 @@ import (
 
 type Config struct {
     AppName string // optional branding; defaults to tailg
+    ExclusionFile string // opt-in per-window display exclusions
     InitialFilter string // optional provider-supplied starting filter
     TraceMarkers bool
     CleanLogs bool
@@ -87,6 +88,7 @@ type resourceDetailMsg struct {
 type sharedFilterTick time.Time
 
 type model struct {
+    exclusions exclusionState
 	updates         updateState
 	errorLogs       errorLogsState
 	replicas        replicaViewState
@@ -255,6 +257,8 @@ func Run(parent context.Context, config Config) error {
 	}
 	state := core.NewFilterState(bufferLines)
     state.SetHideRoutineNoise(config.CleanLogs)
+    exclusions:=newExclusionState(config.ExclusionFile)
+    state.SetExclusions(exclusions.patterns)
 	shared := readShared(config.FilterFile)
 	if shared.textValid && shared.text != "" {
         input.SetValue(shared.text)
@@ -266,9 +270,11 @@ func Run(parent context.Context, config Config) error {
 	state.SetMatchesOnly(shared.modeValid && shared.mode)
 	m := model{
 		updates: updateState{client: config.Updates},
+        exclusions:exclusions,
 		ctx:     ctx, cancel: cancel, config: config, events: events, inventory: inventory, state: state,
 		heartbeat: &core.HeartbeatAnalyzer{}, input: input, items: items,
 		selected: -1, followsLive: true,
+        notice:exclusions.notice,
 		lastSharedText: shared.text, lastSharedMode: shared.mode,
 		lastTextRev: shared.textRevision, lastModeRev: shared.modeRevision,
 		searches:  &searchController{},
@@ -318,13 +324,16 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	updated, cmd := m.update(message)
-	if next, ok := updated.(model); ok && m.config.RecordingPath != "" && m.wantsMouse() != next.wantsMouse() {
+	if next, ok := updated.(model); ok && m.wantsMouse() != next.wantsMouse() {
 		return next, tea.Sequence(cmd, next.defaultMouseCommand())
 	}
 	return updated, cmd
 }
 
 func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
+    if m.exclusions.open {
+        if key,ok:=message.(tea.KeyMsg);ok{return m.updateExclusions(key)}
+    }
 	if msg,ok:=message.(serviceCloneMsg);ok {
 		return m.updateServiceClone(msg)
 	}
@@ -515,12 +524,15 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.recordingLinkHit(msg) {
 			return m, m.copyRecordingPath()
 		}
+        if m.exclusionTimeline(){m.selectExclusionText(msg);return m,nil}
 		if m.resourceMouseCapture && m.resourceOpen && m.resourceDetail != "" && m.aiSetup == nil && !m.showUpdate() {
 			m.scrollMappedResourceMouse(msg)
 		}
 		return m, nil
 	case tea.KeyMsg:
 		key := msg.String()
+        if m.exclusionTimeline()&&(key=="E"||key=="alt+e"||(key=="e"&&selectedExclusion(m.exclusions.selection)!="")){return m.openExclusions()}
+        if m.exclusions.selection!=nil{m.exclusions.selection=nil}
 		if key == "ctrl+y" && m.recordingVisible() {
 			return m, m.copyRecordingPath()
 		}
@@ -765,6 +777,10 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
+    if m.exclusions.open&&m.width>0&&m.height>0{
+        background:=m; background.exclusions.open=false
+        return overlayModal(background.View(),m.exclusionDialog(),m.width,m.height)
+    }
 	if m.serviceRepoSetup!=nil && m.width>0 && m.height>0 {
 		return m.renderServiceRepoWizard()
 	}
@@ -832,7 +848,9 @@ func (m model) View() string {
 	for len(visible) < height {
 		visible = append(visible, "")
 	}
-	return strings.Join([]string{m.renderHeader(), m.renderRecordingSource()+m.renderTimeBar(), renderRule(m.width, m.config.Formatter.Color), strings.Join(visible, "\n"), renderRule(m.width, m.config.Formatter.Color), m.renderFilterBar(), m.renderFooter()}, "\n")
+    prefix:=strings.Join([]string{m.renderHeader(),m.renderRecordingSource()+m.renderTimeBar(),renderRule(m.width,m.config.Formatter.Color)},"\n")
+    visible=m.exclusionRows(visible,strings.Count(prefix,"\n")+1)
+    return strings.Join([]string{prefix,strings.Join(visible,"\n"),renderRule(m.width,m.config.Formatter.Color),m.renderFilterBar(),m.renderFooter()},"\n")
 }
 
 func (m model) panel(title, body, footer string) string {
@@ -970,6 +988,7 @@ func (m model) renderHeader() string {
 		podLabel = "1 pod"
 	}
 	headerParts := []string{renderWithColor(headerStyle, m.brandName(), m.config.Formatter.Color)}
+    if m.config.ExclusionFile!=""{headerParts=append(headerParts,m.exclusionPill())}
 	if m.config.KubeContext != "" {
 		// Keep context near the front so it remains visible when split panes are narrow.
 		label:="context"
@@ -1063,6 +1082,7 @@ func (m model) renderFooter() string {
 		return truncate(renderWithColor(dimStyle, m.searchStatus(), m.config.Formatter.Color), m.width)
 	}
 	shortcuts := []string{}
+    if m.config.ExclusionFile!=""{shortcuts=append(shortcuts,renderKey("E","exclusions",m.config.Formatter.Color))}
     if m.config.TimeRecords!=nil{shortcuts=append(shortcuts,renderKey("F12","time (all windows)",m.config.Formatter.Color))}
     if m.config.TraceMarkers{shortcuts=append(shortcuts,renderKey("F6","[T] trace [TS] span [S] span-only",m.config.Formatter.Color))}
     if m.config.CleanLogs{shortcuts=append(shortcuts,renderKey("F11","clean/raw",m.config.Formatter.Color))}

@@ -43,6 +43,7 @@ type Config struct {
     UseConfiguredAI bool // opt-in to tailg AI settings; analyses run only by explicit user action
     RecordingPath string
     Capture func([]Event) error // each source event once, never each formatted line
+    ExclusionFile string
     Namespace string
     Provider string
     Target string
@@ -109,7 +110,7 @@ func Run(ctx context.Context,c Config)error{
         f.Include=patterns
     }
     run:=tui.Config{
-        AppName:"DynaR", InitialFilter:c.InitialFilter,RecordingPath:c.RecordingPath,
+        AppName:"DynaR", InitialFilter:c.InitialFilter,RecordingPath:c.RecordingPath,ExclusionFile:c.ExclusionFile,
         TraceMarkers:c.TraceMarkers,CleanLogs:c.CleanLogs,
         TimeFile:c.TimeFile,DefaultLookback:c.DefaultLookback,
         Title:c.Title,Namespace:c.Namespace,KubeContext:c.Provider,Target:c.Target,

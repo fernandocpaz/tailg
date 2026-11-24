@@ -19,12 +19,12 @@ func (m model) defaultMouseCommand() tea.Cmd {
 }
 
 func (m model) wantsMouse() bool {
-	return m.recordingVisible() || m.resourceMouseCapture
+	return m.recordingVisible() || m.resourceMouseCapture || m.exclusionTimeline()
 }
 
 func (m model) recordingVisible() bool {
 	return m.config.RecordingPath != "" && m.width > 0 && m.height > 0 &&
-		m.aiSetup == nil && m.serviceRepoSetup == nil && !m.showUpdate() &&
+		m.aiSetup == nil && m.serviceRepoSetup == nil && !m.showUpdate() && !m.exclusions.open &&
 		!m.errorLogs.open && !m.replicas.open && !m.traceOpen && !m.freshnessOpen &&
 		!m.heartbeatOpen && !m.issueOpen && !m.resourceOpen && m.detail == ""
 }

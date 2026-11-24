@@ -33,6 +33,7 @@ type FilterState struct {
 	externalLiveCount int
 
 	hideRoutineNoise bool
+	exclusions []string
     windowStart,windowEnd time.Time
     windowContext bool
 	matchesOnly bool
@@ -301,6 +302,13 @@ func(s *FilterState) SetTimeWindow(start,end time.Time,context bool){
  s.refreshLocked()
 }
 
+// SetExclusions changes visibility only; retained history and raw records stay intact.
+func (s *FilterState) SetExclusions(patterns []string) {
+ s.mu.Lock()
+ defer s.mu.Unlock()
+ s.exclusions=append([]string(nil),patterns...)
+ s.refreshLocked()
+}
 func (s *FilterState) SetHideRoutineNoise(enabled bool) {
  s.mu.Lock()
  defer s.mu.Unlock()
@@ -508,6 +516,10 @@ func (s *FilterState) refreshLocked() {
 }
 
 func (s *FilterState) appendVisibleLocked(record LogRecord, pinned bool) bool {
+    if len(s.exclusions)>0 {
+        raw,display:=StripANSI(record.Event.Message),StripANSI(record.Text)
+        for _,pattern:=range s.exclusions{if pattern!=""&&(strings.Contains(raw,pattern)||strings.Contains(display,pattern)){return false}}
+    }
     at:=record.Event.ObservedAt
     if !s.windowStart.IsZero()&&(at.IsZero()||at.Before(s.windowStart)){return false}
     if !s.windowEnd.IsZero()&&(at.IsZero()||!at.Before(s.windowEnd)){return false}
