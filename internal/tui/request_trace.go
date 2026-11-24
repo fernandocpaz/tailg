@@ -253,8 +253,9 @@ func renderRecordRow(record core.LogRecord, query string, selected bool, width i
 	return renderRecordRowAt(record, query, selected, width, showPod, color, time.Now())
 }
 
-func renderRecordRowAt(record core.LogRecord, query string, selected bool, width int, showPod, color bool, now time.Time) string {
+func renderRecordRowAt(record core.LogRecord, query string, selected bool, width int, showPod, color bool, now time.Time, traceMarkers ...bool) string {
 	columns := parseLogColumns(record.Text, showPod)
+    if len(traceMarkers)>0&&traceMarkers[0]{columns.traceMarker=traceMarkerFor(record)}
 	if record.Event.Pod != "" {
 		columns.pod = record.Event.Pod
 	}
@@ -278,4 +279,14 @@ type traceOccurrence struct {
 
 func traceKey(record core.LogRecord) traceOccurrence {
 	return traceOccurrence{record.Event.Pod, record.Event.Container, record.Event.Message, record.Text, record.Event.ObservedAt.UTC()}
+}
+
+// A marker describes local IDs, not whether Grail has retained a span.
+func traceMarkerFor(record core.LogRecord)string{
+ if record.Fields.TraceID!=""{
+  if record.Fields.SpanID!=""{return "[TS]"}
+  return "[T]"
+ }
+ if record.Fields.SpanID!=""{return "[S]"}
+ return ""
 }

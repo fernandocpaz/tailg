@@ -22,7 +22,7 @@ type logTimelineRow struct {
 // paused or searching.
 // renderLogTimelineRows positions the viewport without formatting off-screen
 // records. This keeps redraw costs bounded even with a large history result.
-func renderLogTimelineRows(records core.LogRecordView, query string, selected, height, width int, showPod, color, followsLive bool, now time.Time) []string {
+func renderLogTimelineRows(records core.LogRecordView, query string, selected, height, width int, showPod, color, followsLive bool, now time.Time, traceMarkers ...bool) []string {
 	if height <= 0 || records.Len() == 0 {
 		return nil
 	}
@@ -91,7 +91,7 @@ func renderLogTimelineRows(records core.LogRecordView, query string, selected, h
 		}
 		if position >= start && position < end {
 			visible = append(visible, logTimelineRow{
-				text:        renderRecordRowAt(record, query, index == selected, width, showPod, color, now),
+				text:        renderRecordRowAt(record, query, index == selected, width, showPod, color, now, traceMarkers...),
 				recordIndex: index,
 				groupLabel:  logDateGroupLabel(record.Event.ObservedAt, now),
 			})
