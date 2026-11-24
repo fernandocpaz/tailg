@@ -234,6 +234,8 @@ type App struct {
 type Selection struct {
     Workloads []string
     Pods []string
+    ScopeKind, ScopeValue string
+    MonitorEnabled bool
     Quit bool
     Record bool
     RecordFrom time.Time
@@ -242,14 +244,19 @@ func PickApps(apps []App,source,namespace string)(Selection,error){
  return PickAppsWithMonitor(apps,source,namespace,nil,false)
 }
 func PickAppsWithMonitor(apps []App,source,namespace string,monitor Monitor,start bool)(Selection,error){
+    return PickAppsWithScope(context.Background(),apps,source,namespace,monitor,start,nil,"")
+}
+// ScopeDiscovery returns provider-discovered names in display order, with an optional warning.
+type ScopeDiscovery func(context.Context,string)([]string,string,error)
+func PickAppsWithScope(ctx context.Context,apps []App,source,namespace string,monitor Monitor,start bool,discover ScopeDiscovery,notice string)(Selection,error){
     choices:=make([]core.AppChoice,0,len(apps))
     for _,app:=range apps{
         choices=append(choices,core.AppChoice{Name:app.Name,Namespace:namespace,Pods:append([]string(nil),app.Pods...),LastLogAt:app.LastSeen,Ready:"-",Phases:"Logs"})
     }
-    result,err:=tui.PickExternalAppsWithMonitor(choices,source,namespace,convertMonitor(monitor),start)
+    result,err:=tui.PickExternalAppsWithScope(ctx,choices,source,namespace,convertMonitor(monitor),start,tui.ExternalScopeDiscovery(discover),notice)
     if err!=nil{return Selection{},err}
     if result.Action==tui.PickerQuit{return Selection{Quit:true},nil}
-    selected:=Selection{Record:result.LogToFile,RecordFrom:result.CaptureFrom,Pods:append([]string(nil),result.Pods...)}
+    selected:=Selection{ScopeKind:result.ScopeKind,ScopeValue:result.ScopeValue,MonitorEnabled:result.MonitorEnabled,Record:result.LogToFile,RecordFrom:result.CaptureFrom,Pods:append([]string(nil),result.Pods...)}
     for _,choice:=range result.Apps{selected.Workloads=append(selected.Workloads,choice.Name)}
     return selected,nil
 }
