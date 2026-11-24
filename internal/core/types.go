@@ -78,6 +78,7 @@ type LogEvent struct {
     // are optional: Kubernetes tailg continues parsing its raw log messages.
     Level string
     TraceID string
+    SpanID string
     RequestID string
     // Optional structured HTTP completion metadata supplied by remote log
     // providers. These measurements describe logged completions, not APM.

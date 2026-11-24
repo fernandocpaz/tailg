@@ -86,6 +86,7 @@ func ParseLogFields(event LogEvent) LogFields {
     // redundantly embed it. Existing Kubernetes messages remain authoritative.
     if f.Level=="" && event.Level!="" {f.Level=normalizeLogLevel(event.Level)}
     if f.TraceID=="" && event.TraceID!="" {f.TraceID=validTraceID(event.TraceID)}
+    if f.SpanID=="" && event.SpanID!="" {f.SpanID=validSpanID(event.SpanID)}
     if f.RequestID=="" && event.RequestID!="" {f.RequestID=event.RequestID}
     if event.Workload!="" && (f.Service=="" || f.Service==event.Container){f.Service=event.Workload}
     // Prefer the original parsed message, falling back to authoritative
