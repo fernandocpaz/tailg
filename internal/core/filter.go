@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
@@ -32,6 +33,8 @@ type FilterState struct {
 	externalLiveCount int
 
 	hideRoutineNoise bool
+    windowStart,windowEnd time.Time
+    windowContext bool
 	matchesOnly bool
 	matchCount  int
 
@@ -288,6 +291,16 @@ func (s *FilterState) allocateIDLocked() uint64 {
 }
 
 // SetHideRoutineNoise changes only the visible rows, never the retained history.
+// SetTimeWindow applies a display-only event-time interval [start,end).
+// An empty end denotes a rolling live view. Snapshot context lets F1 switch
+// between all interval records and only matching records without another query.
+func(s *FilterState) SetTimeWindow(start,end time.Time,context bool){
+ s.mu.Lock();defer s.mu.Unlock()
+ if s.windowStart.Equal(start)&&s.windowEnd.Equal(end)&&s.windowContext==context{return}
+ s.windowStart,s.windowEnd,s.windowContext=start,end,context
+ s.refreshLocked()
+}
+
 func (s *FilterState) SetHideRoutineNoise(enabled bool) {
  s.mu.Lock()
  defer s.mu.Unlock()
@@ -495,10 +508,13 @@ func (s *FilterState) refreshLocked() {
 }
 
 func (s *FilterState) appendVisibleLocked(record LogRecord, pinned bool) bool {
+    at:=record.Event.ObservedAt
+    if !s.windowStart.IsZero()&&(at.IsZero()||at.Before(s.windowStart)){return false}
+    if !s.windowEnd.IsZero()&&(at.IsZero()||!at.Before(s.windowEnd)){return false}
  // Explicit searches always expose matching routine messages.
  if s.hideRoutineNoise && strings.TrimSpace(s.filterText)=="" && IsRoutineNoise(record){return false}
  matched := s.queryMatchesLocked(record)
-	if !matched && (s.filterErr != nil || s.externalHistory == nil || s.matchesOnly) {
+	if !matched && (s.filterErr != nil || (s.externalHistory == nil && !s.windowContext) || s.matchesOnly) {
 		return false
 	}
 	if matched && s.filterQuery != nil {

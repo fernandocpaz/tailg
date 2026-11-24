@@ -53,6 +53,9 @@ type Config struct {
     ShowPod bool
     TraceMarkers bool
     CleanLogs bool
+    TimeFile string
+    DefaultLookback time.Duration
+    TimeRecords func(context.Context,time.Time,time.Time)(TimeResult,error)
     FilterFile string
     // Stream is a blocking source-specific subscription and must exit on
     // context cancellation. It may emit events from a shared polling hub.
@@ -108,6 +111,7 @@ func Run(ctx context.Context,c Config)error{
     run:=tui.Config{
         AppName:"DynaR", InitialFilter:c.InitialFilter,RecordingPath:c.RecordingPath,
         TraceMarkers:c.TraceMarkers,CleanLogs:c.CleanLogs,
+        TimeFile:c.TimeFile,DefaultLookback:c.DefaultLookback,
         Title:c.Title,Namespace:c.Namespace,KubeContext:c.Provider,Target:c.Target,
         Items:inventory(c.Sources),Formatter:f,
         RefreshInterval:c.RefreshInterval,BufferLines:c.BufferLines,
@@ -178,6 +182,10 @@ func Run(ctx context.Context,c Config)error{
             return records(c,found),nil
         }
     }
+    if c.TimeRecords!=nil{run.TimeRecords=func(ctx context.Context,from,to time.Time)(tui.TimeResult,error){
+        result,err:=c.TimeRecords(ctx,from,to)
+        return tui.TimeResult{Records:records(c,result.Events),Warning:result.Warning},err
+    }}
     if c.Spans!=nil{run.Spans=c.Spans}
     if c.Trace!=nil{
         run.Trace=func(ctx context.Context,id string)([]core.LogRecord,error){
