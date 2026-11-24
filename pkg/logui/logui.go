@@ -224,11 +224,14 @@ type Selection struct {
     RecordFrom time.Time
 }
 func PickApps(apps []App,source,namespace string)(Selection,error){
+ return PickAppsWithMonitor(apps,source,namespace,nil,false)
+}
+func PickAppsWithMonitor(apps []App,source,namespace string,monitor Monitor,start bool)(Selection,error){
     choices:=make([]core.AppChoice,0,len(apps))
     for _,app:=range apps{
         choices=append(choices,core.AppChoice{Name:app.Name,Namespace:namespace,Pods:append([]string(nil),app.Pods...),LastLogAt:app.LastSeen,Ready:"-",Phases:"Logs"})
     }
-    result,err:=tui.PickExternalApps(choices,source,namespace)
+    result,err:=tui.PickExternalAppsWithMonitor(choices,source,namespace,convertMonitor(monitor),start)
     if err!=nil{return Selection{},err}
     if result.Action==tui.PickerQuit{return Selection{Quit:true},nil}
     selected:=Selection{Record:result.LogToFile,RecordFrom:result.CaptureFrom}

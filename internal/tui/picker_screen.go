@@ -60,7 +60,7 @@ func (m pickerModel) pickerScreen() string {
 	rows := make([]pickerViewportRow, len(m.apps))
 	appColumns, jobColumns := pickerColumnsWithMetrics(width, false, m.monitorEnabled), pickerColumnsWithMetrics(width, true, m.monitorEnabled)
     if m.external{
-        appColumns=externalPickerColumns(width)
+        appColumns=externalPickerColumns(width,m.monitorEnabled)
         jobColumns=appColumns
     }
 	var headers [2][]string
@@ -75,7 +75,10 @@ func (m pickerModel) pickerScreen() string {
 			rows[i].section = 1
 		}
 		values := pickerRowValues(app, now)
-        if m.external{values["lastlog"]=formatPickerAge(now,app.LastLogAt)}
+        if m.external{
+            values["lastlog"]=formatPickerAge(now,app.LastLogAt)
+            if m.monitorEnabled{values["cpu"],values["memory"]=m.externalResourceCells(app.Name)}
+        }
 		values["sidecars"] = "-"
 		if count := len(pickerAppSidecars(app)); count > 0 {
 			values["sidecars"] = fmt.Sprint(count)
@@ -132,7 +135,13 @@ func (m pickerModel) pickerScreenHeader(width int) []string {
         provider:=m.providerName
         if provider==""{provider="external"}
         title:=headerStyle.Render("DynaR")+"   "+headerStyle.Render("Source: ")+truncatePickerCell(provider,max(1,width/2-14))+"  "+headerStyle.Render("Namespace: ")+truncatePickerCell(m.namespace,max(1,width/2-20))
-        return []string{truncatePickerCell(title,width),dimStyle.Render(strings.Repeat("─",width))}
+        lines:=[]string{truncatePickerCell(title,width)}
+        if m.monitorEnabled {
+            lines=append(lines,pickerLimitedLines(m.externalMetricsSummary(),width,2)...)
+        } else {
+            lines=append(lines,pickerLimitedLines("M Monitor · F9 CPU/memory charts · R Refresh metrics",width,1)...)
+        }
+        return append(lines,dimStyle.Render(strings.Repeat("─",width)))
     }
 	scope := func(binding key.Binding, label, value string, available int) string {
 		return headerStyle.Render(binding.Help().Key) + " " + label + ": " + truncatePickerCell(value, max(1, available-lipgloss.Width(label)-4))
@@ -165,7 +174,12 @@ func (m pickerModel) pickerScreenHeader(width int) []string {
 
 func (m pickerModel) pickerScreenFooter(width int) []string {
     if m.external {
-        return append([]string{dimStyle.Render(strings.Repeat("─",width))},pickerKeyHints(width,pickerKeys.up,pickerKeys.down,pickerKeys.mark,pickerKeys.open,pickerKeys.file,pickerKeys.help,pickerKeys.quit)...)
+        footer:=[]string{}
+        if m.monitorEnabled&&m.index>=0&&m.index<len(m.apps){
+            footer=append(footer,pickerLimitedLines(m.externalMetricDetail(m.apps[m.index].Name),width,2)...)
+        }
+        footer=append(footer,dimStyle.Render(strings.Repeat("─",width)))
+        return append(footer,pickerKeyHints(width,pickerKeys.up,pickerKeys.down,pickerKeys.mark,pickerKeys.open,pickerKeys.monitor,pickerKeys.charts,pickerKeys.file,pickerKeys.help,pickerKeys.quit)...)
     }
 	var footer []string
 	if m.index >= 0 && m.index < len(m.apps) {
@@ -349,10 +363,19 @@ func pickerAppSidecars(app core.AppChoice) map[string]bool {
 	return sidecars
 }
 
-func externalPickerColumns(width int)[]pickerColumn{
+func externalPickerColumns(width int,monitor bool)[]pickerColumn{
     remaining:=max(1,width-6)
     if width<46{return []pickerColumn{{id:"name",title:"APPLICATION",width:remaining}}}
     ageWidth:=16
+    if monitor&&width>=88{
+        cpuWidth,memWidth:=13,12
+        return []pickerColumn{
+            {id:"name",title:"APPLICATION",width:max(1,remaining-ageWidth-cpuWidth-memWidth-3)},
+            {id:"lastlog",title:"LAST LOG",width:ageWidth},
+            {id:"cpu",title:"CPU % LIMIT",width:cpuWidth},
+            {id:"memory",title:"MEMORY",width:memWidth},
+        }
+    }
     return []pickerColumn{
         {id:"name",title:"APPLICATION",width:max(1,remaining-ageWidth-1)},
         {id:"lastlog",title:"LAST LOG",width:ageWidth},
