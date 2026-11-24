@@ -174,7 +174,7 @@ func(m pickerModel) externalMetricDetail(name string)string{
 }
 func(m pickerModel) externalMetricsSummary()string{
  if !m.monitorEnabled{return "Monitor: OFF · M to start"}
- if m.monitorBusy&&m.monitorLastScan.IsZero(){return "Dynatrace monitor: loading logs and CPU/memory"}
+ if m.monitorBusy{return loadingLabel("Dynatrace monitor: loading logs and CPU/memory")}
  if m.monitorLastScan.IsZero(){return "Dynatrace monitor: "+m.monitorError}
  description:=fmt.Sprintf("Dynatrace monitor: ON · 30s · %s · %d workloads",m.monitorLastScan.Format("15:04:05"),len(m.externalSamples))
  if m.metricsWarning!=""{description+=" · "+m.metricsWarning}

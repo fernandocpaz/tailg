@@ -200,7 +200,7 @@ func (m model) errorLogRows(now time.Time) []logTimelineRow {
 	}
 	status := view.notice
 	if view.loading {
-		status = "Loading all retained ERR / FTL logs from this pod..."
+		status = loadingLabel("Loading all retained ERR / FTL logs from this pod...")
 	}
 	if status == "" {
 		return cache.rows

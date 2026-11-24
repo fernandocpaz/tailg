@@ -935,7 +935,7 @@ func (m model) renderDetail() string {
 		header = renderWithColor(headerStyle, m.brandName(), m.config.Formatter.Color) + "  AI error explanation"
 	}
 	if m.detailLoading {
-		header += " | Loading..."
+		header += " | " + loadingLabel("Loading...")
 	} else if m.detailNotice != "" {
 		header += " | BUFFERED ONLY"
 	}
@@ -1047,7 +1047,7 @@ func (m model) searchStatus() string {
 	}
 	if m.timeState.active{return fmt.Sprintf("%d matches • %d lines",m.state.MatchCount(),m.state.VisibleCount())}
 	if m.searching {
-		return "searching history..."
+		return loadingLabel("searching history...")
 	}
 	return fmt.Sprintf("%d matches • %d lines", m.searchMatches, m.searchLines)
 }
