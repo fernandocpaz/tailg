@@ -28,6 +28,9 @@ type Config struct {
     InitialFilter string // optional provider-supplied starting filter
     TraceMarkers bool
     CleanLogs bool
+    TimeFile string
+    DefaultLookback time.Duration
+    TimeRecords func(context.Context,time.Time,time.Time,bool)(TimeResult,error)
 	AI              *ai.Client
 	AISettings      ai.Config
 	AIProblem       string
@@ -164,6 +167,7 @@ type model struct {
 	traceSearches   *searchController
 	traceNotice     string
 	spanState spanViewState
+    timeState timeViewState
 }
 
 type searchController struct {
@@ -273,6 +277,16 @@ func Run(parent context.Context, config Config) error {
 		analytics: core.NewRollingAnalytics(),
 		securityRadar: core.NewSecurityRadar(),
 	}
+	if config.TimeRecords!=nil{
+        m.timeState.live=state
+        m.timeState.selection=TimeRange{Lookback:defaultLookback(config.DefaultLookback)}
+        from,_:=m.timeState.selection.Bounds(time.Now())
+        state.SetTimeWindow(from,time.Time{},false)
+        if selection,revision,ok:=readTimeRange(config.TimeFile);ok{
+            m.timeState.revision=revision
+            m.timeState.initial=m.applyTimeRange(selection,false)
+        }
+    }
 	// Recording sessions capture clicks for the path link. Shift-drag retains
 	// native terminal selection; other sessions keep mouse reporting opt-in.
 	program := tea.NewProgram(m, tea.WithAltScreen())
@@ -292,7 +306,7 @@ func Run(parent context.Context, config Config) error {
 }
 
 func (m model) Init() tea.Cmd {
-	commands := []tea.Cmd{waitForLogBatch(m.events), waitForInventory(m.inventory), sharedTick(), m.updates.check(m.ctx)}
+	commands := []tea.Cmd{waitForLogBatch(m.events), waitForInventory(m.inventory), sharedTick(), m.updates.check(m.ctx),m.timeState.initial}
 	if strings.TrimSpace(m.config.Title) != "" {
 		commands = append(commands, tea.SetWindowTitle(m.config.Title))
 	}
@@ -344,6 +358,8 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.updates.key(m.ctx, msg)
 	}
 	switch msg := message.(type) {
+    case timeRangeMsg:
+        return m.receiveTimeRange(msg),nil
 	case errorLogsMsg:
 		return m.updateErrorLogs(msg)
 	case logDetailMsg:
@@ -455,6 +471,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case sharedFilterTick:
 		shared := readShared(m.config.FilterFile)
 		var commands []tea.Cmd
+        if command:=m.syncTimeRange(time.Time(msg));command!=nil{commands=append(commands,command)}
 		if shared.textValid && shared.textRevision.newerThan(m.lastTextRev) {
 			m.lastTextRev = shared.textRevision
 			if shared.text != m.lastSharedText {
@@ -511,6 +528,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancel()
 			return m, tea.Quit
 		}
+        if m.timeState.dialog.open{return m.updateTimeDialog(msg)}
 		if key == "esc" {
 			if m.resourceOpen && m.resourceDetail != "" {
 				return m.updateResourceKey("esc")
@@ -586,6 +604,12 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateLogDetailKey(key)
 		}
 		switch key {
+        case "f12":
+            if m.config.TimeRecords!=nil{m.openTimeDialog()}
+            return m,nil
+        case "alt+left","alt+right":
+            if m.config.TimeRecords!=nil{direction:=-1;if key=="alt+right"{direction=1};cmd:=m.applyTimeRange(m.timeState.selection.Shift(time.Now(),direction),true);return m,cmd}
+            return m,nil
 		case "S":
 			record, ok := m.state.SelectedRecord(m.selected)
 			if !ok {
@@ -755,6 +779,7 @@ func (m model) View() string {
 	if m.width <= 0 || m.height <= 0 {
 		return "starting tailg..."
 	}
+	if m.timeState.dialog.open{return m.renderTimeDialog()}
 	if m.errorLogs.open {
 		return m.renderErrorLogs()
 	}
@@ -807,7 +832,7 @@ func (m model) View() string {
 	for len(visible) < height {
 		visible = append(visible, "")
 	}
-	return strings.Join([]string{m.renderHeader(), m.renderRecordingSource(), renderRule(m.width, m.config.Formatter.Color), strings.Join(visible, "\n"), renderRule(m.width, m.config.Formatter.Color), m.renderFilterBar(), m.renderFooter()}, "\n")
+	return strings.Join([]string{m.renderHeader(), m.renderRecordingSource()+m.renderTimeBar(), renderRule(m.width, m.config.Formatter.Color), strings.Join(visible, "\n"), renderRule(m.width, m.config.Formatter.Color), m.renderFilterBar(), m.renderFooter()}, "\n")
 }
 
 func (m model) panel(title, body, footer string) string {
@@ -922,7 +947,8 @@ func (m model) renderDetail() string {
 	}, "\n")
 }
 func (m model) logHeight() int {
-	return max(1, m.height-6-len(strings.Split(m.renderRecordingSource(), "\n")))
+	extra:=0;if m.config.TimeRecords!=nil{extra=1}
+    return max(1, m.height-6-len(strings.Split(m.renderRecordingSource(), "\n"))-extra)
 }
 
 func(m model) brandName()string {
@@ -1019,6 +1045,7 @@ func (m model) searchStatus() string {
 	if strings.TrimSpace(m.input.Value()) == "" {
 		return ""
 	}
+	if m.timeState.active{return fmt.Sprintf("%d matches • %d lines",m.state.MatchCount(),m.state.VisibleCount())}
 	if m.searching {
 		return "searching history..."
 	}
@@ -1036,6 +1063,7 @@ func (m model) renderFooter() string {
 		return truncate(renderWithColor(dimStyle, m.searchStatus(), m.config.Formatter.Color), m.width)
 	}
 	shortcuts := []string{}
+    if m.config.TimeRecords!=nil{shortcuts=append(shortcuts,renderKey("F12","time (all windows)",m.config.Formatter.Color))}
     if m.config.TraceMarkers{shortcuts=append(shortcuts,renderKey("F6","[T] trace [TS] span [S] span-only",m.config.Formatter.Color))}
     if m.config.CleanLogs{shortcuts=append(shortcuts,renderKey("F11","clean/raw",m.config.Formatter.Color))}
     shortcuts=append(shortcuts,[]string{
@@ -1877,6 +1905,15 @@ func (m *model) processLogBatch(events []core.LogEvent) error {
 			}
 		}
 	}
+	if m.timeState.active && m.timeState.live!=nil && m.timeState.live!=m.state {
+        m.timeState.live.AppendRecords(records...)
+        records=filterTimeRecords(records,m.timeState.selection,time.Now())
+        used,capacity:=m.state.BufferUsage()
+        if capacity>0&&used+len(records)>capacity{
+            m.timeState.complete=false
+            if m.timeState.warning==""{m.timeState.warning=fmt.Sprintf("Display limited to newest %d rows",capacity)}
+        }
+    }
 	added := m.state.AppendRecords(records...)
 	if len(traceRecords) > 0 {
 		m.traceState.AppendRecords(traceRecords...)

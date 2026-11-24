@@ -19,7 +19,7 @@ type traceMsg struct {
 	err        error
 }
 
-func (m model) hasSearch() bool { return m.config.Search != nil || m.config.SearchRecords != nil }
+func (m model) hasSearch() bool { return !m.timeState.active && (m.config.Search != nil || m.config.SearchRecords != nil) }
 
 func (m *model) openSelectedTrace() tea.Cmd {
 	record, ok := m.state.SelectedRecord(m.selected)
