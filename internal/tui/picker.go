@@ -22,6 +22,9 @@ type pickerModel struct {
     externalMonitor ExternalMonitor
     externalSamples map[string]ExternalWorkloadSample
     externalMonitorOnStart bool
+    externalScope ExternalScopeDiscovery
+    scopeDialog *externalScopeDialog
+    scopeRequest int
 	refreshContext    context.Context
 	apps              []core.AppChoice
 	allApps           []core.AppChoice
@@ -65,9 +68,12 @@ const (
 	PickerOpenApp
 	PickerRunCronJob
 	PickerRestart
+	PickerSwitchScope
 )
 
 type PickerResult struct {
+	ScopeKind, ScopeValue string
+	MonitorEnabled bool
 	LogToFile   bool
 	CaptureFrom time.Time
 	Action      PickerAction
@@ -92,7 +98,10 @@ func PickExternalApps(apps []core.AppChoice, provider, namespace string) (Picker
 // PickExternalAppsWithMonitor uses the same native tailg picker, with external
 // metrics callbacks replacing Kubernetes metrics and kubectl log scans.
 func PickExternalAppsWithMonitor(apps []core.AppChoice, provider, namespace string, monitor ExternalMonitor, start bool) (PickerResult,error) {
-    ctx,cancel:=context.WithCancel(context.Background())
+    return PickExternalAppsWithScope(context.Background(),apps,provider,namespace,monitor,start,nil,"")
+}
+func PickExternalAppsWithScope(parent context.Context,apps []core.AppChoice,provider,namespace string,monitor ExternalMonitor,start bool,discover ExternalScopeDiscovery,notice string)(PickerResult,error){
+    ctx,cancel:=context.WithCancel(parent)
     defer cancel()
     // The source has no Kubernetes deployment timestamp. Rank workloads by
     // last *observed log*, and never mislabel this as deployment age.
@@ -110,12 +119,17 @@ func PickExternalAppsWithMonitor(apps []core.AppChoice, provider, namespace stri
     m.external=true
     m.externalMonitor=monitor
     m.externalMonitorOnStart=start
+    m.externalScope=discover
     m.providerName=provider
     m.refreshContext=ctx
     m.note="External log source: "+provider+" — Space selects workloads; P selects exact pods. Enter opens live logs."
-    result,err:=tea.NewProgram(m,tea.WithAltScreen()).Run()
+    if notice!=""{m.note=notice}
+    result,err:=tea.NewProgram(m,tea.WithAltScreen(),tea.WithContext(ctx)).Run()
     if err!=nil{return PickerResult{},err}
     final:=result.(pickerModel)
+    final.closeExternalScope()
+    final.result.MonitorEnabled=final.monitorEnabled
+    final.podMonitorState.stop()
     final.result.KubeContext,final.result.Namespace=provider,namespace
     return final.result,nil
 }
@@ -183,7 +197,13 @@ func (m pickerModel) Init() tea.Cmd {
 func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
     if m.external {
         if handled,cmd:=m.updateExternalMonitor(message);handled{return m,cmd}
+        if handled,cmd:=m.externalScopeMessage(message);handled{return m,cmd}
+        if key,ok:=message.(tea.KeyMsg);ok&&m.scopeDialog!=nil{return m.externalScopeKey(key)}
         if key,ok:=message.(tea.KeyMsg);ok&&m.selection==nil{
+            if m.externalScope!=nil&&!m.charts.open&&!m.helpVisible&&!m.showUpdate(){
+                if keyMatches(key,pickerKeys.context){return m,m.openExternalScope("cluster")}
+                if keyMatches(key,pickerKeys.namespace){return m,m.openExternalScope("namespace")}
+            }
             if keyMatches(key,pickerKeys.context,pickerKeys.namespace,pickerKeys.changes,pickerKeys.events,pickerKeys.timeline,pickerKeys.nodes,pickerKeys.run){
                 m.note="This operation requires Kubernetes and is unavailable from Dynatrace logs."
                 return m,nil
@@ -475,6 +495,10 @@ const pickerAppWidth = 36
 
 func (m pickerModel) View() string {
 	background := m.overlayDeploymentToasts(m.pickerView())
+	if m.scopeDialog!=nil{
+		width,height:=m.modalViewport()
+		return overlayModal(background,m.externalScopeView(width,height),width,height)
+	}
 	if m.introActive && !m.showUpdate() {
 		background = m.startupIntroView()
 	}

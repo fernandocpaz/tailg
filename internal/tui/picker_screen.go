@@ -49,7 +49,7 @@ func (m pickerModel) pickerScreen() string {
 		if m.loadError == "" {
 			header = append(header, pickerWrapLines([]string{"No applications found in this namespace."}, width)...)
 		}
-		if !m.external{header = append(header, pickerWrapLines([]string{"Press C to switch context, N to choose namespace, or R to retry."}, width)...)}
+		if !m.external{header = append(header, pickerWrapLines([]string{"Press C to switch context, N to choose namespace, or R to retry."}, width)...)}else if m.externalScope!=nil{header=append(header,pickerWrapLines([]string{"Press C to switch cluster or N to choose namespace."},width)...)}
 		return pickerScreenFrame(header, footer, width, m.height)
 	}
 	// Always leave room for a section heading, the cursor row and a scroll hint.
@@ -134,7 +134,9 @@ func (m pickerModel) pickerScreenHeader(width int) []string {
     if m.external{
         provider:=m.providerName
         if provider==""{provider="external"}
-        title:=headerStyle.Render("DynaR")+"   "+headerStyle.Render("Source: ")+truncatePickerCell(provider,max(1,width/2-14))+"  "+headerStyle.Render("Namespace: ")+truncatePickerCell(m.namespace,max(1,width/2-20))
+        scopeLabel:="Source: ";nsLabel:="Namespace: "
+        if m.externalScope!=nil{scopeLabel="C Cluster: ";nsLabel="N Namespace: "}
+        title:=headerStyle.Render("DynaR")+"   "+headerStyle.Render(scopeLabel)+truncatePickerCell(provider,max(1,width/2-14))+"  "+headerStyle.Render(nsLabel)+truncatePickerCell(m.namespace,max(1,width/2-20))
         lines:=[]string{truncatePickerCell(title,width)}
         if m.monitorEnabled {
             lines=append(lines,pickerLimitedLines(m.externalMetricsSummary(),width,2)...)
