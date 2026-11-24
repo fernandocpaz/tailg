@@ -31,6 +31,7 @@ type FilterState struct {
 	externalRecords   recordList
 	externalLiveCount int
 
+	hideRoutineNoise bool
 	matchesOnly bool
 	matchCount  int
 
@@ -286,6 +287,20 @@ func (s *FilterState) allocateIDLocked() uint64 {
 	return id
 }
 
+// SetHideRoutineNoise changes only the visible rows, never the retained history.
+func (s *FilterState) SetHideRoutineNoise(enabled bool) {
+ s.mu.Lock()
+ defer s.mu.Unlock()
+ if s.hideRoutineNoise==enabled{return}
+ s.hideRoutineNoise=enabled
+ s.refreshLocked()
+}
+func (s *FilterState) HideRoutineNoise() bool {
+ s.mu.RLock()
+ defer s.mu.RUnlock()
+ return s.hideRoutineNoise
+}
+
 func (s *FilterState) SetMatchesOnly(enabled bool) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -480,7 +495,9 @@ func (s *FilterState) refreshLocked() {
 }
 
 func (s *FilterState) appendVisibleLocked(record LogRecord, pinned bool) bool {
-	matched := s.queryMatchesLocked(record)
+ // Explicit searches always expose matching routine messages.
+ if s.hideRoutineNoise && strings.TrimSpace(s.filterText)=="" && IsRoutineNoise(record){return false}
+ matched := s.queryMatchesLocked(record)
 	if !matched && (s.filterErr != nil || s.externalHistory == nil || s.matchesOnly) {
 		return false
 	}

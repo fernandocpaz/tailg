@@ -51,6 +51,8 @@ type Config struct {
     BufferLines int
     Color bool
     ShowPod bool
+    TraceMarkers bool
+    CleanLogs bool
     FilterFile string
     // Stream is a blocking source-specific subscription and must exit on
     // context cancellation. It may emit events from a shared polling hub.
@@ -105,6 +107,7 @@ func Run(ctx context.Context,c Config)error{
     }
     run:=tui.Config{
         AppName:"DynaR", InitialFilter:c.InitialFilter,RecordingPath:c.RecordingPath,
+        TraceMarkers:c.TraceMarkers,CleanLogs:c.CleanLogs,
         Title:c.Title,Namespace:c.Namespace,KubeContext:c.Provider,Target:c.Target,
         Items:inventory(c.Sources),Formatter:f,
         RefreshInterval:c.RefreshInterval,BufferLines:c.BufferLines,

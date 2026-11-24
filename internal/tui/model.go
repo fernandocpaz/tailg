@@ -26,6 +26,8 @@ import (
 type Config struct {
     AppName string // optional branding; defaults to tailg
     InitialFilter string // optional provider-supplied starting filter
+    TraceMarkers bool
+    CleanLogs bool
 	AI              *ai.Client
 	AISettings      ai.Config
 	AIProblem       string
@@ -248,6 +250,7 @@ func Run(parent context.Context, config Config) error {
 		bufferLines = core.DefaultBufferLines
 	}
 	state := core.NewFilterState(bufferLines)
+    state.SetHideRoutineNoise(config.CleanLogs)
 	shared := readShared(config.FilterFile)
 	if shared.textValid && shared.text != "" {
         input.SetValue(shared.text)
@@ -642,6 +645,14 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.analyticsEndpointExpanded=false
 			m.analyticsEndpointOffset=0
 			return m, nil
+		case "f11":
+            if m.config.CleanLogs {
+                m.state.SetHideRoutineNoise(!m.state.HideRoutineNoise())
+                m.selected=-1
+                m.scroll=0
+                m.followsLive=true
+            }
+            return m,nil
 		case "f10":
 			m.securityRadarOpen = true
 			return m, nil
@@ -791,7 +802,7 @@ func (m model) View() string {
 	height := m.logHeight()
 	highlight := m.state.Highlight()
 	visible := m.state.RenderRecords(func(records core.LogRecordView) []string {
-		return renderLogTimelineRows(records, highlight, m.selected, height, m.width, m.config.Formatter.ShowPod, m.config.Formatter.Color, m.followsLive, time.Now())
+		return renderLogTimelineRows(records, highlight, m.selected, height, m.width, m.config.Formatter.ShowPod, m.config.Formatter.Color, m.followsLive, time.Now(), m.config.TraceMarkers)
 	})
 	for len(visible) < height {
 		visible = append(visible, "")
@@ -993,6 +1004,7 @@ func (m model) renderFilterBar() string {
 		modeLabel = modeStyle.Render(mode)
 	}
 	left := renderWithColor(filterLabelStyle, "FILTER", m.config.Formatter.Color) + "  " + m.input.View() + "  " + modeLabel
+    if m.config.CleanLogs {label:="RAW";if m.state.HideRoutineNoise(){label="CLEAN";if strings.TrimSpace(m.input.Value())!=""{label="SEARCH"}};left+="  "+label+" F11"}
 	right := ""
 	if m.width >= 80 {
 		right = m.searchStatus()
@@ -1023,7 +1035,10 @@ func (m model) renderFooter() string {
 	if m.width < 80 && m.searchStatus() != "" {
 		return truncate(renderWithColor(dimStyle, m.searchStatus(), m.config.Formatter.Color), m.width)
 	}
-	shortcuts := []string{
+	shortcuts := []string{}
+    if m.config.TraceMarkers{shortcuts=append(shortcuts,renderKey("F6","[T] trace [TS] span [S] span-only",m.config.Formatter.Color))}
+    if m.config.CleanLogs{shortcuts=append(shortcuts,renderKey("F11","clean/raw",m.config.Formatter.Color))}
+    shortcuts=append(shortcuts,[]string{
 		renderKey("F1", "mode", m.config.Formatter.Color),
 		renderKey("F2", "resources", m.config.Formatter.Color),
 		renderKey("F3", "errors", m.config.Formatter.Color),
@@ -1037,7 +1052,7 @@ func (m model) renderFooter() string {
 		renderKey("Enter", "inspect", m.config.Formatter.Color),
 		renderKey("S", "security", m.config.Formatter.Color),
 		renderKey("Ctrl+Q", "quit", m.config.Formatter.Color),
-	}
+	}...)
 	return truncate(strings.Join(shortcuts, "  "), m.width)
 }
 
@@ -1306,6 +1321,7 @@ func (m model) renderHeartbeatKey() string {
 }
 
 type logColumns struct {
+    traceMarker string
 	time    string
 	level   string
 	pod     string
@@ -1380,6 +1396,9 @@ func renderLogColumnsAged(columns logColumns, value, query string, selected bool
 		prefix += renderCell(columns.time, 13, dimStyle.Faint(historical), color && !selected)
 		prefix += renderCell(columns.level, 5, levelRenderStyle(columns.level).Faint(historical), color && !selected)
 	}
+	if columns.traceMarker!="" && width>=12 {
+        prefix += renderWithColor(okStyle.Faint(historical),columns.traceMarker,color&&!selected)+" "
+    }
 	if showPod && width >= 48 {
 		columnWidth := min(48, max(12, width/3))
 		podStyle := headerStyle
