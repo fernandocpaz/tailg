@@ -19,7 +19,7 @@ func (m model) defaultMouseCommand() tea.Cmd {
 }
 
 func (m model) wantsMouse() bool {
-	return m.recordingVisible() || m.resourceMouseCapture
+	return m.recordingVisible() || m.resourceMouseCapture || m.exclusionTimeline()
 }
 
 func (m model) recordingVisible() bool {
