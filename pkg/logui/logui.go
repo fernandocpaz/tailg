@@ -28,6 +28,11 @@ type Event struct{
     Level string
     TraceID string
     RequestID string
+    HTTPMethod string
+    HTTPPath string
+    HTTPStatusCode int
+    HTTPDuration time.Duration
+    HasHTTPDuration bool
     Timestamp time.Time
 }
 type Config struct {
@@ -62,6 +67,9 @@ func ToLogEvent(e Event)core.LogEvent{
         Workload:e.Workload,Pod:e.Pod,Container:e.Container,
         Message:e.Message,ObservedAt:at,ReceivedAt:time.Now().UTC(),
         Level:e.Level,TraceID:e.TraceID,RequestID:e.RequestID,
+        HTTPMethod:e.HTTPMethod,HTTPPath:e.HTTPPath,
+        HTTPStatusCode:e.HTTPStatusCode,HTTPDuration:e.HTTPDuration,
+        HasHTTPDuration:e.HasHTTPDuration,
     }
 }
 func toSource(item core.InventoryItem)Source{return Source{Pod:item.Pod,Container:item.Container}}
@@ -143,6 +151,9 @@ func Run(ctx context.Context,c Config)error{
                     Workload:e.Workload,Pod:e.Pod,Container:e.Container,
                     Message:e.Message,Level:e.Level,TraceID:e.TraceID,
                     RequestID:e.RequestID,Timestamp:e.ObservedAt,
+                    HTTPMethod:e.HTTPMethod,HTTPPath:e.HTTPPath,
+                    HTTPStatusCode:e.HTTPStatusCode,HTTPDuration:e.HTTPDuration,
+                    HasHTTPDuration:e.HasHTTPDuration,
                 })
             }
             if len(events)==0{return nil}
@@ -184,7 +195,10 @@ func Run(ctx context.Context,c Config)error{
     }
     if c.LogDetails!=nil{
         run.LogDetails=func(ctx context.Context,e core.LogEvent)([]core.LogEvent,error){
-            found,err:=c.LogDetails(ctx,Event{Workload:e.Workload,Pod:e.Pod,Container:e.Container,Message:e.Message,Level:e.Level,TraceID:e.TraceID,RequestID:e.RequestID,Timestamp:e.ObservedAt})
+            found,err:=c.LogDetails(ctx,Event{Workload:e.Workload,Pod:e.Pod,Container:e.Container,Message:e.Message,Level:e.Level,TraceID:e.TraceID,RequestID:e.RequestID,Timestamp:e.ObservedAt,
+                HTTPMethod:e.HTTPMethod,HTTPPath:e.HTTPPath,
+                HTTPStatusCode:e.HTTPStatusCode,HTTPDuration:e.HTTPDuration,
+                HasHTTPDuration:e.HasHTTPDuration})
             if err!=nil{return nil,err}
             out:=make([]core.LogEvent,0,len(found))
             for _,entry:=range found{out=append(out,ToLogEvent(entry))}
