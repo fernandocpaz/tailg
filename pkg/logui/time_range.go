@@ -10,3 +10,6 @@ type TimeResult struct {
  Events []Event
  Warning string
 }
+
+// ReadSharedTimeRange returns the saved selection without any log data.
+func ReadSharedTimeRange(path string)(TimeRange,bool){return tui.ReadSharedTimeRange(path)}

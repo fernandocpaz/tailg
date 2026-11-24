@@ -55,7 +55,7 @@ type Config struct {
     CleanLogs bool
     TimeFile string
     DefaultLookback time.Duration
-    TimeRecords func(context.Context,time.Time,time.Time)(TimeResult,error)
+    TimeRecords func(context.Context,time.Time,time.Time,bool)(TimeResult,error)
     FilterFile string
     // Stream is a blocking source-specific subscription and must exit on
     // context cancellation. It may emit events from a shared polling hub.
@@ -182,8 +182,8 @@ func Run(ctx context.Context,c Config)error{
             return records(c,found),nil
         }
     }
-    if c.TimeRecords!=nil{run.TimeRecords=func(ctx context.Context,from,to time.Time)(tui.TimeResult,error){
-        result,err:=c.TimeRecords(ctx,from,to)
+    if c.TimeRecords!=nil{run.TimeRecords=func(ctx context.Context,from,to time.Time,force bool)(tui.TimeResult,error){
+        result,err:=c.TimeRecords(ctx,from,to,force)
         return tui.TimeResult{Records:records(c,result.Events),Warning:result.Warning},err
     }}
     if c.Spans!=nil{run.Spans=c.Spans}

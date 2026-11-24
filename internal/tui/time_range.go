@@ -23,7 +23,7 @@ type TimeRange struct{
 const maxTimeRange=31*24*time.Hour
 func defaultLookback(d time.Duration)time.Duration{
  if d<=0{return 30*time.Minute}
- return d
+ return min(d,maxTimeRange)
 }
 func(r TimeRange)Valid()bool{
  if r.Lookback>0{return r.Start.IsZero()&&r.End.IsZero()&&r.Lookback<=maxTimeRange}
@@ -95,6 +95,8 @@ func readTimeRange(path string)(TimeRange,sharedRevision,bool){
  if !ok||json.Unmarshal([]byte(payload),&r)!=nil||!r.Valid(){return TimeRange{},sharedRevision{},false}
  return r,revision,true
 }
+// ReadSharedTimeRange exposes the synchronized selection to provider diagnostics.
+func ReadSharedTimeRange(path string)(TimeRange,bool){r,_,ok:=readTimeRange(path);return r,ok}
 func writeTimeRange(path string,r TimeRange,last sharedRevision)(sharedRevision,error){
  if !r.Valid(){return last,fmt.Errorf("choose a valid time interval (up to 31 days)")}
  if path==""{return nextSharedRevision(last),nil}
@@ -146,7 +148,9 @@ func(m *model)timeSnapshot(records []core.LogRecord)*core.FilterState{
  if len(records)>limit{
   records=records[len(records)-limit:]
   m.timeState.complete=false
-  m.timeState.warning=fmt.Sprintf("Display limited to newest %d rows",limit)
+  note:=fmt.Sprintf("Display limited to newest %d rows",limit)
+  if m.timeState.warning!=""{m.timeState.warning+="; "}
+  m.timeState.warning+=note
  }
  next.AppendRecords(records...)
  return next
@@ -159,7 +163,7 @@ func(m *model)applyTimeRange(r TimeRange,publish bool)tea.Cmd{
   if err!=nil{m.notice="Time synchronization failed: "+err.Error();return nil}
   s.revision=revision
  }
- if s.active&&s.selection.equal(r)&&!s.loading&&s.complete{return nil}
+ sameRange:=s.active&&s.selection.equal(r)
  if s.live==nil{s.live=m.state}
  if s.searches==nil{s.searches=&searchController{}}
  parent:=m.ctx;if parent==nil{parent=context.Background()}
@@ -167,10 +171,13 @@ func(m *model)applyTimeRange(r TimeRange,publish bool)tea.Cmd{
  s.generation++
  generation:=s.generation
  now:=time.Now()
- from,to:=r.Bounds(now)
+ anchor:=now
+ committed:=time.Unix(0,s.revision.timestamp)
+ if !committed.After(now)&&now.Sub(committed)<5*time.Second{anchor=committed}
+ from,to:=r.Bounds(anchor)
  // A contained fixed interval can be served directly from a complete
  // previously fetched snapshot. Otherwise fetch only on committed changes.
- reuse:=s.active&&s.complete&&s.selection.Lookback==0&&r.Lookback==0&&!from.Before(s.loadedFrom)&&!to.After(s.loadedTo)
+ reuse:=s.active&&!sameRange&&s.complete&&s.selection.Lookback==0&&r.Lookback==0&&!from.Before(s.loadedFrom)&&!to.After(s.loadedTo)
  var previous []core.LogRecord
  if s.active{previous=filterTimeRecords(m.state.AllRecords(),r,now)}
  seed:=mergeTimeRecords(previous,filterTimeRecords(s.live.AllRecords(),r,now))
@@ -188,7 +195,7 @@ func(m *model)applyTimeRange(r TimeRange,publish bool)tea.Cmd{
  load:=m.config.TimeRecords
  return func()tea.Msg{
   limited,cancel:=context.WithTimeout(ctx,90*time.Second);defer cancel()
-  result,err:=load(limited,from,to)
+  result,err:=load(limited,from,to,sameRange)
   if ctx.Err()!=nil{return nil}
   return timeRangeMsg{generation:generation,from:from,to:to,result:result,err:err}
  }
@@ -267,13 +274,13 @@ func(m model)renderTimeDialog()string{
   return m.panel(title,strings.Join(lines,"\n"),"Tab field | Enter apply | Esc back")
  }
  lines:=[]string{truncate("Current: "+m.timeState.selection.label(),m.width),truncate("Rolling ranges (choose 1–9 or Enter)",m.width)}
- height:=max(1,m.height-7)
+ height:=max(1,m.height-8)
  start:=max(0,d.index-height+1)
  for i:=start;i<min(len(timePresets),start+height);i++{
   marker:="  ";if i==d.index{marker="> "}
   lines=append(lines,truncate(fmt.Sprintf("%s%d  Last %s",marker,i+1,compactDuration(timePresets[i])),m.width))
  }
- lines=append(lines,truncate("C Custom | L Live default | F Freeze | A ±5m at log",m.width),truncate("← Previous | → Next | +/- Zoom | R Reload",m.width))
+ lines=append(lines,truncate("C Custom | L Live default | F Freeze | A ±5m at log",m.width),truncate("← Previous | → Next | +/- Zoom | R Reload",m.width),truncate("T Today | Y Yesterday",m.width))
  if d.errorText!=""{lines[0]=truncate(d.errorText,m.width)}
  return m.panel(title,strings.Join(lines,"\n"),"↑↓ choose | Enter apply | Esc cancel")
 }
@@ -309,6 +316,9 @@ func(m model)updateTimeDialog(msg tea.KeyMsg)(tea.Model,tea.Cmd){
  case "enter":r=TimeRange{Lookback:timePresets[d.index]}
  case "l":r=TimeRange{Lookback:defaultLookback(m.config.DefaultLookback)}
  case "f":from,to:=current.Bounds(now);r=TimeRange{Start:from,End:to}
+ case "t","y":
+  local:=now.Local();midnight:=time.Date(local.Year(),local.Month(),local.Day(),0,0,0,0,local.Location())
+  if key=="t"{r=TimeRange{Start:midnight,End:now}}else{r=TimeRange{Start:midnight.AddDate(0,0,-1),End:midnight}}
  case "left":r=current.Shift(now,-1)
  case "right":r=current.Shift(now,1)
  case "+","=":r=current.Zoom(now,true)

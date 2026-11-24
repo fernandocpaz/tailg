@@ -18,7 +18,7 @@ func TestSharedTimeRangeAndStaleResults(t *testing.T){
  newer,err:=writeTimeRange(path,rolling,sharedRevision{});if err!=nil||!newer.newerThan(rev){t.Fatal("shared revision did not advance")}
  m:=workflowModel()
  m.config.TimeFile=path;m.config.DefaultLookback=30*time.Minute
- m.config.TimeRecords=func(context.Context,time.Time,time.Time)(TimeResult,error){return TimeResult{},nil}
+ m.config.TimeRecords=func(context.Context,time.Time,time.Time,bool)(TimeResult,error){return TimeResult{},nil}
  m.timeState.selection=TimeRange{Lookback:30*time.Minute}
  if cmd:=m.syncTimeRange(now);cmd==nil||!m.timeState.selection.equal(rolling){t.Fatal("other pane did not apply interval")}
  oldGen:=m.timeState.generation
@@ -29,7 +29,7 @@ func TestSharedTimeRangeAndStaleResults(t *testing.T){
 func TestTimeSnapshotDoesNotLoseLiveBuffer(t *testing.T){
  m:=workflowModel()
  now:=time.Now()
- m.config.TimeRecords=func(context.Context,time.Time,time.Time)(TimeResult,error){return TimeResult{},nil}
+ m.config.TimeRecords=func(context.Context,time.Time,time.Time,bool)(TimeResult,error){return TimeResult{},nil}
  m.timeState.selection=TimeRange{Lookback:30*time.Minute}
  live:=m.state
  old:=core.LogEvent{Message:"[12:00:00 INF] old",ObservedAt:now.Add(-2*time.Hour)}
@@ -54,4 +54,19 @@ func TestTimeRangeParsingAndNavigation(t *testing.T){
  if prev.End.Sub(prev.Start)!=15*time.Minute||!prev.End.Equal(at.Add(-15*time.Minute)){t.Fatal("incorrect previous interval")}
  zoom:=prev.Zoom(at,true)
  if zoom.End.Sub(zoom.Start)!=7500*time.Millisecond*60{t.Fatal("incorrect zoom")}
+}
+
+func TestReloadPropagatesEvenWhenRangeAlreadyLoaded(t *testing.T){
+ m:=workflowModel()
+ now:=time.Now().UTC()
+ r:=TimeRange{Start:now.Add(-time.Hour),End:now.Add(-30*time.Minute)}
+ forced:=false
+ m.config.TimeRecords=func(_ context.Context,_,_ time.Time,force bool)(TimeResult,error){forced=force;return TimeResult{},nil}
+ first:=m.applyTimeRange(r,false)
+ m=m.receiveTimeRange(first().(timeRangeMsg))
+ if !m.timeState.complete{t.Fatal("initial load incomplete")}
+ reload:=m.applyTimeRange(r,false)
+ if reload==nil{t.Fatal("same-range revision must trigger refresh")}
+ reload()
+ if !forced{t.Fatal("reload must bypass provider cache")}
 }

@@ -30,7 +30,7 @@ type Config struct {
     CleanLogs bool
     TimeFile string
     DefaultLookback time.Duration
-    TimeRecords func(context.Context,time.Time,time.Time)(TimeResult,error)
+    TimeRecords func(context.Context,time.Time,time.Time,bool)(TimeResult,error)
 	AI              *ai.Client
 	AISettings      ai.Config
 	AIProblem       string
@@ -1908,6 +1908,11 @@ func (m *model) processLogBatch(events []core.LogEvent) error {
 	if m.timeState.active && m.timeState.live!=nil && m.timeState.live!=m.state {
         m.timeState.live.AppendRecords(records...)
         records=filterTimeRecords(records,m.timeState.selection,time.Now())
+        used,capacity:=m.state.BufferUsage()
+        if capacity>0&&used+len(records)>capacity{
+            m.timeState.complete=false
+            if m.timeState.warning==""{m.timeState.warning=fmt.Sprintf("Display limited to newest %d rows",capacity)}
+        }
     }
 	added := m.state.AppendRecords(records...)
 	if len(traceRecords) > 0 {
