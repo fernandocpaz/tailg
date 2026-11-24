@@ -152,7 +152,8 @@ func(m model)openExclusions()(tea.Model,tea.Cmd){
  m.exclusions.input.SetValue("")
  m.exclusions.index=max(0,min(m.exclusions.index,len(m.exclusions.patterns)-1))
  if value!=""&&!m.addExclusion(value){m.exclusions.input.SetValue(value)}
- return m,m.exclusions.input.Focus()
+ cmd:=m.exclusions.input.Focus()
+ return m,cmd
 }
 func(m model)updateExclusions(key tea.KeyMsg)(tea.Model,tea.Cmd){
  s:=&m.exclusions

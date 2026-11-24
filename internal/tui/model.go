@@ -531,7 +531,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		key := msg.String()
-        if m.exclusionTimeline()&&(key=="E"||key=="alt+e"){return m.openExclusions()}
+        if m.exclusionTimeline()&&(key=="E"||key=="alt+e"||(key=="e"&&selectedExclusion(m.exclusions.selection)!="")){return m.openExclusions()}
         if m.exclusions.selection!=nil{m.exclusions.selection=nil}
 		if key == "ctrl+y" && m.recordingVisible() {
 			return m, m.copyRecordingPath()
