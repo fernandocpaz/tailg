@@ -9,7 +9,6 @@ import (
  "strings"
  "time"
 
- "github.com/charmbracelet/bubbles/textinput"
  tea "github.com/charmbracelet/bubbletea"
  "github.com/fernandocpaz/tailg/internal/core"
 )
@@ -80,7 +79,7 @@ type timeViewState struct{
 type timeDialog struct{
  open,custom bool
  index,field int
- from,to textinput.Model
+ picker customTimePicker
  errorText string
  anchor time.Time
 }
@@ -259,19 +258,14 @@ func parseTimeInput(value string,loc *time.Location)(time.Time,error){
 func(m *model)customTimeDialog(){
  d:=&m.timeState.dialog
  from,to:=m.timeState.selection.Bounds(time.Now())
- d.custom=true;d.field=0;d.errorText=""
- d.from=textinput.New();d.from.Prompt="";d.from.CharLimit=64;d.from.SetValue(from.Local().Format(timeInputLayout));d.from.Focus();d.from.CursorEnd()
- d.to=textinput.New();d.to.Prompt="";d.to.CharLimit=64;d.to.SetValue(to.Local().Format(timeInputLayout));d.to.Blur()
+ d.custom=true;d.errorText=""
+ d.picker=newCustomTimePicker(from,to,time.Now())
 }
 func(m model)renderTimeDialog()string{
  d:=m.timeState.dialog
  title:="Time range • all DynaR windows"
  if d.custom{
-  arrow:=[]string{"  ","  "};arrow[d.field]="> "
-  lines:=[]string{"Exact interval (local time; offsets accepted)",arrow[0]+"From: "+d.from.View(),arrow[1]+"To:   "+d.to.View(),"YYYY-MM-DD HH:MM[:SS] or RFC3339"}
-  if d.errorText!=""{lines=append(lines,d.errorText)}
-  for i:=range lines{lines[i]=truncate(lines[i],m.width)}
-  return m.panel(title,strings.Join(lines,"\n"),"Tab field | Enter apply | Esc back")
+  return m.panel(title,d.picker.view(m.width,m.config.Formatter.Color),"Enter apply to all | Esc back")
  }
  lines:=[]string{truncate("Current: "+m.timeState.selection.label(),m.width),truncate("Rolling ranges (choose 1–9 or Enter)",m.width)}
  height:=max(1,m.height-8)
@@ -289,21 +283,15 @@ func(m model)updateTimeDialog(msg tea.KeyMsg)(tea.Model,tea.Cmd){
  key:=msg.String()
  if d.custom{
   switch key{
-  case "esc":d.custom=false;return m,nil
-  case "tab","shift+tab","up","down":
-   d.field=1-d.field
-   if d.field==0{d.from.Focus();d.to.Blur()}else{d.from.Blur();d.to.Focus()}
-   return m,nil
+  case "esc","f12":d.custom=false;return m,nil
   case "enter":
-   from,err:=parseTimeInput(d.from.Value(),time.Local);if err!=nil{d.errorText="From: "+err.Error();return m,nil}
-   to,err:=parseTimeInput(d.to.Value(),time.Local);if err!=nil{d.errorText="To: "+err.Error();return m,nil}
-   r:=TimeRange{Start:from,End:to}
-   if !r.Valid()||to.After(time.Now().Add(time.Minute)){d.errorText="End must follow start, not be in the future; max 31 days";return m,nil}
+   r:=d.picker.selection
+   if !r.Valid()||r.End.After(time.Now()){d.picker.note="Range unavailable; choose a past time";return m,nil}
    d.open=false;cmd:=m.applyTimeRange(r,true);return m,cmd
+  default:
+   d.picker.key(key,time.Now())
+   return m,nil
   }
-  var cmd tea.Cmd
-  if d.field==0{d.from,cmd=d.from.Update(msg)}else{d.to,cmd=d.to.Update(msg)}
-  return m,cmd
  }
  now:=time.Now()
  current:=m.timeState.selection
