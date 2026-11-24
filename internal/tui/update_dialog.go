@@ -4,6 +4,7 @@ import (
   "context"
   "fmt"
   "strings"
+  "time"
 
   tea "github.com/charmbracelet/bubbletea"
   "github.com/charmbracelet/lipgloss"
@@ -15,7 +16,7 @@ import (
 func renderUpdateDialog(application, installed, latest string, busy, focused bool, failure string, width,height int) string {
   if width < 40 || height < 12 {
     if busy {
-      return ansi.Wrap("Updating…\nCtrl+C quits.", max(1,width),"")
+      return ansi.Wrap(loadingLabel("Updating…")+"\nCtrl+C quits.", max(1,width),"")
     }
     return ansi.Wrap("Update available. Resize to 40 × 12.\nEsc continues without updating.",max(1,width),"")
   }
@@ -23,7 +24,7 @@ func renderUpdateDialog(application, installed, latest string, busy, focused boo
   header:=strings.Split(ansi.Wrap(headerStyle.Render(application+" update available")+"\nInstalled: "+installed+" · Latest: "+latest,inner,""),"\n")
   var body,footer []string
   if busy {
-    body=strings.Split(ansi.Wrap("Downloading and verifying the release…\n"+application+" will restart after installation.",inner,""),"\n")
+    body=strings.Split(ansi.Wrap(loadingLabel("Downloading and verifying the release…")+"\n"+application+" will restart after installation.",inner,""),"\n")
   } else {
     later, install := "> [ Later ]", "  [ Update & restart ]"
     if focused {later,install="  [ Later ]","> [ Update & restart ]"}
@@ -51,6 +52,10 @@ type ExternalUpdateOffer struct {
   Install func(context.Context) error
 }
 type externalUpdateInstalledMsg struct{ err error }
+type updateAnimationMsg struct{}
+func updateAnimationTick() tea.Cmd {
+ return tea.Tick(250*time.Millisecond,func(time.Time)tea.Msg{return updateAnimationMsg{}})
+}
 
 type externalUpdateModel struct {
   ctx context.Context
@@ -61,10 +66,12 @@ type externalUpdateModel struct {
 }
 
 func (m externalUpdateModel) Init() tea.Cmd {
-  return tea.SetWindowTitle(m.offer.Application+" update")
+  return tea.Batch(tea.SetWindowTitle(m.offer.Application+" update"),updateAnimationTick())
 }
 func (m externalUpdateModel) Update(message tea.Msg)(tea.Model,tea.Cmd){
   switch msg:=message.(type){
+  case updateAnimationMsg:
+    return m,updateAnimationTick()
   case tea.WindowSizeMsg:
     m.width,m.height=msg.Width,msg.Height
     return m,nil

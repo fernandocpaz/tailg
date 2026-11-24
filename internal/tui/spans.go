@@ -76,7 +76,7 @@ func(m model)receiveSpans(msg spanResultMsg)model{
 }
 func(m model)spanSummary()string{
  s:=m.spanState
- if s.loading{return "Loading spans…"}
+ if s.loading{return loadingLabel("Loading spans…")}
  if s.notice!=""{return s.notice}
  return fmt.Sprintf("%d spans (Tab)",len(s.result.Spans))
 }
@@ -143,7 +143,7 @@ func(m model)renderSpans()string{
  summary:=fmt.Sprintf("%d spans | observed envelope %s | %d errors | longest %s",len(s.result.Spans),elapsed.Round(time.Microsecond),errors,cleanSpanText(slow.Name))
  lines:=[]string{fit(summary)}
  if s.loading||s.notice!=""||s.result.Warning!=""{
-  note:=s.notice;if s.loading{note="Loading spans…"}
+  note:=s.notice;if s.loading{note=loadingLabel("Loading spans…")}
   if s.result.Warning!=""{note+=" "+s.result.Warning}
   lines=append(lines,fit(cleanSpanText(note)))
  }

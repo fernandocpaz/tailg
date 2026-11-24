@@ -234,7 +234,7 @@ func(m model)renderTimeBar()string{
  if m.config.TimeRecords==nil{return ""}
  s:=m.timeState
  status:=s.selection.label()
- if s.loading{status+=" | loading…"}else if s.warning!=""{status+=" | "+s.warning}
+ if s.loading{status+=" | "+renderWithColor(headerStyle,loadingLabel("Loading logs…"),m.config.Formatter.Color)}else if s.warning!=""{status+=" | "+s.warning}
  if m.config.TimeFile!=""{status+=" | synced"}
  return "\n"+truncate(renderWithColor(headerStyle,"F12 TIME ",m.config.Formatter.Color)+status,m.width)
 }

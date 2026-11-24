@@ -155,14 +155,14 @@ func (m model) wrappedDetailLines() []string {
 	}
 	if m.aiView {
 		status := ""
-		if m.aiLoading { status = "Analyzing selected error with the configured AI provider..." }
+		if m.aiLoading { status = loadingLabel("Analyzing selected error with the configured AI provider...") }
 		text := m.aiText
 		if text == "" { text = "AI analysis requested; only redacted error text and matched excerpts from configured repositories are sent." }
 		return wrapDetailText(m.detailLayout, text, status, m.width)
 	}
 	status := m.detailNotice
 	if m.detailLoading {
-		status = "Loading the full entry from this pod..."
+		status = loadingLabel("Loading the full entry from this pod...")
 	}
 	return wrapDetailText(m.detailLayout, m.detail, status, m.width)
 }

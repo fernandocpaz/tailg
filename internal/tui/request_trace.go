@@ -157,7 +157,7 @@ func (m model) renderTrace() string {
 	header := fmt.Sprintf("Request %s | %d rows, %d services", m.traceID, len(rows), len(services))
 	status := "Timeline of retained logs from the selected workloads"
 	if m.traceLoading {
-		status = "Loading related logs across selected pods..."
+		status = loadingLabel("Loading related logs across selected pods...")
 	} else if m.traceNotice != "" {
 		status = m.traceNotice
 	}
