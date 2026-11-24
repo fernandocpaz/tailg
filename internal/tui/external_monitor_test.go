@@ -46,3 +46,20 @@ func TestExternalMonitorQueryFailuresAreUnknown(t *testing.T){
   t.Fatal("failed metrics read must not show healthy")
  }
 }
+
+func TestExternalAutoStartUpdatesRealPickerState(t *testing.T){
+ m:=newPickerModel([]core.AppChoice{{Name:"encounter",Pods:[]string{"encounter-a"}}},1,"qa","apollo",nil)
+ m.external=true
+ m.externalMonitorOnStart=true
+ m.refreshContext=context.Background()
+ m.externalMonitor=func(context.Context)(ExternalMonitorSnapshot,error){
+  return ExternalMonitorSnapshot{At:time.Now()},nil
+ }
+ cmd:=m.Init()
+ if cmd==nil{t.Fatal("--monitor must produce a startup event")}
+ initial:=cmd()
+ if _,ok:=initial.(externalStartMonitorMsg);!ok{t.Fatalf("wrong startup event %T",initial)}
+ updated,follow:=m.Update(initial)
+ next:=updated.(pickerModel)
+ if !next.monitorEnabled||follow==nil{t.Fatal("--monitor did not enable the actual live picker")}
+}
