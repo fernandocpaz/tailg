@@ -168,7 +168,7 @@ func newPickerModel(apps []core.AppChoice, total int, kubeContext, namespace str
 }
 func (m pickerModel) Init() tea.Cmd {
     if m.external {
-        if m.externalMonitorOnStart{return m.toggleExternalMonitor()}
+        if m.externalMonitorOnStart{return func()tea.Msg{return externalStartMonitorMsg{}}}
         return nil
     }
 	if m.refreshContext == nil {

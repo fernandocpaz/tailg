@@ -28,6 +28,7 @@ type ExternalMonitorSnapshot struct {
  Warning string
 }
 type ExternalMonitor func(context.Context)(ExternalMonitorSnapshot,error)
+type externalStartMonitorMsg struct{}
 type externalMonitorPollMsg struct {generation int}
 type externalMonitorResultMsg struct {
  generation int
@@ -83,6 +84,9 @@ func(m *pickerModel) toggleExternalMonitor()tea.Cmd{
 func(m *pickerModel) updateExternalMonitor(message tea.Msg)(bool,tea.Cmd){
  if !m.external{return false,nil}
  switch msg:=message.(type){
+ case externalStartMonitorMsg:
+  if m.monitorEnabled{return true,nil}
+  return true,m.toggleExternalMonitor()
  case externalMonitorPollMsg:
   if !m.monitorEnabled||msg.generation!=m.monitorGeneration{return true,nil}
   cmds:=[]tea.Cmd{m.pollExternalMonitor()}
