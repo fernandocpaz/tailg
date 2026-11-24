@@ -98,6 +98,7 @@ func(m *pickerModel) updateExternalMonitor(message tea.Msg)(bool,tea.Cmd){
    m.monitorError="Dynatrace metrics unavailable: "+msg.err.Error()
    m.metricsWarning=m.monitorError
    m.externalSamples=nil
+   if m.monitorApps==nil{m.monitorApps=make(map[string]podHealthDisplay)}
    for _,app:=range m.apps{
     m.monitorApps[app.Name]=podHealthDisplay{kind:podHealthUnknown,reason:"Last monitoring query failed; previous values are stale"}
    }
