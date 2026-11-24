@@ -36,6 +36,7 @@ type Config struct {
 	Version         string
 	SearchRecords   func(context.Context, string) ([]core.LogRecord, error)
 	Trace           func(context.Context, string) ([]core.LogRecord, error)
+	Spans func(context.Context, string, time.Time) (SpanResult, error)
 	RecordingPath   string
 	Title           string
 	Namespace       string
@@ -160,6 +161,7 @@ type model struct {
 	traceGeneration int
 	traceSearches   *searchController
 	traceNotice     string
+	spanState spanViewState
 }
 
 type searchController struct {
@@ -417,6 +419,8 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case traceMsg:
 		return m.updateTraceResult(msg)
+	case spanResultMsg:
+		return m.receiveSpans(msg), nil
 	case resourceListMsg:
 		if msg.err != nil {
 			m.notice = msg.err.Error()
@@ -523,6 +527,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.errorLogs.open {
 				m.closeErrorLogs()
 			} else if m.traceOpen {
+                if m.spanState.detail {m.spanState.detail=false;return m,nil}
 				m.closeTrace()
 			} else if m.securityRadarOpen {
 				m.securityRadarOpen = false

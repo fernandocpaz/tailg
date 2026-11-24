@@ -68,13 +68,14 @@ func (m *model) openTrace(id string) tea.Cmd {
 			m.traceState.AppendRecords(record)
 		}
 	}
-	return m.loadTrace()
+	return tea.Batch(m.loadTrace(),m.loadSpans())
 }
 
 func (m *model) closeTrace() {
 	if m.traceSearches != nil {
 		m.traceSearches.stop()
 	}
+	m.closeSpans()
 	m.traceGeneration++
 	m.traceOpen = false
 	m.traceLoading = false
@@ -128,6 +129,11 @@ func (m model) traceRows() []core.LogRecord {
 		return nil
 	}
 	rows := m.traceState.Records()
+    if m.spanState.logSpan!="" {
+        filtered:=make([]core.LogRecord,0,len(rows))
+        for _,row:=range rows{if strings.EqualFold(row.Fields.SpanID,m.spanState.logSpan){filtered=append(filtered,row)}}
+        rows=filtered
+    }
 	sort.SliceStable(rows, func(i, j int) bool {
 		a, b := rows[i].Event.ObservedAt, rows[j].Event.ObservedAt
 		if a.IsZero() != b.IsZero() {
@@ -142,6 +148,7 @@ func (m model) traceRows() []core.LogRecord {
 }
 
 func (m model) renderTrace() string {
+    if m.spanState.open{return m.renderSpans()}
 	rows := m.traceRows()
 	services := make(map[string]bool)
 	for _, record := range rows {
@@ -154,6 +161,8 @@ func (m model) renderTrace() string {
 	} else if m.traceNotice != "" {
 		status = m.traceNotice
 	}
+	if m.config.Spans!=nil{status += " | "+m.spanSummary()}
+    if m.spanState.logSpan!=""{status="Span "+m.spanState.logSpan+" | "+status}
 	height := max(1, m.height-4)
 	selected := max(0, min(m.traceIndex, len(rows)-1))
 	start := max(0, selected-height+1)
@@ -185,13 +194,21 @@ func (m model) renderTrace() string {
 	if len(rows) == 0 {
 		lines = append(lines, "No matching logs available yet")
 	}
-	return m.panel(header, strings.Join(lines, "\n"), "Up/Down select | Enter raw details | R reload | F6/Esc closes")
+	footer:="Up/Down select | Enter raw details | R reload | F6/Esc closes"
+    if m.config.Spans!=nil{footer="Tab spans/logs | ↑↓ select | Enter details | R reload | F6/Esc closes";if m.spanState.logSpan!=""{footer="Tab spans | L all logs | Enter details | R reload | Esc closes"}}
+    return m.panel(header, strings.Join(lines, "\n"), footer)
 }
 
 func (m model) updateTraceKey(key string) (tea.Model, tea.Cmd) {
 	if m.detail != "" {
 		return m.updateLogDetailKey(key)
 	}
+	if m.config.Spans!=nil{
+        if key=="tab"{m.spanState.manual=true;m.spanState.detail=false;m.spanState.open=!m.spanState.open;return m,nil}
+        if key=="r"{return m,tea.Batch(m.loadTrace(),m.loadSpans())}
+        if m.spanState.open{return m.updateSpanKey(key)}
+        if key=="l"{m.spanState.logSpan="";m.traceIndex=0;return m,nil}
+    }
 	rows := m.traceRows()
 	switch key {
 	case "f6":

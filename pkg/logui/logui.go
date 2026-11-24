@@ -27,6 +27,7 @@ type Event struct{
     Message string
     Level string
     TraceID string
+    SpanID string
     RequestID string
     HTTPMethod string
     HTTPPath string
@@ -57,6 +58,7 @@ type Config struct {
     Inventory func(context.Context)([]Source,error)
     Search func(context.Context,string)([]Event,error)
     Trace func(context.Context,string)([]Event,error)
+    Spans func(context.Context,string,time.Time)(SpanResult,error)
     ErrorLogs func(context.Context,string)([][]Event,error)
     LogDetails func(context.Context,Event)([]Event,error)
 }
@@ -66,7 +68,7 @@ func ToLogEvent(e Event)core.LogEvent{
     return core.LogEvent{
         Workload:e.Workload,Pod:e.Pod,Container:e.Container,
         Message:e.Message,ObservedAt:at,ReceivedAt:time.Now().UTC(),
-        Level:e.Level,TraceID:e.TraceID,RequestID:e.RequestID,
+        Level:e.Level,TraceID:e.TraceID,SpanID:e.SpanID,RequestID:e.RequestID,
         HTTPMethod:e.HTTPMethod,HTTPPath:e.HTTPPath,
         HTTPStatusCode:e.HTTPStatusCode,HTTPDuration:e.HTTPDuration,
         HasHTTPDuration:e.HasHTTPDuration,
@@ -149,7 +151,7 @@ func Run(ctx context.Context,c Config)error{
                 e:=block[0].Event
                 events=append(events,Event{
                     Workload:e.Workload,Pod:e.Pod,Container:e.Container,
-                    Message:e.Message,Level:e.Level,TraceID:e.TraceID,
+                    Message:e.Message,Level:e.Level,TraceID:e.TraceID,SpanID:e.SpanID,
                     RequestID:e.RequestID,Timestamp:e.ObservedAt,
                     HTTPMethod:e.HTTPMethod,HTTPPath:e.HTTPPath,
                     HTTPStatusCode:e.HTTPStatusCode,HTTPDuration:e.HTTPDuration,
@@ -173,6 +175,7 @@ func Run(ctx context.Context,c Config)error{
             return records(c,found),nil
         }
     }
+    if c.Spans!=nil{run.Spans=c.Spans}
     if c.Trace!=nil{
         run.Trace=func(ctx context.Context,id string)([]core.LogRecord,error){
             found,err:=c.Trace(ctx,id)
@@ -195,7 +198,7 @@ func Run(ctx context.Context,c Config)error{
     }
     if c.LogDetails!=nil{
         run.LogDetails=func(ctx context.Context,e core.LogEvent)([]core.LogEvent,error){
-            found,err:=c.LogDetails(ctx,Event{Workload:e.Workload,Pod:e.Pod,Container:e.Container,Message:e.Message,Level:e.Level,TraceID:e.TraceID,RequestID:e.RequestID,Timestamp:e.ObservedAt,
+            found,err:=c.LogDetails(ctx,Event{Workload:e.Workload,Pod:e.Pod,Container:e.Container,Message:e.Message,Level:e.Level,TraceID:e.TraceID,SpanID:e.SpanID,RequestID:e.RequestID,Timestamp:e.ObservedAt,
                 HTTPMethod:e.HTTPMethod,HTTPPath:e.HTTPPath,
                 HTTPStatusCode:e.HTTPStatusCode,HTTPDuration:e.HTTPDuration,
                 HasHTTPDuration:e.HasHTTPDuration})
