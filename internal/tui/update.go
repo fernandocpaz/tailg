@@ -3,11 +3,8 @@ package tui
 import (
 	"context"
 	"errors"
-	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/fernandocpaz/tailg/internal/update"
 )
 
@@ -86,38 +83,7 @@ func (m *updateState) install(ctx context.Context) tea.Cmd {
 }
 
 func (m updateState) view(width, height int) string {
-	if width < 40 || height < 12 {
-		if m.busy {
-			return ansi.Wrap("Updating…\nCtrl+C quits.", max(1, width), "")
-		}
-		return ansi.Wrap("Update available. Resize to 40 × 12.\nEsc continues without updating.", max(1, width), "")
-	}
-	inner := min(76, width-6)
-	header := strings.Split(ansi.Wrap(headerStyle.Render("tailg update available")+"\nInstalled: "+m.client.Version+" · Latest: "+m.release.Version, inner, ""), "\n")
-	var body, footer []string
-	if m.busy {
-		body = strings.Split(ansi.Wrap("Downloading and verifying the release…\ntailg will restart after installation.", inner, ""), "\n")
-	} else {
-		later, install := "> [ Later ]", "  [ Update & restart ]"
-		if m.focused {
-			later, install = "  [ Later ]", "> [ Update & restart ]"
-		}
-		footer = strings.Split(ansi.Wrap(later+"  "+install+"\nU Update · Enter Select · Esc Later", inner, ""), "\n")
-		if m.err != "" {
-			body = pickerLimitedLines("Update failed: "+m.err, inner, max(1, height-5-len(header)-len(footer)))
-			if width >= 80 && height >= 18 {
-				body = append(body, "Manual: go install github.com/fernandocpaz/tailg/cmd/tailg@"+m.release.Version)
-			}
-		}
-	}
-	lines := append(header, body...)
-	if len(footer) > 0 {
-		lines = append(lines, "")
-		lines = append(lines, footer...)
-	}
-	content := ansi.Wrap(strings.Join(lines, "\n"), inner, "")
-	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accentColor).
-		Foreground(modalForeground).Background(modalBackground).Padding(0, 1).Width(inner + 2).Render(content)
+    return renderUpdateDialog("tailg", m.client.Version, m.release.Version, m.busy, m.focused, m.err, width, height)
 }
 
 func (m model) showUpdate() bool {
