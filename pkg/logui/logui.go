@@ -249,12 +249,16 @@ func PickAppsWithMonitor(apps []App,source,namespace string,monitor Monitor,star
 }
 // ScopeDiscovery returns provider-discovered names in display order, with an optional warning.
 type ScopeDiscovery func(context.Context,string)([]string,string,error)
-func PickAppsWithScope(ctx context.Context,apps []App,source,namespace string,monitor Monitor,start bool,discover ScopeDiscovery,notice string)(Selection,error){
+// ResourceOpen opens the provider UI for a workload, or an exact pod when pod is nonempty.
+type ResourceOpen func(context.Context,string,string)(string,error)
+func PickAppsWithScope(ctx context.Context,apps []App,source,namespace string,monitor Monitor,start bool,discover ScopeDiscovery,notice string,resources ...ResourceOpen)(Selection,error){
     choices:=make([]core.AppChoice,0,len(apps))
     for _,app:=range apps{
         choices=append(choices,core.AppChoice{Name:app.Name,Namespace:namespace,Pods:append([]string(nil),app.Pods...),LastLogAt:app.LastSeen,Ready:"-",Phases:"Logs"})
     }
-    result,err:=tui.PickExternalAppsWithScope(ctx,choices,source,namespace,convertMonitor(monitor),start,tui.ExternalScopeDiscovery(discover),notice)
+    var open tui.ExternalResourceOpen
+    if len(resources)>0{open=tui.ExternalResourceOpen(resources[0])}
+    result,err:=tui.PickExternalAppsWithScope(ctx,choices,source,namespace,convertMonitor(monitor),start,tui.ExternalScopeDiscovery(discover),notice,open)
     if err!=nil{return Selection{},err}
     if result.Action==tui.PickerQuit{return Selection{Quit:true},nil}
     selected:=Selection{ScopeKind:result.ScopeKind,ScopeValue:result.ScopeValue,MonitorEnabled:result.MonitorEnabled,Record:result.LogToFile,RecordFrom:result.CaptureFrom,Pods:append([]string(nil),result.Pods...)}

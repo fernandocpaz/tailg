@@ -23,6 +23,9 @@ type pickerModel struct {
     externalSamples map[string]ExternalWorkloadSample
     externalMonitorOnStart bool
     externalScope ExternalScopeDiscovery
+    externalResource ExternalResourceOpen
+    resourceOpening bool
+    resourceRequest int
     scopeDialog *externalScopeDialog
     scopeRequest int
 	refreshContext    context.Context
@@ -100,7 +103,7 @@ func PickExternalApps(apps []core.AppChoice, provider, namespace string) (Picker
 func PickExternalAppsWithMonitor(apps []core.AppChoice, provider, namespace string, monitor ExternalMonitor, start bool) (PickerResult,error) {
     return PickExternalAppsWithScope(context.Background(),apps,provider,namespace,monitor,start,nil,"")
 }
-func PickExternalAppsWithScope(parent context.Context,apps []core.AppChoice,provider,namespace string,monitor ExternalMonitor,start bool,discover ExternalScopeDiscovery,notice string)(PickerResult,error){
+func PickExternalAppsWithScope(parent context.Context,apps []core.AppChoice,provider,namespace string,monitor ExternalMonitor,start bool,discover ExternalScopeDiscovery,notice string,resources ...ExternalResourceOpen)(PickerResult,error){
     ctx,cancel:=context.WithCancel(parent)
     defer cancel()
     // The source has no Kubernetes deployment timestamp. Rank workloads by
@@ -120,6 +123,7 @@ func PickExternalAppsWithScope(parent context.Context,apps []core.AppChoice,prov
     m.externalMonitor=monitor
     m.externalMonitorOnStart=start
     m.externalScope=discover
+    if len(resources)>0{m.externalResource=resources[0]}
     m.providerName=provider
     m.refreshContext=ctx
     m.note="External log source: "+provider+" — Space selects workloads; P selects exact pods. Enter opens live logs."
@@ -198,8 +202,13 @@ func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
     if m.external {
         if handled,cmd:=m.updateExternalMonitor(message);handled{return m,cmd}
         if handled,cmd:=m.externalScopeMessage(message);handled{return m,cmd}
+        if handled,cmd:=m.externalResourceMessage(message);handled{return m,cmd}
         if key,ok:=message.(tea.KeyMsg);ok&&m.scopeDialog!=nil{return m.externalScopeKey(key)}
         if key,ok:=message.(tea.KeyMsg);ok&&m.selection==nil{
+            if m.externalResource!=nil&&!m.charts.open&&!m.helpVisible&&!m.showUpdate()&&(key.String()=="o"||key.String()=="O"){
+                if m.index>=0&&m.index<len(m.apps){return m,m.openExternalResource(m.apps[m.index].Name,"")}
+                return m,nil
+            }
             if m.externalScope!=nil&&!m.charts.open&&!m.helpVisible&&!m.showUpdate(){
                 if keyMatches(key,pickerKeys.context){return m,m.openExternalScope("cluster")}
                 if keyMatches(key,pickerKeys.namespace){return m,m.openExternalScope("namespace")}

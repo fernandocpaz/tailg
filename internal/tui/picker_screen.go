@@ -180,6 +180,7 @@ func (m pickerModel) pickerScreenFooter(width int) []string {
         if m.monitorEnabled&&m.index>=0&&m.index<len(m.apps){
             footer=append(footer,pickerLimitedLines(m.externalMetricDetail(m.apps[m.index].Name),width,2)...)
         }
+        if m.externalResource!=nil{footer=append(footer,pickerKeyHints(width,pickerBinding("O","Dynatrace resources","o","O"))...)}
         footer=append(footer,dimStyle.Render(strings.Repeat("─",width)))
         return append(footer,pickerKeyHints(width,pickerKeys.up,pickerKeys.down,pickerKeys.mark,pickerKeys.open,pickerKeys.pods,pickerKeys.monitor,pickerKeys.charts,pickerKeys.file,pickerKeys.help,pickerKeys.quit)...)
     }
