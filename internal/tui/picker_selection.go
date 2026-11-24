@@ -232,6 +232,10 @@ func (m pickerModel) updatePickerSelectionKey(msg tea.KeyMsg) (tea.Model, tea.Cm
 		return m, cmd
 	}
 	if state.pods != nil {
+        if m.externalResource!=nil&&(msg.String()=="o"||msg.String()=="O"){
+            if i:=state.pods.index;i>=0&&i<len(state.pods.rows){row:=state.pods.rows[i];return m,m.openExternalResource(row.app,row.pod.Name)}
+            return m,nil
+        }
 		if msg.String() == "m" || msg.String() == "M" {
             if m.external {
                 m.note="Pod-specific Kubernetes monitoring unavailable; use M on the workload picker for Dynatrace metrics."
@@ -343,6 +347,7 @@ func (m pickerModel) pickerSelectionView() string {
         }
 		controls = "Space Mark · A App · Enter Logs · F File · Esc Back"
         if !m.external {controls = "Space Mark · A App · Enter Logs · F File · M Monitor · Esc Back"}
+        if m.externalResource!=nil{controls="O Dynatrace resources · "+controls}
 		for i, row := range child.rows {
 			appLabel := ""
 			if inner >= 70 {
@@ -375,6 +380,7 @@ func (m pickerModel) pickerSelectionView() string {
 			}
 		}
 	}
+    if m.resourceOpening{header=append(header,loadingLabel("Opening Dynatrace resources…"))}
 	if state.err != "" {
 		header = append(header, pickerLimitedLines(state.err, inner, 2)...)
 	}
