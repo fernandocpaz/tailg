@@ -87,7 +87,7 @@ func (m pickerModel) pickerScreen() string {
 				values["name"] = truncatePickerCell(values["name"], columns[0].width-len(badge)) + badge
 			}
 		}
-		if m.monitorEnabled {
+		if m.monitorEnabled && !m.external {
 			values["cpu"], values["memory"] = m.resourceCells(app)
 			cpuStyle, memStyle := m.resourceCellStyles(app)
 			values["cpu"] = cpuStyle.Render(values["cpu"])
