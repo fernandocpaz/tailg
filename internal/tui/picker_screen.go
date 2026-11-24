@@ -179,7 +179,7 @@ func (m pickerModel) pickerScreenFooter(width int) []string {
             footer=append(footer,pickerLimitedLines(m.externalMetricDetail(m.apps[m.index].Name),width,2)...)
         }
         footer=append(footer,dimStyle.Render(strings.Repeat("─",width)))
-        return append(footer,pickerKeyHints(width,pickerKeys.up,pickerKeys.down,pickerKeys.mark,pickerKeys.open,pickerKeys.monitor,pickerKeys.charts,pickerKeys.file,pickerKeys.help,pickerKeys.quit)...)
+        return append(footer,pickerKeyHints(width,pickerKeys.up,pickerKeys.down,pickerKeys.mark,pickerKeys.open,pickerKeys.pods,pickerKeys.monitor,pickerKeys.charts,pickerKeys.file,pickerKeys.help,pickerKeys.quit)...)
     }
 	var footer []string
 	if m.index >= 0 && m.index < len(m.apps) {

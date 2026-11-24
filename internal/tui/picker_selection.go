@@ -193,8 +193,15 @@ func (m pickerModel) updatePickerSelectionKey(msg tea.KeyMsg) (tea.Model, tea.Cm
 	if state.namespaces == nil || !state.namespaces.entering {
 		if msg.String() == "r" || msg.String() == "R" {
 			if state.kind == "pods" {
-				return m, m.refreshPickerInventory()
-			}
+                if m.external {
+                    // Dynatrace pod inventory is read from Grail records.
+                    // Never query Kubernetes when refreshing its pod picker.
+                    state.pods.rows=preparePodPickerRows(m.allApps)
+                    state.pods.index=min(state.pods.index,max(0,len(state.pods.rows)-1))
+                    return m,nil
+                }
+                return m,m.refreshPickerInventory()
+            }
 			return m, m.openPickerSelection(state.kind)
 		}
 	}
@@ -226,7 +233,11 @@ func (m pickerModel) updatePickerSelectionKey(msg tea.KeyMsg) (tea.Model, tea.Cm
 	}
 	if state.pods != nil {
 		if msg.String() == "m" || msg.String() == "M" {
-			m.monitorApps = nil
+            if m.external {
+                m.note="Pod-specific Kubernetes monitoring unavailable; use M on the workload picker for Dynatrace metrics."
+                return m,nil
+            }
+            m.monitorApps = nil
 			return m, m.podMonitorState.toggle(state.pods.rows, m.kubeContext, m.namespace)
 		}
 		child, cmd := state.pods.Update(msg)
@@ -327,10 +338,11 @@ func (m pickerModel) pickerSelectionView() string {
 		child := state.pods
 		index, count = child.index, len(child.rows)
 		header = append(header, truncatePickerCell(fmt.Sprintf("Selected: %d pods · pinned · %s", child.checkedCount(), podMonitorSummary(m.monitorEnabled, m.monitorBusy, m.monitorLastScan, m.monitorError)), inner))
-		if m.monitorEnabled {
-			header = append(header, truncatePickerCell(m.metricsSummary(), inner))
-		}
-		controls = "Space Mark · A App · Enter Logs · F File · M Monitor · Esc Back"
+		if m.monitorEnabled && !m.external {
+            header = append(header, truncatePickerCell(m.metricsSummary(),inner))
+        }
+		controls = "Space Mark · A App · Enter Logs · F File · Esc Back"
+        if !m.external {controls = "Space Mark · A App · Enter Logs · F File · M Monitor · Esc Back"}
 		for i, row := range child.rows {
 			appLabel := ""
 			if inner >= 70 {
@@ -346,8 +358,8 @@ func (m pickerModel) pickerSelectionView() string {
 				label = appLabel + compactPodLabel(row.pod.Name, width-lipgloss.Width(suffix)) + suffix
 			}
 			line := selectionRow(label, inner, i == index, child.checked[row.pod.Name])
-			if m.monitorEnabled {
-				prefix := ansi.Cut(line, 0, 6)
+			if m.monitorEnabled && !m.external {
+                prefix := ansi.Cut(line,0,6)
 				name := renderMonitoredPodName(pickerCell(label, inner-6), m.monitorHealth[row.pod.Name], m.monitorFlashOn)
 				line = prefix + name
 			}

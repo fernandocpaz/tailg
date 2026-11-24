@@ -219,6 +219,7 @@ type App struct {
 }
 type Selection struct {
     Workloads []string
+    Pods []string
     Quit bool
     Record bool
     RecordFrom time.Time
@@ -234,7 +235,7 @@ func PickAppsWithMonitor(apps []App,source,namespace string,monitor Monitor,star
     result,err:=tui.PickExternalAppsWithMonitor(choices,source,namespace,convertMonitor(monitor),start)
     if err!=nil{return Selection{},err}
     if result.Action==tui.PickerQuit{return Selection{Quit:true},nil}
-    selected:=Selection{Record:result.LogToFile,RecordFrom:result.CaptureFrom}
+    selected:=Selection{Record:result.LogToFile,RecordFrom:result.CaptureFrom,Pods:append([]string(nil),result.Pods...)}
     for _,choice:=range result.Apps{selected.Workloads=append(selected.Workloads,choice.Name)}
     return selected,nil
 }
