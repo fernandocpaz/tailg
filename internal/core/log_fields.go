@@ -88,6 +88,14 @@ func ParseLogFields(event LogEvent) LogFields {
     if f.TraceID=="" && event.TraceID!="" {f.TraceID=validTraceID(event.TraceID)}
     if f.RequestID=="" && event.RequestID!="" {f.RequestID=event.RequestID}
     if event.Workload!="" && (f.Service=="" || f.Service==event.Container){f.Service=event.Workload}
+    // Prefer the original parsed message, falling back to authoritative
+    // provider-supplied HTTP fields when logs omit the values in text.
+    if f.Method=="" {f.Method=normalizeHTTPMethod(event.HTTPMethod)}
+    if f.Path=="" && event.HTTPPath!="" {f.Path=normalizeEndpoint(event.HTTPPath)}
+    if f.StatusCode==0 && event.HTTPStatusCode>=100 && event.HTTPStatusCode<=599 {f.StatusCode=event.HTTPStatusCode}
+    if !f.HasDuration && event.HasHTTPDuration && event.HTTPDuration>=0 {
+        f.Duration,f.HasDuration=event.HTTPDuration,true
+    }
     return f
 }
 

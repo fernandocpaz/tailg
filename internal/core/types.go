@@ -79,6 +79,13 @@ type LogEvent struct {
     Level string
     TraceID string
     RequestID string
+    // Optional structured HTTP completion metadata supplied by remote log
+    // providers. These measurements describe logged completions, not APM.
+    HTTPMethod string
+    HTTPPath string
+    HTTPStatusCode int
+    HTTPDuration time.Duration
+    HasHTTPDuration bool
 	Workload   string // verified controller identity, optional for legacy callers
 	Pod        string
 	Container  string
