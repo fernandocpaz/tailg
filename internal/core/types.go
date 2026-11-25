@@ -66,6 +66,7 @@ type CronJobInfo struct {
 }
 
 type PodChoice struct {
+	ProviderDetails string // optional external provider telemetry
 	Name      string
 	Ready     string
 	Phase     string

@@ -17,6 +17,9 @@ import (
 const maxPickerApps = 20
 
 type pickerModel struct {
+    externalInventory ExternalInventory
+    inventoryBusy bool
+    inventoryNote string
     external bool // external log providers must never invoke Kubernetes API commands
     providerName string
     externalMonitor ExternalMonitor
@@ -104,6 +107,9 @@ func PickExternalAppsWithMonitor(apps []core.AppChoice, provider, namespace stri
     return PickExternalAppsWithScope(context.Background(),apps,provider,namespace,monitor,start,nil,"")
 }
 func PickExternalAppsWithScope(parent context.Context,apps []core.AppChoice,provider,namespace string,monitor ExternalMonitor,start bool,discover ExternalScopeDiscovery,notice string,resources ...ExternalResourceOpen)(PickerResult,error){
+    return PickExternalAppsWithInventory(parent,apps,provider,namespace,monitor,start,discover,notice,nil,resources...)
+}
+func PickExternalAppsWithInventory(parent context.Context,apps []core.AppChoice,provider,namespace string,monitor ExternalMonitor,start bool,discover ExternalScopeDiscovery,notice string,inventory ExternalInventory,resources ...ExternalResourceOpen)(PickerResult,error){
     ctx,cancel:=context.WithCancel(parent)
     defer cancel()
     // The source has no Kubernetes deployment timestamp. Rank workloads by
@@ -120,6 +126,7 @@ func PickExternalAppsWithScope(parent context.Context,apps []core.AppChoice,prov
     // the requested namespace/time range. Show every discovered workload.
     m:=newPickerModel(ordered,total,provider,namespace,nil)
     m.external=true
+    m.externalInventory=inventory
     m.externalMonitor=monitor
     m.externalMonitorOnStart=start
     m.externalScope=discover
@@ -186,8 +193,10 @@ func newPickerModel(apps []core.AppChoice, total int, kubeContext, namespace str
 }
 func (m pickerModel) Init() tea.Cmd {
     if m.external {
-        if m.externalMonitorOnStart{return func()tea.Msg{return externalStartMonitorMsg{}}}
-        return nil
+        var commands []tea.Cmd
+        if m.externalInventory!=nil{commands=append(commands,func()tea.Msg{return externalInventoryTick{}})}
+        if m.externalMonitorOnStart{commands=append(commands,func()tea.Msg{return externalStartMonitorMsg{}})}
+        return tea.Batch(commands...)
     }
 	if m.refreshContext == nil {
 		return nil
@@ -200,6 +209,7 @@ func (m pickerModel) Init() tea.Cmd {
 }
 func (m pickerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
     if m.external {
+        if handled,cmd:=m.updateExternalInventory(message);handled{return m,cmd}
         if handled,cmd:=m.updateExternalMonitor(message);handled{return m,cmd}
         if handled,cmd:=m.externalScopeMessage(message);handled{return m,cmd}
         if handled,cmd:=m.externalResourceMessage(message);handled{return m,cmd}

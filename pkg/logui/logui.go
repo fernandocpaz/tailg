@@ -231,7 +231,15 @@ type App struct {
     Name string
     Pods []string
     LastSeen time.Time
+    Ready string
+    PodInfo []PodInfo
 }
+// PodInfo contains observed provider telemetry, not inferred log health.
+type PodInfo struct {
+    Name, Ready, Phase, Details string
+    StartedAt time.Time
+}
+type Inventory func(context.Context)([]App,string,error)
 type Selection struct {
     Workloads []string
     Pods []string
@@ -252,13 +260,24 @@ type ScopeDiscovery func(context.Context,string)([]string,string,error)
 // ResourceOpen opens the provider UI for a workload, or an exact pod when pod is nonempty.
 type ResourceOpen func(context.Context,string,string)(string,error)
 func PickAppsWithScope(ctx context.Context,apps []App,source,namespace string,monitor Monitor,start bool,discover ScopeDiscovery,notice string,resources ...ResourceOpen)(Selection,error){
+    return PickAppsWithInventory(ctx,apps,source,namespace,monitor,start,discover,notice,nil,resources...)
+}
+func appChoices(apps []App,namespace string)[]core.AppChoice{
     choices:=make([]core.AppChoice,0,len(apps))
     for _,app:=range apps{
-        choices=append(choices,core.AppChoice{Name:app.Name,Namespace:namespace,Pods:append([]string(nil),app.Pods...),LastLogAt:app.LastSeen,Ready:"-",Phases:"Logs"})
+        choice:=core.AppChoice{Name:app.Name,Namespace:namespace,Pods:append([]string(nil),app.Pods...),LastLogAt:app.LastSeen,Ready:app.Ready,Phases:"Logs"}
+        for _,p:=range app.PodInfo{choice.PodChoices=append(choice.PodChoices,core.PodChoice{Name:p.Name,Ready:p.Ready,Phase:p.Phase,StartedAt:p.StartedAt,ProviderDetails:p.Details})}
+        choices=append(choices,choice)
     }
+    return choices
+}
+func PickAppsWithInventory(ctx context.Context,apps []App,source,namespace string,monitor Monitor,start bool,discover ScopeDiscovery,notice string,inventory Inventory,resources ...ResourceOpen)(Selection,error){
+    choices:=appChoices(apps,namespace)
+    var load tui.ExternalInventory
+    if inventory!=nil{load=func(ctx context.Context)([]core.AppChoice,string,error){fresh,note,err:=inventory(ctx);return appChoices(fresh,namespace),note,err}}
     var open tui.ExternalResourceOpen
     if len(resources)>0{open=tui.ExternalResourceOpen(resources[0])}
-    result,err:=tui.PickExternalAppsWithScope(ctx,choices,source,namespace,convertMonitor(monitor),start,tui.ExternalScopeDiscovery(discover),notice,open)
+    result,err:=tui.PickExternalAppsWithInventory(ctx,choices,source,namespace,convertMonitor(monitor),start,tui.ExternalScopeDiscovery(discover),notice,load,open)
     if err!=nil{return Selection{},err}
     if result.Action==tui.PickerQuit{return Selection{Quit:true},nil}
     selected:=Selection{ScopeKind:result.ScopeKind,ScopeValue:result.ScopeValue,MonitorEnabled:result.MonitorEnabled,Record:result.LogToFile,RecordFrom:result.CaptureFrom,Pods:append([]string(nil),result.Pods...)}

@@ -196,6 +196,7 @@ func (m pickerModel) updatePickerSelectionKey(msg tea.KeyMsg) (tea.Model, tea.Cm
                 if m.external {
                     // Dynatrace pod inventory is read from Grail records.
                     // Never query Kubernetes when refreshing its pod picker.
+                    if m.externalInventory!=nil{return m,m.startExternalInventory()}
                     state.pods.rows=preparePodPickerRows(m.allApps)
                     state.pods.index=min(state.pods.index,max(0,len(state.pods.rows)-1))
                     return m,nil
@@ -345,6 +346,7 @@ func (m pickerModel) pickerSelectionView() string {
 		if m.monitorEnabled && !m.external {
             header = append(header, truncatePickerCell(m.metricsSummary(),inner))
         }
+        if m.external&&m.externalInventory!=nil{header=append(header,truncatePickerCell(m.externalInventoryStatus(),inner))}
 		controls = "Space Mark · A App · Enter Logs · F File · Esc Back"
         if !m.external {controls = "Space Mark · A App · Enter Logs · F File · M Monitor · Esc Back"}
         if m.externalResource!=nil{controls="O Dynatrace resources · "+controls}
@@ -362,6 +364,13 @@ func (m pickerModel) pickerSelectionView() string {
 				}
 				label = appLabel + compactPodLabel(row.pod.Name, width-lipgloss.Width(suffix)) + suffix
 			}
+            if m.external&&m.externalInventory!=nil{
+                status:=valueOrDash(row.pod.Ready)+" "+valueOrDash(row.pod.Phase)
+                if inner>=90 && row.pod.ProviderDetails!="" {status+=" · "+row.pod.ProviderDetails}
+                room:=max(10,inner-7-min(52,max(15,inner/2)))
+                status=truncatePickerCell(status,room)
+                label=pickerCell(compactPodLabel(row.pod.Name,max(8,inner-7-lipgloss.Width(status)-1)),max(8,inner-7-lipgloss.Width(status)-1))+" "+status
+            }
 			line := selectionRow(label, inner, i == index, child.checked[row.pod.Name])
 			if m.monitorEnabled && !m.external {
                 prefix := ansi.Cut(line,0,6)
@@ -373,6 +382,7 @@ func (m pickerModel) pickerSelectionView() string {
 		if count > 0 {
 			row := child.rows[index]
 			selected = row.app + " / " + row.pod.Name + " · " + valueOrDash(row.pod.Ready) + " · " + valueOrDash(row.pod.Phase)
+            if m.external&&row.pod.ProviderDetails!=""{selected += " · "+row.pod.ProviderDetails}
 			selectedSidecars = row.pod.Sidecars
 			if m.monitorEnabled {
 				healthReason = m.monitorHealth[row.pod.Name].reason
@@ -389,6 +399,10 @@ func (m pickerModel) pickerSelectionView() string {
 		footer = append(footer, pickerLimitedLines(healthReason, inner, 2)...)
 	}
 	footer = append(footer, pickerLimitedLines(selected, inner, 1)...)
+    if state.pods!=nil&&m.external&&state.pods.index>=0&&state.pods.index<len(state.pods.rows){
+        details:=state.pods.rows[state.pods.index].pod.ProviderDetails
+        if details!=""{footer=append(footer,pickerLimitedLines(details,inner,2)...)}
+    }
 	if len(selectedSidecars) > 0 && height >= 16 {
 		footer = append(footer, pickerLimitedLines("Sidecars: "+strings.Join(selectedSidecars, ", "), inner, 1)...)
 	}
