@@ -12,8 +12,8 @@ type externalInventoryTick struct{}
 type externalInventoryResult struct{ apps []core.AppChoice; note string; err error }
 
 func(m *pickerModel) startExternalInventory() tea.Cmd {
- if m.externalInventory==nil||m.inventoryBusy{return nil}
- m.inventoryBusy=true
+ if m.externalInventory==nil||m.externalInventoryBusy{return nil}
+ m.externalInventoryBusy=true
  load,ctx:=m.externalInventory,m.refreshContext
  if ctx==nil{ctx=context.Background()}
  return func()tea.Msg{
@@ -23,7 +23,7 @@ func(m *pickerModel) startExternalInventory() tea.Cmd {
  }
 }
 func(m pickerModel) externalInventoryStatus()string{
- if m.inventoryBusy{return "Refreshing pod telemetry…"}
+ if m.externalInventoryBusy{return "Refreshing pod telemetry…"}
  if m.inventoryNote!=""{return m.inventoryNote}
  return "Pod telemetry: refresh every 30s"
 }
@@ -33,7 +33,7 @@ func(m *pickerModel) updateExternalInventory(msg tea.Msg)(bool,tea.Cmd){
  case externalInventoryTick:
   return true,m.startExternalInventory()
  case externalInventoryResult:
-  m.inventoryBusy=false
+  m.externalInventoryBusy=false
   m.inventoryNote=v.note
   if v.err!=nil{m.inventoryNote="Pod telemetry unavailable: "+v.err.Error()}
   // On failures replace provider fields with unknown, but keep the existing

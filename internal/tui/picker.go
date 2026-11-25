@@ -18,7 +18,7 @@ const maxPickerApps = 20
 
 type pickerModel struct {
     externalInventory ExternalInventory
-    inventoryBusy bool
+    externalInventoryBusy bool
     inventoryNote string
     external bool // external log providers must never invoke Kubernetes API commands
     providerName string
